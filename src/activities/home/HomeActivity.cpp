@@ -37,7 +37,7 @@ int HomeActivity::getMenuItemCount() const {
   if (hasLibrarySlot()) {
     count++;
   }
-#if WADDLE  // WADDLE: "Node" after Settings
+#if WADDLE  // WADDLE: "Bluesound" row
   count++;
 #endif
   return count;
@@ -317,13 +317,16 @@ void HomeActivity::loop() {
       return;
     }
     const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-#if WADDLE  // WADDLE: the last row opens the Node remote
-    if (menuIndex == getMenuItemCount() - static_cast<int>(recentBooks.size()) - 1) {
+#if WADDLE  // WADDLE: "Bluesound" sits just above Settings, which stays last
+    const int bluesoundIndex = getMenuItemCount() - static_cast<int>(recentBooks.size()) - 2;
+    if (menuIndex == bluesoundIndex) {
       activityManager.replaceActivity(std::make_unique<NodeActivity>(renderer, mappedInput));
       return;
     }
-#endif
+    switch (indexToMenuItem(menuIndex > bluesoundIndex ? menuIndex - 1 : menuIndex, hasLibrarySlot())) {
+#else
     switch (indexToMenuItem(menuIndex, hasLibrarySlot())) {
+#endif
       case HomeMenuItem::FILE_BROWSER:
         onFileBrowserOpen();
         break;
@@ -545,9 +548,9 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin() + 2, Plugins);
   }
 
-#if WADDLE  // WADDLE: Bluesound remote, last row
-  menuItems.push_back("Node");
-  menuIcons.push_back(Wifi);
+#if WADDLE  // WADDLE: Bluesound remote, above Settings (WaddleTheme draws its speaker icon)
+  menuItems.insert(menuItems.end() - 1, "Bluesound");
+  menuIcons.insert(menuIcons.end() - 1, Wifi);
 #endif
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
