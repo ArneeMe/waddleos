@@ -20,6 +20,9 @@
 #include "util/PluginEvents.h"
 #include "util/QrUtils.h"
 #include "util/TaskWatchdog.h"
+#if WADDLE_PRIVATE  // WADDLE: privacy build
+#include "waddle/WaddlePrivacy.h"
+#endif
 #if WADDLE  // WADDLE: firmware apply endpoint
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "waddle/WaddleFirmwareApi.h"
@@ -249,12 +252,18 @@ void CrossPointWebServerActivity::startAccessPoint() {
 
   // Start soft AP
   bool apStarted;
+#if WADDLE_PRIVATE  // WADDLE: neutral name and a WPA2 password derived from the device
+  const std::string hotspotPassword = waddle::privacy::hotspotPassword();
+  apStarted = WiFi.softAP(waddle::privacy::HOTSPOT_SSID, hotspotPassword.c_str(), AP_CHANNEL, false,
+                          AP_MAX_CONNECTIONS);
+#else
   if (AP_PASSWORD && strlen(AP_PASSWORD) >= 8) {
     apStarted = WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, false, AP_MAX_CONNECTIONS);
   } else {
     // Open network (no password)
     apStarted = WiFi.softAP(AP_SSID, nullptr, AP_CHANNEL, false, AP_MAX_CONNECTIONS);
   }
+#endif
 
   if (!apStarted) {
     LOG_ERR("WEBACT", "ERROR: Failed to start Access Point!");
@@ -269,7 +278,11 @@ void CrossPointWebServerActivity::startAccessPoint() {
   char ipStr[16];
   snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", apIP[0], apIP[1], apIP[2], apIP[3]);
   connectedIP = ipStr;
+#if WADDLE_PRIVATE
+  connectedSSID = waddle::privacy::HOTSPOT_SSID;
+#else
   connectedSSID = AP_SSID;
+#endif
 
   LOG_DBG("WEBACT", "Access Point started!");
   LOG_DBG("WEBACT", "SSID: %s", AP_SSID);
@@ -502,13 +515,23 @@ void CrossPointWebServerActivity::renderServerRunning() const {
 
     // Show QR code for Wifi
     // follows spec at https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11
+#if WADDLE_PRIVATE  // WADDLE: hotspot has a password
+    const std::string hotspotPassword = waddle::privacy::hotspotPassword();
+    const std::string wifiConfig = std::string("WIFI:T:WPA;S:") + connectedSSID + ";P:" + hotspotPassword + ";;";
+#else
     const std::string wifiConfig = std::string("WIFI:T:nopass;S:") + connectedSSID + ";;";
+#endif
     const Rect qrBoundsWifi(metrics.contentSidePadding, startY, QR_CODE_WIDTH, QR_CODE_HEIGHT);
     QrUtils::drawQrCode(renderer, qrBoundsWifi, wifiConfig);
 
     // Show network name
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding + QR_CODE_WIDTH + metrics.verticalSpacing, startY + 80,
                       connectedSSID.c_str());
+#if WADDLE_PRIVATE  // WADDLE: password under the network name
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding + QR_CODE_WIDTH + metrics.verticalSpacing,
+                      startY + 80 + renderer.getLineHeight(UI_10_FONT_ID) + 8, hotspotPassword.c_str(), true,
+                      EpdFontFamily::BOLD);
+#endif
 
     startY += QR_CODE_HEIGHT + 2 * metrics.verticalSpacing;
 

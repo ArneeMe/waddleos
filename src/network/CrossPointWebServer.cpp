@@ -200,7 +200,9 @@ void CrossPointWebServer::begin() {
   // Add Access-Control-Allow-* headers to every response so web-based clients
   // and PWAs on other origins can use the HTTP API. Preflight OPTIONS requests
   // are answered in handleNotFound().
+#if !WADDLE_PRIVATE  // WADDLE: other web pages in the browser may not call the reader
   server->enableCORS(true);
+#endif
 
   // Setup routes
   LOG_DBG("WEB", "Setting up routes...");

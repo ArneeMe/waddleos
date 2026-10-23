@@ -17,6 +17,9 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/PluginEvents.h"
+#if WADDLE_PRIVATE  // WADDLE: privacy build
+#include "waddle/WaddlePrivacy.h"
+#endif
 
 namespace fui = freeink::ui;
 
@@ -194,6 +197,9 @@ void WifiSelectionActivity::startWifiScan(const bool autoScan) {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   delay(100);
+#if WADDLE_PRIVATE  // WADDLE: new random MAC for every scan
+  waddle::privacy::prepareScan();
+#endif
 
   // Start async scan
   WiFi.scanNetworks(true);  // true = async scan
@@ -475,6 +481,9 @@ void WifiSelectionActivity::attemptConnection() {
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
 
+#if WADDLE_PRIVATE  // WADDLE: neutral hostname, per-network MAC
+  waddle::privacy::prepareStation(selectedSSID.c_str());
+#else
   // Set hostname so routers show "CrossPoint-Reader-AABBCCDDEEFF" instead of "esp32-XXXXXXXXXXXX"
   uint8_t mac[6] = {};
   const esp_err_t macResult = esp_read_mac(mac, ESP_MAC_WIFI_STA);
@@ -486,6 +495,7 @@ void WifiSelectionActivity::attemptConnection() {
   } else {
     LOG_ERR("WIFI", "Failed to read station MAC for hostname (err=%d)", static_cast<int>(macResult));
   }
+#endif
 
   if (selectedRequiresPassword && !enteredPassword.empty()) {
     WiFi.begin(selectedSSID.c_str(), enteredPassword.c_str());
@@ -522,6 +532,7 @@ void WifiSelectionActivity::checkConnectionStatus() {
     // Sync RTC from NTP on the first successful WiFi connection only. The DS3231
     // drifts ~2 ppm so one sync is enough; users can force a re-sync from
     // Settings > System > Clock > Sync clock now.
+#if !WADDLE_PRIVATE  // WADDLE: no automatic NTP (Settings > Clock > Sync still works)
     if (halClock.isAvailable() && !SETTINGS.clockHasBeenSynced) {
       if (halClock.syncFromNTP()) {
         SETTINGS.clockHasBeenSynced = 1;
@@ -532,6 +543,7 @@ void WifiSelectionActivity::checkConnectionStatus() {
     // Every station join is a chance to snap the loan-clock floor to real
     // time (non-blocking; see TrustedTime).
     trustedtime::startSync();
+#endif
 
     // Save this as the last connected network - SD card operations need lock as
     // we use SPI for both

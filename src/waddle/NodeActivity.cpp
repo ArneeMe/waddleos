@@ -10,6 +10,7 @@
 
 #include "MappedInputManager.h"
 #include "WaddleDraw.h"
+#include "WaddlePrivacy.h"
 #include "WifiCredentialStore.h"
 #include "activities/ActivityManager.h"
 #include "components/UITheme.h"
@@ -88,6 +89,9 @@ void NodeActivity::startWifi() {
   delay(100);
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+#if WADDLE_PRIVATE
+  waddle::privacy::prepareStation(cred->ssid.c_str());
+#endif
   LOG_INF("NODE", "joining %s", cred->ssid.c_str());
   if (cred->password.empty()) {
     WiFi.begin(cred->ssid.c_str());
