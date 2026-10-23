@@ -87,12 +87,24 @@ Keep this table up to date. One row per upstream file.
 | File | Change | Why |
 |---|---|---|
 | `AGENTS.md` (`CLAUDE.md` is a link to it) | One line at the top pointing to this file | So AI agents read this first |
+| `src/components/UITheme.cpp` | `#if WADDLE` include and a block at the top of `setTheme()` | Waddle theme replaces Lyra |
+| `platformio.ini` | `[env:x4pro-waddle]` appended at the end | Our build target |
 
 ## Upstream AI rules
 
 Upstream's `CLAUDE.md` and `.agents/` still apply (build, memory, testing,
 handoff checks). Where they talk about PRs to upstream, read them as commits to
 `waddle`. Commits and pushes need my OK, but do not keep asking. I will say when.
+
+## Building
+
+This cloud session cannot download the ESP32 toolchain, so builds run in
+GitHub Actions (`.github/workflows/waddle-build.yml`) or on Arch with
+`pio run -e x4pro-waddle`. Each push to `waddle` publishes
+`waddleos-x4pro.bin` to the `waddle-latest` pre-release.
+
+Upstream's `ci.yml` runs on pushes to `develop`, so syncing `develop` runs their
+full CI in our fork. Disable it in the Actions tab if that is too slow.
 
 ## Hardware testing
 

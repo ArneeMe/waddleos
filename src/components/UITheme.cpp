@@ -17,6 +17,9 @@
 #include "components/themes/lyra/Lyra3CoversTheme.h"
 #include "components/themes/lyra/LyraTheme.h"
 #include "components/themes/roundedraff/RoundedRaffTheme.h"
+#if WADDLE  // WADDLE: penguin theme
+#include "waddle/WaddleTheme.h"
+#endif
 
 UITheme UITheme::instance;
 
@@ -38,6 +41,19 @@ void UITheme::drawCoverGridHome(CoverGridHomeUi& home) { home.renderUi(); }
 
 void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
   if (type == CrossPointSettings::COVER_GRID && !supportsCoverGrid()) type = CrossPointSettings::LYRA;
+
+#if WADDLE  // WADDLE: the penguin theme replaces Lyra
+  if (type == CrossPointSettings::UI_THEME::LYRA) {
+    if (auto theme = makeUniqueNoThrow<WaddleTheme>()) {
+      currentTheme = std::move(theme);
+      currentMetrics = &WaddleMetrics::values;
+      metricsValid = false;
+      LOG_DBG("UI", "Using Waddle theme");
+      return;
+    }
+    LOG_ERR("UI", "OOM: Waddle theme, falling back to Lyra");
+  }
+#endif
 
   switch (type) {
     case CrossPointSettings::UI_THEME::CLASSIC:

@@ -1,0 +1,78 @@
+name: WaddleOS build
+
+# Builds the X4 Pro firmware on every push to waddle and publishes it to the
+# rolling "waddle-latest" pre-release:
+#   https://github.com/ArneeMe/ebook-os/releases/download/waddle-latest/waddleos-x4pro.bin
+
+on:
+  push:
+    branches: [waddle]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
+
+concurrency:
+  group: waddle-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PIO_ENV: x4pro-waddle
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: false
+
+      # Same toolchain setup as release.yml.
+      - name: Install PlatformIO Core
+        run: |
+          uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+          uv pip install --system -U "littlefs-python>=0.16.0" "fatfs-ng>=0.1.14" "pyyaml>=6.0.2" \
+            "rich-click>=1.8.6" "zopfli>=0.2.2" "intelhex>=2.3.0" "rich>=14.0.0" "urllib3<2" \
+            "cryptography>=45.0.3" "certifi>=2025.8.3" "ecdsa>=0.19.1" "bitstring>=4.3.1" \
+            "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
+
+      - name: Pin pioarduino core inside the platform penv
+        run: |
+          set -euo pipefail
+          pio pkg install -e "$PIO_ENV"
+          uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
+
+      - name: Build
+        run: pio run -e "$PIO_ENV" -j1
+
+      - name: Publish to waddle-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp ".pio/build/$PIO_ENV/firmware.bin" waddleos-x4pro.bin
+          sha=$(git rev-parse --short=7 HEAD)
+          notes="Built from ${sha}: $(git log -1 --format=%s)"
+          if gh release view waddle-latest >/dev/null 2>&1; then
+            gh release edit waddle-latest --notes "$notes" --target "$GITHUB_SHA"
+          else
+            gh release create waddle-latest --prerelease --title "WaddleOS latest" --notes "$notes" --target "$GITHUB_SHA"
+          fi
+          gh release upload waddle-latest waddleos-x4pro.bin --clobber
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: waddleos-x4pro
+          path: waddleos-x4pro.bin
+          retention-days: 14
