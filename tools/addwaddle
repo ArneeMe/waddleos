@@ -19,7 +19,16 @@ fi
 step() { printf '%s▸%s %s\n' "$C" "$N" "$*"; }
 ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
 fail() { printf '  %s✗%s %s\n' "$R" "$N" "$*"; }
-human() { numfmt --to=iec --suffix=B "$1" 2>/dev/null || echo "$1 B"; }
+human() { numfmt --to=iec --suffix=B "$1" 2>/dev/null || echo "$(( $1 / 1024 ))KB"; }
+
+# macOS and Linux spell these differently.
+if [ "$(uname -s)" = "Darwin" ]; then
+  filesize() { stat -f %z "$1"; }
+  ping_once() { ping -c 1 -t 2 "$1"; }
+else
+  filesize() { stat -c %s "$1"; }
+  ping_once() { ping -c 1 -W 2 "$1"; }
+fi
 
 usage() {
   echo "Usage: addwaddle [-d /folder] file..."
@@ -44,7 +53,7 @@ files=()
 total=0
 for f in "$@"; do
   if [ -f "$f" ] && [ -r "$f" ]; then
-    size=$(stat -c %s "$f")
+    size=$(filesize "$f")
     total=$((total + size))
     files+=("$f")
     ok "$(basename "$f") $DIM($(human "$size"))$N"
@@ -56,7 +65,7 @@ done
 
 # 2. Is the reader on the network at all?
 step "Pinging reader"
-if out=$(ping -c 1 -W 2 "$IP" 2>/dev/null); then
+if out=$(ping_once "$IP" 2>/dev/null); then
   ms=$(sed -n 's/.*time=\([0-9.]*\).*/\1/p' <<<"$out")
   ok "Reachable ${DIM}(${ms} ms)$N"
 else
