@@ -28,7 +28,7 @@ Layer 2 is the real guarantee. Layer 1 keeps the UI clean.
 
 | Feature | Talks to | Code | Decision |
 |---|---|---|---|
-| Check for updates (OTA) | `api.github.com` (CrossPoint) | `src/network/OtaUpdater.cpp:22` | **Keep**, point at `ArneeMe/ebook-os` releases |
+| Check for updates (OTA) | `api.github.com` (CrossPoint) | `src/network/OtaUpdater.cpp:22` | **Keep**, point at `ArneeMe/waddleos` releases |
 | KOReader sync | `sync.crosspointreader.com`, `sync.koreader.rocks` | `lib/KOReaderSync/` | Hide |
 | Clipping sync | Same sync server | `src/clippings/ClippingSync.cpp` | Hide |
 | Plugin Hub install | `pluginhub.crosspointreader.com` | `src/activities/settings/PluginHubInstallActivity.cpp` | Hide |

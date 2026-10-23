@@ -2,7 +2,7 @@ name: WaddleOS build
 
 # Builds the X4 Pro firmware for pull requests into waddle (check only) and on
 # every push to waddle, which also publishes it to the "waddle-latest" pre-release:
-#   https://github.com/ArneeMe/ebook-os/releases/download/waddle-latest/waddleos-x4pro.bin
+#   https://github.com/ArneeMe/waddleos/releases/download/waddle-latest/waddleos-x4pro.bin
 
 on:
   push:

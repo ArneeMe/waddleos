@@ -1,7 +1,7 @@
 # WaddleOS plan
 
 WaddleOS is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)
-for the Xteink X4 Pro. Repo: `ArneeMe/ebook-os`. Mascot: a pixel-art penguin.
+for the Xteink X4 Pro. Repo: `ArneeMe/waddleos`. Mascot: a pixel-art penguin.
 
 Goals: my own look, easy updates over Wi-Fi, and nothing phones home.
 
@@ -25,7 +25,7 @@ How to work in this fork: see [FORK.md](FORK.md).
 
 ## How we work
 
-- Work on a branch, open a PR into `waddle` in `ArneeMe/ebook-os`, merge it.
+- Work on a branch, open a PR into `waddle` in `ArneeMe/waddleos`, merge it.
 - The PR build checks that the firmware compiles. A merge to `waddle` publishes
   `waddleos-x4pro.bin` to the `waddle-latest` pre-release.
 - Never open anything in the upstream repo. See [FORK.md](FORK.md).
@@ -82,7 +82,7 @@ Enable them in **Settings → Connectivity → Plugins**.
 - Ideas from `docs/sd-plugins.md`: dictionary store, font or theme store,
   free-books catalog (Standard Ebooks, Gutenberg), read-later services.
 - Updates from GitHub releases: point `src/network/OtaUpdater.cpp:22` at
-  `ArneeMe/ebook-os` and trim `.github/workflows/release.yml` to the X4 Pro.
+  `ArneeMe/waddleos` and trim `.github/workflows/release.yml` to the X4 Pro.
 
 ## Notes for Arch Linux
 

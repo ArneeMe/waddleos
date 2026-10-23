@@ -20,7 +20,7 @@ nothing phones home. See [the plan](/docs/waddle/PLAN.md).
 
 ## Install
 
-1. Download [`waddleos-x4pro.bin`](https://github.com/ArneeMe/ebook-os/releases/download/waddle-latest/waddleos-x4pro.bin)
+1. Download [`waddleos-x4pro.bin`](https://github.com/ArneeMe/waddleos/releases/download/waddle-latest/waddleos-x4pro.bin)
    from the `waddle-latest` pre-release. It is built from the `waddle` branch.
 2. Flash it with the web flasher at <https://crosspointreader.com> (choose
    "Custom .bin"), or upload it over Wi-Fi and use **Settings → firmware update**
