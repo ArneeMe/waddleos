@@ -2,7 +2,7 @@
 
 Read this before changing anything. It is written for AI agents and for me.
 
-This repo (`ArneeMe/ebook-os`) is a fork of
+This repo (`ArneeMe/waddleos`) is a fork of
 [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader).
 Upstream is very active: about 400 commits from late July to late October 2026,
 several per day. Every change we make must survive regular merges from upstream.
@@ -11,7 +11,7 @@ several per day. Every change we make must survive regular merges from upstream.
 
 | Name | What it is |
 |---|---|
-| `origin` | `github.com/ArneeMe/ebook-os` (ours) |
+| `origin` | `github.com/ArneeMe/waddleos` (ours) |
 | `upstream` | `github.com/crosspoint-reader/crosspoint-reader` |
 | `develop` | Mirror of `upstream/develop`. **Never commit here.** |
 | `waddle` | Our main branch. All our work goes here. |
