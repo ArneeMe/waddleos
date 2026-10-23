@@ -600,6 +600,12 @@ def reader_mkdir(ip, folder):
 
 def reader_upload(ip, folder, path):
     name = os.path.basename(path).replace('"', "'")
+    # The reader refuses to overwrite files, so remove an older copy first.
+    body = urllib.parse.urlencode({"path": posixpath.join(folder, name)}).encode()
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"http://{ip}/delete", data=body), timeout=10).close()
+    except OSError:
+        pass  # not there yet
     with open(path, "rb") as f:
         data = f.read()
     boundary = uuid.uuid4().hex
