@@ -40,6 +40,23 @@ jobs:
           version: "latest"
           enable-cache: false
 
+      # Toolchain, platform and library downloads. Saves about 100 s.
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      # Object files from the last build. SCons compares file contents, so
+      # unchanged sources are not compiled again.
+      - name: Cache build output
+        uses: actions/cache@v4
+        with:
+          path: .pio
+          key: build-${{ env.PIO_ENV }}-${{ hashFiles('platformio.ini') }}-${{ github.sha }}
+          restore-keys: build-${{ env.PIO_ENV }}-${{ hashFiles('platformio.ini') }}-
+
       # Same toolchain setup as release.yml.
       - name: Install PlatformIO Core
         run: |
@@ -56,7 +73,7 @@ jobs:
           uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
 
       - name: Build
-        run: pio run -e "$PIO_ENV" -j1
+        run: pio run -e "$PIO_ENV" -j"$(nproc)"
 
       - name: Publish to waddle-latest
         if: github.event_name != 'pull_request'
