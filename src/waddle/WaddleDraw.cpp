@@ -43,6 +43,50 @@ void drawNote(const GfxRenderer& renderer, const int x, const int y, const int s
   }
 }
 
+namespace {
+constexpr const char* SPEAKER_ICON[32] = {
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "                #               ",
+    "               ##               ",
+    "              ###         ##    ",
+    "             ####         ###   ",
+    "            ## ##          ###  ",
+    "          ###  ##           ##  ",
+    "    ########   ##      ##   ### ",
+    "    ######     ##      ###   ## ",
+    "    ##         ##       ##   ## ",
+    "    ##         ##       ##   ## ",
+    "    ##         ##       ##   ## ",
+    "    ##         ##       ##   ## ",
+    "    ######     ##      ###   ## ",
+    "    ########   ##      ##   ### ",
+    "          ###  ##           ##  ",
+    "           ### ##          ###  ",
+    "            #####         ###   ",
+    "             ####         ##    ",
+    "              ###               ",
+    "               ##               ",
+    "                #               ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                "};
+}  // namespace
+
+void drawSpeakerIcon(const GfxRenderer& renderer, const int x, const int y) {
+  for (int row = 0; row < 32; row++) {
+    for (int col = 0; col < 32; col++) {
+      if (SPEAKER_ICON[row][col] == '#') renderer.drawPixel(x + col, y + row, true);
+    }
+  }
+}
+
 void drawSplash(const GfxRenderer& renderer, const char* subtitle) {
   constexpr int scale = 5;
   const int size = WADDLE_PENGUIN_SIZE * scale;

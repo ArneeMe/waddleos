@@ -253,12 +253,12 @@ void NodeActivity::render(RenderLock&&) {
   const int contentW = pageWidth - 2 * side;
 
   renderer.clearScreen();
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Node");
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Bluesound");
   int y = metrics.topPadding + metrics.headerHeight + 24;
 
   if (state != State::READY) {
     const char* line1 = state == State::CONNECTING ? "Kobler til..." : state == State::NO_WIFI ? "Fant ikke Wi-Fi"
-                                                                                                : "Fant ikke Node";
+                                                                                                : "Fant ikke Bluesound";
     const char* line2 = state == State::CONNECTING ? "" : "Trykk for å prøve igjen";
     waddle::drawPenguin(renderer, (pageWidth - 90) / 2, pageHeight / 2 - 140, 3);
     renderer.drawCenteredText(UI_12_FONT_ID, pageHeight / 2, line1, true, EpdFontFamily::BOLD);
