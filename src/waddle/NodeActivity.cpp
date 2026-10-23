@@ -24,6 +24,8 @@ namespace {
 constexpr unsigned long WIFI_TIMEOUT_MS = 15000;
 constexpr unsigned long POLL_MS = 5000;
 constexpr int VOLUME_STEP_DB = 2;
+// Notes move one step this often while playing: slow enough for e-ink.
+constexpr unsigned long NOTE_MS = 6000;
 constexpr size_t MAX_PRESETS = 4;
 // Optional override: a file with just the Node's IP address.
 constexpr const char* NODE_IP_FILE = "/.waddle/node-ip.txt";
@@ -191,6 +193,12 @@ void NodeActivity::loop() {
   }
 
   refreshStatus(false);
+
+  if (status.playing && millis() - lastNoteAt > NOTE_MS) {
+    lastNoteAt = millis();
+    noteFrame++;
+    requestUpdate();
+  }
 }
 
 namespace {
@@ -292,8 +300,20 @@ void NodeActivity::render(RenderLock&&) {
   drawButton(renderer, playBox.x, playBox.y, playW, buttonH, status.playing ? "||" : ">", false);
   drawButton(renderer, nextBox.x, nextBox.y, playW, buttonH, ">>", false);
 
-  // A small penguin keeping the music company
-  waddle::drawPenguin(renderer, pageWidth - side - 60, pageHeight - 76, 2, true);
+  // The penguin sings while music plays: two notes float up from its beak.
+  constexpr int penguinScale = 3;
+  const int penguinX = pageWidth - side - 30 * penguinScale;
+  const int penguinY = pageHeight - 100;
+  waddle::drawPenguin(renderer, penguinX, penguinY, penguinScale, true);
+  if (status.playing) {
+    constexpr int path[][2] = {{-62, -30}, {-84, -58}, {-66, -92}, {-96, -122}};
+    const int beakX = penguinX + 15 * penguinScale;
+    const int beakY = penguinY + 14 * penguinScale;
+    for (int k = 0; k < 2; k++) {
+      const auto& step = path[(noteFrame + 2 * k) % 4];
+      waddle::drawNote(renderer, beakX + step[0], beakY + step[1], 2, (noteFrame + k) % 2);
+    }
+  }
 
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }

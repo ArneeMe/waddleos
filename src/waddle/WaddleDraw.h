@@ -8,6 +8,9 @@ namespace waddle {
 // pixel as a scale x scale block. Transparent pixels are left untouched.
 void drawPenguin(const GfxRenderer& renderer, int x, int y, int scale, bool mirror = false);
 
+// Small music note (two shapes, `kind` 0 or 1), top-left at (x, y).
+void drawNote(const GfxRenderer& renderer, int x, int y, int scale, int kind);
+
 // Boot and default sleep screen: big penguin centered on the screen, then
 // "WaddleOS" and `subtitle` below it.
 void drawSplash(const GfxRenderer& renderer, const char* subtitle);

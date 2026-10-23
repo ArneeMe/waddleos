@@ -33,6 +33,8 @@ class NodeActivity final : public Activity {
   std::vector<waddle::bluos::Preset> presets;
   unsigned long connectStartedAt = 0;
   unsigned long lastPollAt = 0;
+  unsigned long lastNoteAt = 0;
+  int noteFrame = 0;  // the penguin "sings" while music plays
 
   // Hit areas, filled by render() for touch input.
   std::vector<Box> presetBoxes;
