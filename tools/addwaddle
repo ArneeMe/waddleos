@@ -95,6 +95,8 @@ start=$SECONDS
 for f in "${files[@]}"; do
   name=$(basename "$f")
   printf '\n  %s%s%s\n' "$B" "$name" "$N"
+  # The reader refuses to overwrite files, so remove an older copy first.
+  curl -s -o /dev/null --max-time 10 -X POST --data-urlencode "path=${DEST%/}/$name" "http://$IP/delete"
   body=$(mktemp)
   result=$(curl -# -o "$body" -w '%{http_code} %{speed_upload} %{time_total}' \
     --connect-timeout 5 -F "file=@$f" "http://$IP/upload?path=$DEST")

@@ -23,6 +23,7 @@ import struct
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -145,8 +146,18 @@ def reader_status(ip):
     return s
 
 
+def delete_old(ip, path):
+    """The reader refuses to overwrite files, so remove an older copy first."""
+    body = urllib.parse.urlencode({"path": path}).encode()
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"http://{ip}/delete", data=body), timeout=10).close()
+    except (urllib.error.URLError, OSError):
+        pass  # not there yet
+
+
 def upload(ip, name, data):
     step(f"Uploading {name}")
+    delete_old(ip, f"/{name}")
     boundary = uuid.uuid4().hex
     head = (
         f"--{boundary}\r\n"
