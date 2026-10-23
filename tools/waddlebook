@@ -1,0 +1,726 @@
+#!/usr/bin/env python3
+"""
+waddlebook - get an EPUB, make a clean, safe copy, and send it to the reader.
+
+Just run it:
+    waddlebook
+and paste a webpage, a direct .epub link, or a file path.
+
+Or pass one or more sources directly:
+    waddlebook https://www.gutenberg.org/ebooks/1342
+    waddlebook book.epub other.epub
+
+Each book is saved in ~/Downloads/books, then uploaded over Wi-Fi to /Books on
+the reader. The reader must be on File Transfer -> Join a Network. If it is not
+reachable, the books stay in ~/Downloads/books; run waddlebook on them later.
+
+Options:
+    -o DIR       save somewhere else than ~/Downloads/books
+    -d FOLDER    folder on the reader (default /Books)
+    --ip IP      reader IP (default $WADDLE_IP or 192.168.50.185)
+    --no-send    only download and clean, do not upload
+    -y           don't ask questions, pick the recommended download
+
+The cleaning is epubclean: it drops scripts, trackers, remote resources and
+non-book files, and rejects zip bombs and unsafe paths.
+
+Standard library only. Works on Linux and macOS.
+"""
+import argparse, html, http.client, io, json, os, posixpath, re, sys, time, urllib.parse, urllib.request, uuid, zipfile
+import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
+
+# ---------------- limits ----------------
+MAX_DOWNLOAD = 100 * 1024 * 1024      # 100 MB per download
+MAX_PAGE = 5 * 1024 * 1024            # 5 MB for a webpage
+MAX_UNCOMPRESSED = 300 * 1024 * 1024  # 300 MB unzipped
+MAX_FILES = 5000
+MAX_RATIO = 200                       # zip-bomb guard
+UA = "Mozilla/5.0 (X11; Linux x86_64) epubclean/2"
+
+BOOKS_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "books")
+DEFAULT_IP = "192.168.50.185"
+
+KEEP_EXT = {".xhtml", ".html", ".htm", ".xml", ".opf", ".ncx", ".css",
+            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
+            ".ttf", ".otf", ".woff", ".woff2"}
+MARKUP_EXT = {".xhtml", ".html", ".htm", ".svg"}
+
+BAD_TAGS = {"script", "iframe", "frame", "frameset", "object", "embed", "applet",
+            "form", "input", "button", "textarea", "select", "base", "portal", "noscript"}
+VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+             "meta", "param", "source", "track", "wbr"}
+URL_ATTRS = {"href", "src", "action", "formaction", "srcset", "poster", "data", "background", "lowsrc"}
+REMOTE = re.compile(r"^\s*(https?:|ftp:|//)", re.I)
+JS_URL = re.compile(r"^\s*(javascript|vbscript|data:text/html)", re.I)
+
+for p, u in {"": "http://www.w3.org/1999/xhtml", "epub": "http://www.idpf.org/2007/ops",
+             "svg": "http://www.w3.org/2000/svg", "xlink": "http://www.w3.org/1999/xlink",
+             "m": "http://www.w3.org/1998/Math/MathML"}.items():
+    ET.register_namespace(p, u)
+
+INTERACTIVE = sys.stdin.isatty()
+TTY = sys.stdout.isatty()
+B, DIM, G, R, Y, C, N = (
+    ("\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m") if TTY else ("",) * 7
+)
+
+
+class Rejected(Exception):
+    pass
+
+
+def say(msg=""):
+    print(msg, flush=True)
+
+
+def ask(prompt, default=""):
+    if not INTERACTIVE:
+        return default
+    try:
+        ans = input(prompt).strip()
+    except EOFError:
+        return default
+    return ans or default
+
+
+# ================= network =================
+def fetch(url, limit, show_progress=False):
+    """Download url. Returns (bytes, final_url, content_type, filename_hint)."""
+    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+        raise Rejected("only http/https links are allowed")
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    try:
+        r = urllib.request.urlopen(req, timeout=30)
+    except Exception as e:
+        raise Rejected(f"could not download: {e}")
+    with r:
+        total = int(r.headers.get("Content-Length") or 0)
+        if total > limit:
+            raise Rejected(f"file is too large ({total // 1048576} MB)")
+        ctype = (r.headers.get("Content-Type") or "").lower()
+        cd = r.headers.get("Content-Disposition") or ""
+        m = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", cd, re.I)
+        hint = urllib.parse.unquote(m.group(1)) if m else posixpath.basename(urllib.parse.urlparse(r.url).path)
+        data = bytearray()
+        while True:
+            chunk = r.read(65536)
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > limit:
+                raise Rejected("download is larger than the size limit")
+            if show_progress:
+                if total:
+                    sys.stderr.write(f"\r  downloading... {len(data) * 100 // total}%")
+                else:
+                    sys.stderr.write(f"\r  downloading... {len(data) / 1048576:.1f} MB")
+                sys.stderr.flush()
+        if show_progress:
+            sys.stderr.write("\r" + " " * 40 + "\r")
+        return bytes(data), r.url, ctype, hint
+
+
+class LinkFinder(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links, self._cur = [], None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "a" and a.get("href"):
+            self._cur = [a["href"], a.get("type") or "", ""]
+        elif tag == "link" and "epub" in (a.get("type") or "") and a.get("href"):
+            self.links.append((a["href"], a["type"], a.get("title") or ""))
+
+    def handle_data(self, d):
+        if self._cur:
+            self._cur[2] += d
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._cur:
+            self.links.append(tuple(self._cur))
+            self._cur = None
+
+
+def find_epub_links(page_html, base):
+    f = LinkFinder()
+    try:
+        f.feed(page_html)
+    except Exception:
+        pass
+    seen, found = set(), []
+    for href, typ, text in f.links:
+        url = urllib.parse.urljoin(base, html.unescape(href.strip()))
+        if not url.startswith(("http://", "https://")):
+            continue
+        low, t = url.lower(), " ".join(text.split())
+        path = urllib.parse.urlparse(low).path
+        is_epub = "epub" in typ.lower() or ".epub" in path or re.search(r"\bepub\b", t.lower()) \
+            or re.search(r"[./]epub", path)
+        if not is_epub or re.search(r"\.(kepub|azw3?|mobi|pdf|zip)(\b|$)", path) or "kepub" in low:
+            continue
+        host = urllib.parse.urlparse(low).netloc
+        if "/send/" in path or re.search(r"(dropbox|drive\.google|onedrive|facebook|twitter|bsky|toot)", host):
+            continue   # "send to cloud" / share buttons, not downloads
+        if re.search(r"\.(html?|txt|utf-8|jpe?g|png|css|js)$", path) and "epub" not in typ.lower() \
+                and not (path.endswith((".html", ".htm")) and "download" in t.lower()):
+            continue   # "read online" pages, plain text, images
+        if url in seen:
+            continue
+        seen.add(url)
+        score = 0
+        if path.endswith(".epub"): score += 2
+        if "images" in low and "noimages" not in low: score += 2
+        if "noimages" in low: score -= 2
+        if "compatible" in low: score += 1
+        if "advanced" in low: score -= 1
+        if "epub3" in low: score += 1
+        label = t[:70] or posixpath.basename(path) or url
+        found.append((score, label, url))
+    found.sort(key=lambda x: -x[0])
+    return found
+
+
+def get_epub_from_url(url, hops=2):
+    data, final, ctype, hint = fetch(url, MAX_DOWNLOAD, show_progress=True)
+    if data[:4] == b"PK\x03\x04":
+        return data, hint
+    looks_html = "html" in ctype or data.lstrip()[:200].lower().startswith((b"<!doctype", b"<html", b"<?xml"))
+    if not looks_html:
+        raise Rejected(f"the link gave {describe(data)}, not an EPUB")
+    if hops == 0:
+        raise Rejected("followed the download link but got another webpage, not an EPUB")
+    if len(data) > MAX_PAGE:
+        raise Rejected("webpage is too large")
+    text = data.decode("utf-8", "replace")
+    links = find_epub_links(text, final)
+    if not links:
+        raise Rejected("no EPUB download links found on that page.\n"
+                       "  Tip: right-click the download button, choose 'Copy link', and paste that instead.")
+    if len(links) == 1:
+        choice = links[0]
+    else:
+        say(f"  Found {len(links)} EPUB downloads:")
+        for i, (_, label, u) in enumerate(links[:15], 1):
+            say(f"   {i}) {label}{'   <- recommended' if i == 1 else ''}")
+            say(f"      {u}")
+        pick = ask("  Which one? [1]: ", "1")
+        try:
+            choice = links[max(0, min(int(pick), len(links[:15])) - 1)]
+        except ValueError:
+            choice = links[0]
+    say(f"  Getting: {choice[1]}")
+    return get_epub_from_url(choice[2], hops - 1)
+
+
+def describe(data):
+    if data[:2] == b"MZ": return "a Windows program (.exe)"
+    if data[:4] == b"\x7fELF": return "a Linux program"
+    if data[:4] in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe"): return "a Mac program"
+    if data[:4] == b"%PDF": return "a PDF"
+    if data[:2] == b"#!": return "a script"
+    if data.lstrip()[:200].lower().startswith((b"<!doctype", b"<html")): return "a webpage"
+    if data[:6] in (b"Rar!\x1a\x07", b"7z\xbc\xaf'\x1c"): return "a RAR/7z archive"
+    return "an unknown kind of file"
+
+
+# ================= validation =================
+def safe_path(n):
+    if n.startswith("/") or "\\" in n or re.match(r"^[A-Za-z]:", n):
+        return False
+    norm = posixpath.normpath(n)
+    return norm != ".." and not norm.startswith("../")
+
+
+def open_epub(data, notes=None):
+    if data[:4] != b"PK\x03\x04":
+        raise Rejected(f"not an EPUB - it is {describe(data)}")
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise Rejected("the file is a broken zip")
+    infos = z.infolist()
+    if len(infos) > MAX_FILES:
+        raise Rejected("too many files inside")
+    total = 0
+    for i in infos:
+        if not safe_path(i.filename):
+            raise Rejected(f"contains a dangerous file path: {i.filename}")
+        if i.flag_bits & 0x1:
+            raise Rejected("contains password-protected files")
+        total += i.file_size
+        if i.file_size > 1_000_000 and i.file_size / max(i.compress_size, 1) > MAX_RATIO:
+            raise Rejected(f"suspicious compression (zip bomb?): {i.filename}")
+    if total > MAX_UNCOMPRESSED:
+        raise Rejected("too large when unpacked")
+    names = set(z.namelist())
+    if "META-INF/container.xml" not in names:
+        raise Rejected("missing META-INF/container.xml - not an EPUB")
+    if "mimetype" in names:
+        mt = z.read("mimetype").decode("ascii", "replace").strip()
+        if mt != "application/epub+zip":
+            raise Rejected(f"wrong mimetype '{mt}' - not an EPUB")
+    elif notes is not None:
+        notes.append("fixed: missing mimetype file")
+    return z
+
+
+# ================= cleaning rules (shared) =================
+def local(name):
+    return name.rsplit("}", 1)[-1].lower() if isinstance(name, str) else ""
+
+
+def drop_element(tag, attrs):
+    """attrs: dict of local-name -> value"""
+    if tag in BAD_TAGS:
+        return True
+    if tag == "link" and REMOTE.match(attrs.get("href", "")):
+        return True
+    if tag == "meta" and attrs.get("http-equiv", "").lower() == "refresh":
+        return True
+    if tag in ("img", "image") and REMOTE.match(attrs.get("src", "") or attrs.get("href", "")):
+        return True
+    return False
+
+
+def bad_attr(tag, name, value):
+    if name.startswith("on"):
+        return True
+    if name in URL_ATTRS:
+        if JS_URL.match(value):
+            return True
+        if REMOTE.match(value) and tag != "a":   # ordinary web links in text are harmless
+            return True
+    if name == "style" and (re.search(r"url\(\s*['\"]?\s*(https?:|//)", value, re.I)
+                            or "expression(" in value.lower()):
+        return True
+    return False
+
+
+def clean_css(css):
+    css = re.sub(r"@import\s+[^;]*;?", "", css, flags=re.I)
+    css = re.sub(r"url\(\s*(['\"]?)\s*(https?:|//)[^)]*\)", "none", css, flags=re.I)
+    css = re.sub(r"expression\s*\(", "(", css, flags=re.I)
+    css = re.sub(r"(-moz-binding|behavior)\s*:[^;}]*;?", "", css, flags=re.I)
+    return css
+
+
+# ---- path 1: well-formed XHTML via XML tree ----
+def clean_tree(root):
+    removed = 0
+    for parent in list(root.iter()):
+        for child in list(parent):
+            t = local(child.tag)
+            if drop_element(t, {local(k): v for k, v in child.attrib.items()}):
+                kids = list(parent)
+                i = kids.index(child)
+                if child.tail:
+                    if i > 0:
+                        kids[i - 1].tail = (kids[i - 1].tail or "") + child.tail
+                    else:
+                        parent.text = (parent.text or "") + child.tail
+                parent.remove(child)
+                removed += 1
+    for el in root.iter():
+        t = local(el.tag)
+        for k in list(el.attrib):
+            if bad_attr(t, local(k), el.attrib[k]):
+                del el.attrib[k]
+                removed += 1
+        if t == "style" and el.text:
+            new = clean_css(el.text)
+            if new != el.text:
+                el.text, removed = new, removed + 1
+    return removed
+
+
+# ---- path 2: anything else via a tolerant HTML tokenizer that keeps the original text ----
+class Sanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.out, self.skip, self.removed, self.in_style = [], [], 0, False
+
+    def _tag(self, tag, attrs, close):
+        if self.skip:
+            if tag == self.skip[-1] and not close and tag not in VOID_TAGS:
+                self.skip.append(tag)
+            return
+        amap = {k.lower(): (v or "") for k, v in attrs}
+        if drop_element(tag, amap):
+            self.removed += 1
+            if not close and tag not in VOID_TAGS:
+                self.skip.append(tag)
+            return
+        keep = [(k, v) for k, v in attrs if not bad_attr(tag, k.lower(), v or "")]
+        if len(keep) == len(attrs):
+            self.out.append(self.get_starttag_text())   # untouched: keep original exactly
+        else:
+            self.removed += len(attrs) - len(keep)
+            raw = self.get_starttag_text()
+            name = re.match(r"<\s*([^\s/>]+)", raw).group(1)  # original case
+            a = "".join(f' {k}="{html.escape(v if v is not None else k, quote=True)}"' for k, v in keep)
+            self.out.append(f"<{name}{a}{' /' if close else ''}>")
+        if tag == "style" and not close:
+            self.in_style = True
+
+    def handle_starttag(self, tag, attrs): self._tag(tag, attrs, False)
+    def handle_startendtag(self, tag, attrs): self._tag(tag, attrs, True)
+
+    def handle_endtag(self, tag):
+        if self.skip:
+            if tag == self.skip[-1]:
+                self.skip.pop()
+            return
+        if tag in BAD_TAGS:
+            return
+        if tag == "style":
+            self.in_style = False
+        raw = self._raw_end
+        self.out.append(raw if raw and raw[2:].strip(" >\t\n").lower() == tag else f"</{tag}>")
+
+    _raw_end = None
+
+    def parse_endtag(self, i):
+        m = re.match(r"</[^>]*>", self.rawdata[i:])
+        self._raw_end = m.group(0) if m else None
+        return super().parse_endtag(i)
+
+    def handle_data(self, d):
+        if self.skip:
+            return
+        if self.in_style:
+            new = clean_css(d)
+            if new != d:
+                self.removed += 1
+            d = new
+        self.out.append(d)
+
+    def handle_entityref(self, n):
+        if not self.skip: self.out.append(f"&{n};")
+    def handle_charref(self, n):
+        if not self.skip: self.out.append(f"&#{n};")
+    def handle_comment(self, d):
+        if not self.skip: self.out.append(f"<!--{d}-->")
+    def handle_decl(self, d):
+        self.out.append(f"<!{d}>")
+    def handle_pi(self, d):
+        self.out.append(f"<?{d}>")
+    def unknown_decl(self, d):
+        if not self.skip: self.out.append(f"<![{d}]>")
+
+
+def clean_markup(data):
+    """Returns (new_bytes, removed_count)."""
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        root = None
+    if root is not None:
+        removed = clean_tree(root)
+        if not removed:
+            return data, 0          # nothing to do: keep the file byte-for-byte
+        text = data.decode("utf-8", "replace")
+        m = re.match(r"\s*(<\?xml[^>]*\?>)?\s*(<!DOCTYPE[^>]*>)?", text, re.I | re.S)
+        head = "\n".join(x for x in (m.groups() if m else ()) if x) or '<?xml version="1.0" encoding="utf-8"?>'
+        return (head + "\n" + ET.tostring(root, encoding="unicode")).encode("utf-8"), removed
+    s = Sanitizer()
+    s.feed(data.decode("utf-8", "replace"))
+    s.close()
+    if not s.removed:
+        return data, 0
+    return "".join(s.out).encode("utf-8"), s.removed
+
+
+# ================= package (.opf) =================
+def read_container(z):
+    try:
+        c = ET.fromstring(z.read("META-INF/container.xml"))
+    except ET.ParseError:
+        raise Rejected("META-INF/container.xml is broken")
+    for el in c.iter():
+        if local(el.tag) == "rootfile" and el.get("full-path"):
+            return el.get("full-path")
+    raise Rejected("the book has no package (.opf) file listed")
+
+
+def book_meta(opf_bytes):
+    try:
+        root = ET.fromstring(opf_bytes)
+    except ET.ParseError:
+        return "", ""
+    title = creator = ""
+    for el in root.iter():
+        n = local(el.tag)
+        if n == "title" and not title and el.text: title = el.text.strip()
+        if n == "creator" and not creator and el.text: creator = el.text.strip()
+    return title, creator
+
+
+def clean_opf(data, kept, opf_dir):
+    """Text edits only, so the package keeps its original structure."""
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        raise Rejected("the package (.opf) file is broken")
+    drop = set()
+    for item in root.iter():
+        if local(item.tag) != "item":
+            continue
+        href = urllib.parse.unquote(item.get("href", ""))
+        full = posixpath.normpath(posixpath.join(opf_dir, href))
+        if REMOTE.match(href) or full not in kept:
+            drop.add(item.get("id"))
+    text = data.decode("utf-8", "replace")
+
+    def fix_item(m):
+        tag = m.group(0)
+        idm = re.search(r'\bid\s*=\s*["\']([^"\']*)["\']', tag)
+        if idm and idm.group(1) in drop:
+            return ""
+        def props(pm):
+            vals = [v for v in pm.group(2).split() if v not in ("scripted", "remote-resources")]
+            return f"properties={pm.group(1)}{' '.join(vals)}{pm.group(1)}" if vals else ""
+        return re.sub(r'properties\s*=\s*(["\'])([^"\']*)\1', props, tag)
+
+    def fix_ref(m):
+        idm = re.search(r'\bidref\s*=\s*["\']([^"\']*)["\']', m.group(0))
+        return "" if idm and idm.group(1) in drop else m.group(0)
+
+    text = re.sub(r"<(?:\w+:)?item\b[^>]*?(?:/>|>\s*</(?:\w+:)?item>)", fix_item, text)
+    text = re.sub(r"<(?:\w+:)?itemref\b[^>]*?(?:/>|>\s*</(?:\w+:)?itemref>)", fix_ref, text)
+    out = text.encode("utf-8")
+    new_root = ET.fromstring(out)
+    if not any(local(e.tag) == "itemref" for e in new_root.iter()):
+        raise Rejected("nothing readable is left in the book after cleaning")
+    return out, len(drop)
+
+
+# ================= rebuild =================
+def clean_epub(data):
+    notes = []
+    z = open_epub(data, notes)
+    names = [i.filename for i in z.infolist() if not i.is_dir()]
+    if "META-INF/encryption.xml" in names or "META-INF/rights.xml" in names:
+        notes.append("WARNING: this book has DRM - it probably won't open on your reader")
+    opf_path = read_container(z)
+    if opf_path not in names:
+        raise Rejected(f"the package file {opf_path} is missing")
+
+    files, dropped, fixed = {}, [], 0
+    for n in names:
+        if n == "mimetype":
+            continue
+        ext = posixpath.splitext(n)[1].lower()
+        if n.startswith("META-INF/"):
+            if n in ("META-INF/container.xml", "META-INF/encryption.xml"):
+                files[n] = z.read(n)
+            else:
+                dropped.append(n)
+            continue
+        if ext not in KEEP_EXT:
+            dropped.append(n)
+            continue
+        d = z.read(n)
+        if ext in MARKUP_EXT:
+            d, r = clean_markup(d)
+            fixed += r
+        elif ext == ".css":
+            new = clean_css(d.decode("utf-8", "replace")).encode("utf-8")
+            if new != d:
+                fixed += 1
+            d = new
+        files[n] = d
+
+    files[opf_path], n_drop = clean_opf(z.read(opf_path), set(files), posixpath.dirname(opf_path))
+    if dropped:
+        shown = ", ".join(posixpath.basename(x) for x in dropped[:6]) + (" ..." if len(dropped) > 6 else "")
+        notes.append(f"removed {len(dropped)} non-book file(s): {shown}")
+    if fixed:
+        notes.append(f"removed {fixed} script(s)/tracker(s)/unsafe bit(s) from pages")
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as w:
+        w.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        for n, d in files.items():
+            w.writestr(n, d, compress_type=zipfile.ZIP_DEFLATED)
+    result = out.getvalue()
+    open_epub(result)   # sanity check
+    return result, notes, book_meta(files[opf_path])
+
+
+# ================= saving =================
+def nice_name(title, creator, hint):
+    if title:
+        base = f"{creator} - {title}" if creator else title
+    else:
+        base = re.sub(r"\.epub.*$", "", os.path.basename(hint or ""), flags=re.I) or "book"
+    base = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", base)
+    base = re.sub(r"\s+", " ", base).strip(" .")[:100] or "book"
+    return base + ".epub"
+
+
+def save(data, folder, name):
+    path = os.path.join(folder, name)
+    # Same book again: overwrite instead of piling up "(2)" copies.
+    tmp = path + ".part"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    return path
+
+
+# ================= reader (Wi-Fi) =================
+def human(n):
+    return f"{n / 1048576:.1f} MB" if n >= 1048576 else f"{n / 1024:.0f} KB"
+
+
+def reader_status(ip):
+    try:
+        with urllib.request.urlopen(f"http://{ip}/api/status", timeout=4) as r:
+            return json.load(r)
+    except (OSError, ValueError):
+        return None
+
+
+def reader_mkdir(ip, folder):
+    """Creates each part of folder ("/Books/Fantasy"). Existing folders are fine."""
+    parent = "/"
+    for part in [p for p in folder.split("/") if p]:
+        body = urllib.parse.urlencode({"name": part, "path": parent}).encode()
+        try:
+            urllib.request.urlopen(urllib.request.Request(f"http://{ip}/mkdir", data=body), timeout=10).close()
+        except urllib.error.HTTPError as e:
+            if e.code != 400:   # 400 = already exists
+                raise Rejected(f"could not create {folder} on the reader (HTTP {e.code})")
+        parent = posixpath.join(parent, part)
+
+
+def reader_upload(ip, folder, path):
+    name = os.path.basename(path).replace('"', "'")
+    with open(path, "rb") as f:
+        data = f.read()
+    boundary = uuid.uuid4().hex
+    head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n"
+            "Content-Type: application/epub+zip\r\n\r\n").encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    host, _, port = ip.partition(":")
+    conn = http.client.HTTPConnection(host, int(port or 80), timeout=60)
+    conn.putrequest("POST", "/upload?" + urllib.parse.urlencode({"path": folder}))
+    conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+    conn.putheader("Content-Length", str(len(head) + len(data) + len(tail)))
+    conn.endheaders()
+    conn.send(head)
+    start, step = time.time(), 16 * 1024
+    for i in range(0, len(data), step):
+        conn.send(data[i:i + step])
+        done = min(i + step, len(data))
+        bar = int(done * 24 / len(data))
+        sys.stdout.write(f"\r  {'█' * bar}{'░' * (24 - bar)} {done * 100 // len(data):3d}%  "
+                         f"{human(done / max(time.time() - start, 0.001))}/s ")
+        sys.stdout.flush()
+    conn.send(tail)
+    resp = conn.getresponse()
+    body = resp.read().decode("utf-8", "replace").strip()
+    sys.stdout.write("\r" + " " * 60 + "\r")
+    if resp.status != 200:
+        raise Rejected(f"upload failed (HTTP {resp.status}): {body[:200]}")
+
+
+def send_to_reader(ip, folder, paths):
+    say(f"\n{C}▸{N} Sending to the reader at {ip}")
+    status = reader_status(ip)
+    if not status:
+        say(f"  {R}✗{N} No answer from the reader")
+        say(f"    {Y}Open File Transfer → Join a Network on the reader, then run:{N}")
+        say(f"    waddlebook " + " ".join(f'"{p}"' for p in paths))
+        return 0
+    say(f"  {G}✓{N} {status.get('device', '?')} running {status.get('version', '?')}")
+    reader_mkdir(ip, folder)
+    sent = 0
+    for p in paths:
+        try:
+            reader_upload(ip, folder, p)
+            say(f"  {G}✓{N} {os.path.basename(p)} → {folder}")
+            sent += 1
+        except (Rejected, OSError) as e:
+            say(f"  {R}✗{N} {os.path.basename(p)}: {e}")
+    return sent
+
+
+# ================= main =================
+def process(src, folder):
+    say(f"\n{B}> {src}{N}")
+    if re.match(r"^https?://", src, re.I):
+        data, hint = get_epub_from_url(src)
+    else:
+        path = os.path.abspath(os.path.expanduser(src.strip().strip("'\"")))
+        if not os.path.isfile(path):
+            raise Rejected("no such file")
+        if os.path.getsize(path) > MAX_DOWNLOAD:
+            raise Rejected("file is too large")
+        with open(path, "rb") as f:
+            data = f.read()
+        hint = path
+        if os.path.dirname(path) == os.path.abspath(folder):
+            open_epub(data)   # already a cleaned copy: just check it and send it
+            say("  already in the books folder")
+            return path
+    say("  checking and cleaning...")
+    clean, notes, (title, creator) = clean_epub(data)
+    for n in notes:
+        say(f"  - {n}")
+    if not notes:
+        say("  - nothing unsafe found")
+    out = save(clean, folder, nice_name(title, creator, hint))
+    say(f"  {G}OK{N}  saved: {out}")
+    return out
+
+
+def main():
+    global INTERACTIVE
+    ap = argparse.ArgumentParser(description="Get an EPUB, clean it, save it, and send it to the reader over Wi-Fi.")
+    ap.add_argument("sources", nargs="*", help="webpage, .epub link, or file (asks if none given)")
+    ap.add_argument("-o", "--outdir", default=BOOKS_DIR, help=f"save here (default {BOOKS_DIR})")
+    ap.add_argument("-d", "--dest", default="/Books", help="folder on the reader (default /Books)")
+    ap.add_argument("--ip", default=os.environ.get("WADDLE_IP", DEFAULT_IP), help="reader IP (env WADDLE_IP)")
+    ap.add_argument("--no-send", action="store_true", help="only download and clean, do not upload")
+    ap.add_argument("-y", "--yes", action="store_true", help="never ask, pick recommended options")
+    args = ap.parse_args()
+    if args.yes:
+        INTERACTIVE = False
+
+    sources = args.sources
+    if not sources:
+        if not sys.stdin.isatty():
+            ap.error("give a link or file")
+        say("Paste a webpage, an .epub link, or a file path (several separated by spaces):")
+        line = ask("> ")
+        sources = line.split()
+        if not sources:
+            return 0
+
+    os.makedirs(args.outdir, exist_ok=True)
+    say(f"{B}🐧 waddlebook{N}  saving to {args.outdir}")
+    saved = []
+    for src in sources:
+        try:
+            saved.append(process(src, args.outdir))
+        except Rejected as e:
+            say(f"  {R}REJECTED:{N} {e}")
+        except KeyboardInterrupt:
+            say("\nStopped.")
+            break
+
+    if not saved:
+        return 1
+    sent = 0 if args.no_send else send_to_reader(args.ip, "/" + args.dest.strip("/"), saved)
+    say(f"\n{G}{B}🐧 Done:{N} {len(saved)} of {len(sources)} book(s) saved"
+        + ("" if args.no_send else f", {sent} sent to the reader") + ".")
+    return 0 if len(saved) == len(sources) and (args.no_send or sent == len(saved)) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

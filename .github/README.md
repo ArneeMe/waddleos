@@ -13,6 +13,7 @@ CrossPoint. WaddleOS adds:
 - A penguin home screen that says hello in Norwegian ("Hei Arne!").
 - Penguin boot and sleep screens (`src/waddle/`, `assets/waddle/`).
 - Firmware updates over Wi-Fi with one command (`tools/waddle-update`).
+- Get, clean and send books in one command (`tools/waddlebook`).
 - Book upload from the command line (`tools/addwaddle`).
 - A build for the X4 Pro only.
 
@@ -39,7 +40,11 @@ tools/waddle-update firmware.bin # or a local build
 ```
 
 Confirm the update on the reader. Set `WADDLE_IP` if the reader's IP is not
-`192.168.50.185`. Upload books with `tools/addwaddle book.epub`.
+`192.168.50.185`.
+
+Books: `tools/waddlebook <webpage, .epub link or file>` downloads the EPUB, removes
+scripts and trackers, saves it in `~/Downloads/books` and sends it to `/Books`
+on the reader. `tools/addwaddle` uploads any file as it is.
 
 ## Build
 
