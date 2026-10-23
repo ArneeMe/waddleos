@@ -3,7 +3,28 @@
 Goal: the reader only talks to my own network and to hosts I choose.
 Everything else is removed from the UI and blocked in code.
 
-Status: draft. No code yet.
+Status: first part built behind `WADDLE_PRIVATE` (on in `x4pro-waddle`). See
+"Built" below. The host allowlist is still to do.
+
+## Built (WADDLE_PRIVATE)
+
+| Leak | Before | Now | Code |
+|---|---|---|---|
+| DHCP hostname `CrossPoint-Reader-<MAC>` | In every router log | `reader` | `WifiSelectionActivity.cpp`, `NodeActivity.cpp` |
+| Plugin events: book, start/end time, duration, progress for every reading session | Queued and sent to subscribed plugins whenever the reader goes online | Never queued, never sent | `src/util/PluginEvents.cpp` |
+| KOReader progress sync (menu, long press, Home key) | Uploads book hash and position | Disabled, menu item hidden | `EpubReaderActivity.cpp`, `EpubReaderMenuActivity.cpp` |
+| NTP to `pool.ntp.org` / `time.nist.gov` on every join | Reveals IP and online times | Off. The RTC keeps time; Settings > Clock > Sync is still there to do it by hand | `WifiSelectionActivity.cpp` |
+| Wi-Fi join at sleep for plugins | Background network use | Never | `src/main.cpp` |
+| CORS `*` on the web server | Any web page in a browser on the LAN could use the API | Off | `CrossPointWebServer.cpp` |
+| Open hotspot `CrossPoint-Reader` | Anyone nearby could join and read the SD card | `Waddle` with a WPA2 password derived from the device, shown on the screen and in the QR code | `CrossPointWebServerActivity.cpp` |
+| User agent `CrossPoint-ESP32-<version>` | Fingerprint for servers | `reader` | `HttpDownloader.cpp`, `PluginHttp.cpp` |
+| KOReader sync, Check for updates | Talk to `sync.crosspointreader.com`, CrossPoint's GitHub | Hidden from Settings (updates come from `tools/waddle-update`) | `SettingsActivity.cpp` |
+
+Not changed on purpose: the factory MAC address (the router's fixed IP for
+the reader depends on it).
+
+Still open: host allowlist, Plugin Hub and font download, mDNS and UDP
+discovery during File Transfer (LAN only).
 
 ## Approach
 

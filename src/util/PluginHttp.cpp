@@ -12,6 +12,9 @@
 
 #include "network/ProtectedPaths.h"
 #include "network/WifiPowerSaveGuard.h"
+#if WADDLE_PRIVATE  // WADDLE: privacy build
+#include "waddle/WaddlePrivacy.h"
+#endif
 
 namespace {
 constexpr size_t MAX_TOKEN_FILE_SIZE = 2 * 1024;
@@ -21,7 +24,11 @@ constexpr size_t MAX_TOKEN_FILE_SIZE = 2 * 1024;
 freeink::SecureHttpClient* openClient(freeink::SecureHttpClient* session, freeink::SecureHttpClient& tmp,
                                       const std::string& url, const pluginhttp::Headers& headers) {
   freeink::SecureHttpClient& http = session ? *session : tmp;
+#if WADDLE_PRIVATE  // WADDLE: neutral user agent
+  http.setUserAgent(waddle::privacy::USER_AGENT);
+#else
   http.setUserAgent("CrossPoint");
+#endif
   // Same trust posture as every other SecureNet consumer: no CA bundle ships
   // with the transport, so verification is skipped; traffic stays encrypted.
   http.setInsecure();

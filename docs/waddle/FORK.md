@@ -96,6 +96,14 @@ Keep this table up to date. One row per upstream file.
 | `src/activities/settings/SdFirmwareUpdateActivity.*` | `#if WADDLE` constructor with a preset path, checks in `onEnter()` and `loop()` | Skip the file picker when started from the API |
 | `src/activities/boot_sleep/BootActivity.cpp`, `SleepActivity.cpp` | `#if WADDLE` swaps the logo block for `waddle::drawSplash()` | Penguin boot and sleep screens. The default sleep screen is not inverted |
 | `src/activities/home/HomeActivity.cpp` | `#if WADDLE` include, one more menu row ("Node") in count, render and selection | Bluesound remote (`src/waddle/NodeActivity.*`) |
+| `src/activities/network/WifiSelectionActivity.cpp` | `#if WADDLE_PRIVATE` neutral hostname, no NTP on join | Privacy |
+| `src/util/PluginEvents.cpp` | `#if WADDLE_PRIVATE` early return in `emit()` and `drain()` | No reading activity sent to plugins |
+| `src/activities/reader/EpubReaderActivity.cpp`, `EpubReaderMenuActivity.cpp` | `#if WADDLE_PRIVATE` no KOReader sync, menu item hidden | No progress upload |
+| `src/main.cpp` | `#if WADDLE_PRIVATE` early return before the sleep-time Wi-Fi join | Privacy |
+| `src/network/HttpDownloader.cpp`, `src/util/PluginHttp.cpp` | `#if WADDLE_PRIVATE` neutral user agent | Privacy |
+| `src/activities/settings/SettingsActivity.cpp` | `#if !WADDLE_PRIVATE` around KOReader sync and Check for updates | Privacy |
+| `src/network/CrossPointWebServer.cpp` | also `#if !WADDLE_PRIVATE` around `enableCORS` | Privacy |
+| `src/activities/network/CrossPointWebServerActivity.cpp` | also `#if WADDLE_PRIVATE` hotspot name, password, QR code | Privacy |
 
 ## Upstream AI rules
 

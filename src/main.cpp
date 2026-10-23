@@ -400,6 +400,9 @@ static void deliverSleepPluginEvents(const bool allowNetwork) {
   // Any connect-flagged queued event justifies the join, not only
   // sleep.enter: reader.session is queued while reading and delivered on this
   // same sleep, and a progress-sync plugin usually subscribes to it alone.
+#if WADDLE_PRIVATE  // WADDLE: never join Wi-Fi in the background
+  return;
+#endif
   if (!pluginevents::wantsConnectAny()) return;
   if (powerManager.getBatteryPercentage() < 20) return;
   const auto cred = WIFI_STORE.findCredential(WIFI_STORE.getLastConnectedSsid());

@@ -1312,6 +1312,9 @@ unsigned long EpubReaderActivity::confirmLongPressThreshold() const {
 }
 
 bool EpubReaderActivity::launchKOReaderSync() {
+#if WADDLE_PRIVATE  // WADDLE: reading progress is never uploaded (menu, long press, Home key)
+  return false;
+#endif
   flushReaderSession();
 
   // Without a KOReader server the sync activity only brings the device online

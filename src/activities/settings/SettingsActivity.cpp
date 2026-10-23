@@ -134,7 +134,9 @@ void SettingsActivity::rebuildSettings() {
   if (bleturner::status().compiledIn) {
     addAction(SettingsSection::Network, StrId::STR_BT_PAGE_TURNER, SettingAction::Bluetooth);
   }
+#if !WADDLE_PRIVATE  // WADDLE: cloud sync hidden
   addAction(SettingsSection::Network, StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync);
+#endif
   addAction(SettingsSection::Network, StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser);
   addAction(SettingsSection::Network, StrId::STR_PLUGINS, SettingAction::Plugins);
 
@@ -143,7 +145,9 @@ void SettingsActivity::rebuildSettings() {
   // stock layout has one app slot (partitions_picco.csv), so it cannot update
   // itself either way.
   if (!BoardConfig::isPicco()) {
+#if !WADDLE_PRIVATE  // WADDLE: updates come from tools/waddle-update, not CrossPoint's GitHub
     addAction(SettingsSection::General, StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates);
+#endif
     addAction(SettingsSection::General, StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate);
   }
   addAction(SettingsSection::General, StrId::STR_ABOUT, SettingAction::About);
