@@ -1088,7 +1088,6 @@ HttpDownloader::DownloadError PluginCatalogActivity::downloadBook(const Item& it
     }
   }
 
-  emitBookDownloaded(manifestPath, dest, item.title);
   return HttpDownloader::OK;
 }
 
