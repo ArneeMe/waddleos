@@ -213,7 +213,6 @@
 
   <div id="wifi-container"></div>
   <div id="opds-container"></div>
-  <div id="plugin-container"></div>
 
   </main>
 <!--#include file="shared/Footer.html.inc" -->
@@ -771,7 +770,6 @@
     }
   }
 
-<!--#include file="shared/PluginHost.js.inc" -->
 
   // Sequential, not concurrent: the device's web server handles one client
   // connection at a time, and simultaneous fetches on page load can
@@ -780,7 +778,6 @@
     await loadSettings();
     await loadWifiNetworks();
     await loadOpdsServers();
-    await loadPlugins('settings');
   })();
 </script>
 </body>
