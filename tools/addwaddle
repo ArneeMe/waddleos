@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Upload files to the reader over Wi-Fi.
+# The reader must be on File Transfer -> Join a Network.
+#
+# Usage: addwaddle [-d /Books] file...
+# Reader IP: $WADDLE_IP (default 192.168.50.185)
+
+set -u
+
+IP="${WADDLE_IP:-192.168.50.185}"
+DEST="/"
+
+if [ -t 1 ]; then
+  B=$'\e[1m' DIM=$'\e[2m' G=$'\e[32m' R=$'\e[31m' Y=$'\e[33m' C=$'\e[36m' N=$'\e[0m'
+else
+  B="" DIM="" G="" R="" Y="" C="" N=""
+fi
+
+step() { printf '%s▸%s %s\n' "$C" "$N" "$*"; }
+ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
+fail() { printf '  %s✗%s %s\n' "$R" "$N" "$*"; }
+human() { numfmt --to=iec --suffix=B "$1" 2>/dev/null || echo "$1 B"; }
+
+usage() {
+  echo "Usage: addwaddle [-d /folder] file..."
+  echo "Reader IP: \$WADDLE_IP (now $IP)"
+  exit 1
+}
+
+while getopts "d:h" opt; do
+  case $opt in
+    d) DEST="$OPTARG" ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ $# -gt 0 ] || usage
+
+printf '\n%s🐧 addwaddle%s → %s%s%s  %s(folder %s)%s\n\n' "$B" "$N" "$B" "$IP" "$N" "$DIM" "$DEST" "$N"
+
+# 1. Check the files before touching the network.
+step "Checking files"
+files=()
+total=0
+for f in "$@"; do
+  if [ -f "$f" ] && [ -r "$f" ]; then
+    size=$(stat -c %s "$f")
+    total=$((total + size))
+    files+=("$f")
+    ok "$(basename "$f") $DIM($(human "$size"))$N"
+  else
+    fail "$f: not found or not readable"
+  fi
+done
+[ ${#files[@]} -gt 0 ] || exit 1
+
+# 2. Is the reader on the network at all?
+step "Pinging reader"
+if out=$(ping -c 1 -W 2 "$IP" 2>/dev/null); then
+  ms=$(sed -n 's/.*time=\([0-9.]*\).*/\1/p' <<<"$out")
+  ok "Reachable ${DIM}(${ms} ms)$N"
+else
+  fail "No answer from $IP"
+  printf '    %sOpen File Transfer → Join a Network on the reader and keep the screen on.%s\n' "$Y" "$N"
+  exit 1
+fi
+
+# 3. Is the web server running?
+step "Connecting to web server"
+if status=$(curl -sf --max-time 4 "http://$IP/api/status"); then
+  field() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^,\"}]*\).*/\1/p" <<<"$status"; }
+  ok "Connected: $(field device) running $(field version)"
+  printf '    %sWi-Fi %s dBm, free memory %s, up %ss%s\n' "$DIM" "$(field rssi)" "$(human "$(field freeHeap)")" "$(field uptime)" "$N"
+else
+  fail "The reader answers ping, but the web server does not"
+  printf '    %sIs the File Transfer screen still open?%s\n' "$Y" "$N"
+  exit 1
+fi
+
+# 4. Upload.
+printf '\n'
+step "Starting upload: ${#files[@]} file(s), $(human "$total")"
+sent=0
+failed=0
+start=$SECONDS
+for f in "${files[@]}"; do
+  name=$(basename "$f")
+  printf '\n  %s%s%s\n' "$B" "$name" "$N"
+  body=$(mktemp)
+  result=$(curl -# -o "$body" -w '%{http_code} %{speed_upload} %{time_total}' \
+    --connect-timeout 5 -F "file=@$f" "http://$IP/upload?path=$DEST")
+  read -r code speed secs <<<"$result"
+  if [ "$code" = "200" ]; then
+    ok "Uploaded in ${secs%.*}s $DIM($(human "${speed%.*}")/s)$N"
+    sent=$((sent + 1))
+  else
+    fail "Failed (HTTP $code): $(head -c 200 "$body")"
+    failed=$((failed + 1))
+  fi
+  rm -f "$body"
+done
+
+# 5. Summary.
+printf '\n'
+if [ $failed -eq 0 ]; then
+  printf '%s🐧 Done!%s %d file(s) in %ds. Waddle on.\n\n' "$G$B" "$N" "$sent" $((SECONDS - start))
+else
+  printf '%s🐧 Done with errors:%s %d sent, %d failed.\n\n' "$Y$B" "$N" "$sent" "$failed"
+  exit 1
+fi
