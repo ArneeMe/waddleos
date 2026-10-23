@@ -87,6 +87,7 @@ Keep this table up to date. One row per upstream file.
 | File | Change | Why |
 |---|---|---|
 | `AGENTS.md` (`CLAUDE.md` is a link to it) | One line at the top pointing to this file | So AI agents read this first |
+| `lib/I18n/translations/norwegian.yaml` | 202 missing strings added, "Bla i filer" → "Filer" | Full Norwegian UI. On a conflict keep upstream's new keys and our values; worth sending the missing strings upstream |
 | `src/components/UITheme.cpp` | `#if WADDLE` include and a block at the top of `setTheme()` | Waddle theme replaces Lyra |
 | `platformio.ini` | `[env:x4pro-waddle]` appended at the end | Our build target |
 | `.github/workflows/*.yml` (all upstream ones) | Deleted | We only build the X4 Pro with `waddle-build.yml`. On a merge conflict, keep them deleted (`git rm`) |
