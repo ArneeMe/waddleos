@@ -11,12 +11,12 @@ open-source firmware for Xteink e-readers. All the reading features come from
 CrossPoint. WaddleOS adds:
 
 - A penguin home screen that says hello in Norwegian ("Hei Arne!").
-- Penguin sleep screen and assets (`assets/waddle/`).
-- Wi-Fi upload from the command line (`tools/addwaddle`).
+- Penguin boot and sleep screens (`src/waddle/`, `assets/waddle/`).
+- Firmware updates over Wi-Fi with one command (`tools/waddle-update`).
+- Book upload from the command line (`tools/addwaddle`).
 - A build for the X4 Pro only.
 
-Planned: one-command firmware updates over Wi-Fi, and a privacy build where
-nothing phones home. See [the plan](/docs/waddle/PLAN.md).
+Planned: a privacy build where nothing phones home. See [the plan](/docs/waddle/PLAN.md).
 
 ## Install
 
@@ -28,6 +28,18 @@ nothing phones home. See [the plan](/docs/waddle/PLAN.md).
 
 Back up the stock firmware first. Only for units that are not USB-locked
 (bought from xteink.com).
+
+## Update over Wi-Fi
+
+Open **File Transfer → Join a Network** on the reader, then:
+
+```sh
+tools/waddle-update              # latest build from GitHub
+tools/waddle-update firmware.bin # or a local build
+```
+
+Confirm the update on the reader. Set `WADDLE_IP` if the reader's IP is not
+`192.168.50.185`. Upload books with `tools/addwaddle book.epub`.
 
 ## Build
 

@@ -30,18 +30,18 @@ How to work in this fork: see [FORK.md](FORK.md).
   `waddleos-x4pro.bin` to the `waddle-latest` pre-release.
 - Never open anything in the upstream repo. See [FORK.md](FORK.md).
 
-## Step 1: update over Wi-Fi with one command
+## Step 1: update over Wi-Fi with one command (built, not tested on the device)
 
 Goal: run one script on Arch, and the reader installs the new firmware.
 
-- [ ] Device: `POST /api/firmware/apply` in the web server. Takes a `.bin` that
+- [x] Device: `POST /api/firmware/apply` in the web server. Takes a `.bin` that
       `/upload` already put on the SD card, checks it with
       `firmware_flash::validateImageFile` (checksum, SHA, chip, board tag),
       flashes it with `firmware_flash::flashFromSdPath`, then reboots.
       See `src/network/FirmwareFlasher.h`.
-- [ ] Open question: show an "Install? Yes/No" prompt on the reader first?
-- [ ] Arch: `tools/waddle-push.sh`: build with `pio run -e x4pro-waddle`,
-      upload with `curl`, call apply, wait, check version with `/api/status`.
+- [x] The reader asks "Update firmware?" before flashing (the existing SD update screen).
+- [x] Arch: `tools/waddle-update`: downloads the latest build (or takes a local
+      `.bin`), checks it, uploads it and calls apply.
 - [ ] First install of this build: once over USB with `esptool`, or upload the
       `.bin` and use **Settings → firmware update** on the reader.
 
@@ -49,11 +49,9 @@ Goal: run one script on Arch, and the reader installs the new firmware.
 
 - [x] Build target `x4pro-waddle` with version string `…-waddle`.
 - [x] Home screen theme (`src/waddle/WaddleTheme.*`).
-- [ ] `src/images/WaddleLogo120.h`: 1-bit penguin, made with `scripts/convert_icon.py`
-      from `assets/waddle/waddle-logo-120.png`.
-- [ ] Boot and default sleep screens show the penguin and "WaddleOS"
+- [x] Boot and default sleep screens show the penguin and "WaddleOS"
       (`src/activities/boot_sleep/BootActivity.cpp`, `SleepActivity.cpp:705`).
-      Note: the default sleep screen is inverted (dark) unless set to Light.
+      The default sleep screen is no longer inverted in our build.
 - [ ] Later: grayscale penguin built into the firmware (the boot logo is 1-bit today).
 - [x] README for WaddleOS, with credit to CrossPoint (`.github/README.md`).
 

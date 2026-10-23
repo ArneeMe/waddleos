@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Update the reader's firmware over Wi-Fi.
+
+By default it downloads the latest WaddleOS build from GitHub (the
+"waddle-latest" pre-release). Pass a .bin to use a local build instead.
+
+The reader must be on File Transfer -> Join a Network.
+
+  waddle-update                      # latest build from GitHub
+  waddle-update firmware.bin         # local file, e.g. .pio/build/x4pro-waddle/firmware.bin
+  waddle-update --ip 192.168.50.185  # reader IP (or set WADDLE_IP)
+  waddle-update --check              # download and check only, do not upload
+
+Only uses the Python standard library.
+"""
+
+import argparse
+import hashlib
+import http.client
+import json
+import os
+import struct
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+from pathlib import Path
+
+REPO = "ArneeMe/waddleos"
+TAG = "waddle-latest"
+ASSET = "waddleos-x4pro.bin"
+BOARD = b"x4pro"
+DEFAULT_IP = "192.168.50.185"
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "waddleos"
+
+ESP_MAGIC = 0xE9
+ESP32_S3_CHIP_ID = 9
+APP_PARTITION_SIZE = 0x640000  # partitions.csv: app0/app1
+BOARD_TAG_PREFIX = b"CROSSPOINT-BOARD-V1:"
+
+TTY = sys.stdout.isatty()
+B, DIM, G, R, Y, C, N = (
+    ("\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m") if TTY else ("",) * 7
+)
+
+
+def step(msg):
+    print(f"{C}▸{N} {msg}")
+
+
+def ok(msg):
+    print(f"  {G}✓{N} {msg}")
+
+
+def warn(msg):
+    print(f"  {Y}!{N} {msg}")
+
+
+def die(msg, hint=None):
+    print(f"  {R}✗{N} {msg}")
+    if hint:
+        print(f"    {Y}{hint}{N}")
+    sys.exit(1)
+
+
+def human(n):
+    for unit in ("B", "KB", "MB"):
+        if n < 1024 or unit == "MB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def progress(done, total, start):
+    width = 30
+    frac = done / total if total else 1
+    bar = "█" * int(frac * width) + "░" * (width - int(frac * width))
+    speed = done / max(time.time() - start, 0.001)
+    print(f"\r  {bar} {frac * 100:5.1f}%  {human(done)}/{human(total)}  {human(speed)}/s ", end="", flush=True)
+    if done >= total:
+        print()
+
+
+# 1. Firmware -----------------------------------------------------------------
+
+
+def fetch_latest():
+    step(f"Fetching latest build from github.com/{REPO}")
+    try:
+        with urllib.request.urlopen(f"https://api.github.com/repos/{REPO}/releases/tags/{TAG}", timeout=15) as r:
+            release = json.load(r)
+    except urllib.error.URLError as e:
+        die(f"Could not reach GitHub: {e}")
+    asset = next((a for a in release.get("assets", []) if a["name"] == ASSET), None)
+    if not asset:
+        die(f"No {ASSET} in the {TAG} release yet", "Has the WaddleOS build workflow finished?")
+    ok(f"{release.get('body', '').strip() or TAG}")
+    print(f"    {DIM}published {asset['updated_at'].replace('T', ' ').rstrip('Z')} UTC{N}")
+
+    CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / ASSET
+    total = asset["size"]
+    start = time.time()
+    with urllib.request.urlopen(asset["browser_download_url"], timeout=60) as r, open(path, "wb") as f:
+        done = 0
+        while chunk := r.read(64 * 1024):
+            f.write(chunk)
+            done += len(chunk)
+            progress(done, total, start)
+    return path
+
+
+def check_image(data):
+    """Same checks the reader runs before flashing (src/network/FirmwareFlasher.h)."""
+    step("Checking firmware image")
+    if len(data) < 64 or data[0] != ESP_MAGIC:
+        die("Not an ESP32 firmware image (bad magic byte)")
+    chip_id = struct.unpack_from("<H", data, 12)[0]
+    if chip_id != ESP32_S3_CHIP_ID:
+        die(f"Built for chip id {chip_id}, the X4 Pro is an ESP32-S3 ({ESP32_S3_CHIP_ID})")
+    if len(data) > APP_PARTITION_SIZE:
+        die(f"Too large: {human(len(data))}, the app slot is {human(APP_PARTITION_SIZE)}")
+    if data[23] == 1 and hashlib.sha256(data[:-32]).digest() != data[-32:]:
+        die("SHA-256 mismatch: the file is corrupt or incomplete")
+    i = data.find(BOARD_TAG_PREFIX)
+    if i >= 0:
+        board = data[i + len(BOARD_TAG_PREFIX) : data.find(b";", i)]
+        if board != BOARD:
+            die(f"Built for board '{board.decode(errors='replace')}', not {BOARD.decode()}")
+    ok(f"ESP32-S3 image for {BOARD.decode()}, {human(len(data))}, SHA-256 OK")
+
+
+# 2. Reader -------------------------------------------------------------------
+
+
+def reader_status(ip):
+    step(f"Connecting to reader at {ip}")
+    try:
+        with urllib.request.urlopen(f"http://{ip}/api/status", timeout=4) as r:
+            s = json.load(r)
+    except (urllib.error.URLError, OSError, ValueError):
+        die(f"No answer from {ip}", "Open File Transfer → Join a Network on the reader and keep the screen on.")
+    ok(f"{s.get('device', '?')} running {B}{s.get('version', '?')}{N}")
+    print(f"    {DIM}Wi-Fi {s.get('rssi', '?')} dBm, free memory {human(s.get('freeHeap', 0))}{N}")
+    return s
+
+
+def upload(ip, name, data):
+    step(f"Uploading {name}")
+    boundary = uuid.uuid4().hex
+    head = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{name}"\r\n'
+        "Content-Type: application/octet-stream\r\n\r\n"
+    ).encode()
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    host, _, port = ip.partition(":")
+    conn = http.client.HTTPConnection(host, int(port or 80), timeout=60)
+    conn.putrequest("POST", "/upload?path=/")
+    conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+    conn.putheader("Content-Length", str(len(head) + len(data) + len(tail)))
+    conn.endheaders()
+    conn.send(head)
+    start = time.time()
+    for i in range(0, len(data), 16 * 1024):
+        conn.send(data[i : i + 16 * 1024])
+        progress(min(i + 16 * 1024, len(data)), len(data), start)
+    conn.send(tail)
+    resp = conn.getresponse()
+    body = resp.read().decode(errors="replace").strip()
+    if resp.status != 200:
+        die(f"Upload failed (HTTP {resp.status}): {body[:200]}")
+    ok(f"Saved to the SD card as /{name}")
+
+
+def apply(ip, name):
+    """Asks the reader to install the file (/api/firmware/apply, WaddleOS only)."""
+    step("Asking the reader to install")
+    req = urllib.request.Request(f"http://{ip}/api/firmware/apply?path=/{name}", method="POST")
+    try:
+        # The reader checks the whole image first, which takes a few seconds.
+        with urllib.request.urlopen(req, timeout=60):
+            ok("Image accepted by the reader")
+            print(f"    {B}Confirm the update on the reader.{N} It installs and restarts by itself.")
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            die(f"The reader refused the update (HTTP {e.code}): {e.read().decode(errors='replace')[:200]}")
+    except (urllib.error.URLError, OSError):
+        die("Lost the connection while starting the install")
+    warn("The firmware on the reader cannot install over Wi-Fi yet. Finish on the reader:")
+    print(f"    {B}Settings → firmware update → /{name}{N}")
+    return False
+
+
+# -----------------------------------------------------------------------------
+
+
+def main():
+    p = argparse.ArgumentParser(description="Update the reader's firmware over Wi-Fi.")
+    p.add_argument("file", nargs="?", help="local .bin (default: latest build from GitHub)")
+    p.add_argument("--ip", default=os.environ.get("WADDLE_IP", DEFAULT_IP), help="reader IP (env WADDLE_IP)")
+    p.add_argument("--check", action="store_true", help="only get and check the firmware, do not upload")
+    args = p.parse_args()
+
+    print(f"\n{B}🐧 waddle-update{N}\n")
+    path = Path(args.file) if args.file else fetch_latest()
+    if not path.is_file():
+        die(f"{path}: not found")
+    data = path.read_bytes()
+    check_image(data)
+    if args.check:
+        print(f"\n{G}{B}🐧 Image OK:{N} {path}\n")
+        return
+
+    reader_status(args.ip)
+    upload(args.ip, ASSET, data)
+    installed = apply(args.ip, ASSET)
+    print(f"\n{G}{B}🐧 {'Done! Waddle on.' if installed else 'Uploaded. Finish on the reader.'}{N}\n")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print()
+        sys.exit(130)

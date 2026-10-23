@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <esp_random.h>
 
+#include "WaddleDraw.h"
 #include "WaddlePenguin.h"
 #include "fontIds.h"
 
@@ -24,24 +25,6 @@ const char* phrase() {
   return chosen;
 }
 
-// Draws the penguin sprite with its top-left corner at (x, y), each pixel scale x scale.
-void drawPenguin(const GfxRenderer& renderer, const int x, const int y, const int scale, const bool mirror = false) {
-  for (int row = 0; row < WADDLE_PENGUIN_SIZE; row++) {
-    for (int col = 0; col < WADDLE_PENGUIN_SIZE; col++) {
-      const char c = WADDLE_PENGUIN[row][mirror ? WADDLE_PENGUIN_SIZE - 1 - col : col];
-      if (c == ' ') continue;
-      for (int dy = 0; dy < scale; dy++) {
-        for (int dx = 0; dx < scale; dx++) {
-          const int px = x + col * scale + dx;
-          const int py = y + row * scale + dy;
-          const bool black = c == '#' || (c == ':' && ((px + py) & 1) == 0);
-          renderer.drawPixel(px, py, black);
-        }
-      }
-    }
-  }
-}
-
 }  // namespace
 
 void WaddleTheme::drawHeader(const GfxRenderer& renderer, const Rect rect, const char* title, const char* subtitle,
@@ -53,7 +36,7 @@ void WaddleTheme::drawHeader(const GfxRenderer& renderer, const Rect rect, const
   const auto& metrics = LyraMetrics::values;
   const int x = rect.x + metrics.contentSidePadding;
   const int y = rect.y + 8;
-  drawPenguin(renderer, x - 4, y - 4, 1);
+  waddle::drawPenguin(renderer, x - 4, y - 4, 1);
   const int textX = x + WADDLE_PENGUIN_SIZE + 6;
   renderer.drawText(UI_12_FONT_ID, textX, y, GREETING, true, EpdFontFamily::BOLD);
   renderer.drawText(SMALL_FONT_ID, textX, y + renderer.getLineHeight(UI_12_FONT_ID) + 4, phrase());
@@ -68,7 +51,7 @@ void WaddleTheme::drawRecentBookCover(GfxRenderer& renderer, const Rect rect, co
   // 4 empty rows on top and its feet end at row 27, so at 2x it sits on the edge.
   constexpr int scale = 2;
   const int size = WADDLE_PENGUIN_SIZE * scale;
-  drawPenguin(renderer, rect.x + rect.width - size - 16, rect.y - 27 * scale + 6, scale);
+  waddle::drawPenguin(renderer, rect.x + rect.width - size - 16, rect.y - 27 * scale + 6, scale);
 }
 
 void WaddleTheme::drawButtonMenu(GfxRenderer& renderer, const Rect rect, const int buttonCount, const int selectedIndex,
@@ -90,8 +73,8 @@ void WaddleTheme::drawButtonMenu(GfxRenderer& renderer, const Rect rect, const i
       renderer.drawPixel(x, y, ((x + y) & 1) == 0);
     }
   }
-  drawPenguin(renderer, screenW - 190, bigTop, bigScale, true);
-  drawPenguin(renderer, screenW - 110, ground - 28, 1, true);
-  drawPenguin(renderer, screenW - 72, ground - 28, 1, true);
+  waddle::drawPenguin(renderer, screenW - 190, bigTop, bigScale, true);
+  waddle::drawPenguin(renderer, screenW - 110, ground - 28, 1, true);
+  waddle::drawPenguin(renderer, screenW - 72, ground - 28, 1, true);
   renderer.drawText(SMALL_FONT_ID, LyraMetrics::values.contentSidePadding, ground - 30, FOOTER);
 }

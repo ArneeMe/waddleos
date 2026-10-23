@@ -90,12 +90,26 @@ Keep this table up to date. One row per upstream file.
 | `src/components/UITheme.cpp` | `#if WADDLE` include and a block at the top of `setTheme()` | Waddle theme replaces Lyra |
 | `platformio.ini` | `[env:x4pro-waddle]` appended at the end | Our build target |
 | `.github/workflows/*.yml` (all upstream ones) | Deleted | We only build the X4 Pro with `waddle-build.yml`. On a merge conflict, keep them deleted (`git rm`) |
+| `.github/FUNDING.yml`, `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md` | Deleted | Upstream project files. Keep them deleted on a conflict |
+| `src/network/CrossPointWebServer.cpp` | `#if WADDLE` include and `registerRoutes()` call after the Wi-Fi routes | `/api/firmware/apply` |
+| `src/activities/network/CrossPointWebServerActivity.cpp` | `#if WADDLE` includes and a block after the `handleClient()` loop | Opens the SD update for a queued `.bin` |
+| `src/activities/settings/SdFirmwareUpdateActivity.*` | `#if WADDLE` constructor with a preset path, checks in `onEnter()` and `loop()` | Skip the file picker when started from the API |
+| `src/activities/boot_sleep/BootActivity.cpp`, `SleepActivity.cpp` | `#if WADDLE` swaps the logo block for `waddle::drawSplash()` | Penguin boot and sleep screens. The default sleep screen is not inverted |
 
 ## Upstream AI rules
 
-Upstream's `CLAUDE.md` and `.agents/` still apply (build, memory, testing,
-handoff checks). Where they talk about PRs to upstream, read them as commits to
-`waddle`. Commits and pushes need my OK, but do not keep asking. I will say when.
+Upstream's `CLAUDE.md` and `.agents/` still apply for code quality (memory,
+allocation, input, rendering, comment style). These parts are replaced in this fork:
+
+| Upstream rule | In this fork |
+|---|---|
+| "Integration work targets `develop`" | Branch from `waddle`, open a PR into `waddle` |
+| "Never open or close a PR" | Agents may open PRs, but **only in `ArneeMe/waddleos`**. Never open anything in `crosspoint-reader/crosspoint-reader` |
+| "The human must write PR descriptions" | Agents may write short, factual PR descriptions |
+| Ask before every commit and push | Commit and push to feature branches without asking. Never push to `develop`, never force-push `waddle` |
+| Four-review `firmware-handoff` | Optional. The PR build is the required check. Hardware testing is still on me |
+
+The local `upstream` remote has its push URL disabled on purpose.
 
 ## Building
 

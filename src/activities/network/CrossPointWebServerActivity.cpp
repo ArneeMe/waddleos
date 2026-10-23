@@ -20,6 +20,10 @@
 #include "util/PluginEvents.h"
 #include "util/QrUtils.h"
 #include "util/TaskWatchdog.h"
+#if WADDLE  // WADDLE: firmware apply endpoint
+#include "activities/settings/SdFirmwareUpdateActivity.h"
+#include "waddle/WaddleFirmwareApi.h"
+#endif
 
 namespace {
 // AP Mode configuration
@@ -430,6 +434,16 @@ void CrossPointWebServerActivity::loop() {
         }
       }
       lastHandleClientTime = millis();
+
+#if WADDLE  // WADDLE: a .bin queued by /api/firmware/apply opens the SD update with it
+      std::string firmwarePath;
+      if (waddle::firmware::takePending(firmwarePath)) {
+        startActivityForResult(
+            std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput, false, std::move(firmwarePath)),
+            [this](const ActivityResult&) { requestUpdate(); });
+        return;
+      }
+#endif
     }
 
     // Also check outside the request-processing loop.
