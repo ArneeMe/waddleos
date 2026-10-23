@@ -32,7 +32,6 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
-#include "KOReaderCredentialStore.h"
 #include "LcpPassphraseStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
@@ -47,7 +46,6 @@
 #include "fontIds.h"
 #include "platform/UsbSerialJtagHandoff.h"
 #include "util/ButtonNavigator.h"
-#include "util/PluginEvents.h"
 #include "util/ScreenshotUtil.h"
 #include "util/Timezones.h"
 
@@ -363,66 +361,6 @@ static bool loadSleepFrameBuffer() {
   return true;
 }
 
-// Plugin-event delivery on the way into deep sleep. sleep.enter is delivered
-// now — over the live connection, or by bringing WiFi up when a plugin
-// subscribes (e.g. fetching a fresh /sleep.bmp so THIS sleep shows it — the
-// drain runs before goToSleep() renders the sleep screen). The connect path
-// is bounded (join deadline + drain event budget), skipped on low battery,
-// and sleep is never blocked on the network: a failed join or delivery just
-// sleeps with the previous image and the queued events retry on the next
-// drain (at-least-once). The caller's WiFi shutdown tears the radio down
-// either way. Deferrable events already queued (reader.exit) ride along in
-// the same drain.
-static void deliverSleepPluginEvents(const bool allowNetwork) {
-  // Activity-owned state must be queued before sleep.enter and before this
-  // same-sleep drain. The hook is idempotent with ordinary activity teardown.
-  activityManager.prepareForSleep();
-
-  // Sleeping straight out of a book is the common flow, but the reader's own
-  // reader.exit only fires later, inside goToSleep() — after this drain. Carry
-  // the book and progress on sleep.enter itself so a sync handler bound to it
-  // pushes current progress on THIS connection, not the next one.
-  pluginevents::Var vars[2];
-  size_t varCount = 0;
-  char percent[8];
-  const ScreenshotInfo info = activityManager.getScreenshotInfo();
-  if (info.readerType != ScreenshotInfo::ReaderType::None && !APP_STATE.openEpubPath.empty()) {
-    snprintf(percent, sizeof(percent), "%d", info.progressPercent);
-    vars[varCount++] = {"book", APP_STATE.openEpubPath.c_str()};
-    vars[varCount++] = {"percent", percent};
-  }
-  pluginevents::emit(pluginevents::Event::SleepEnter, vars, varCount);
-  if (!allowNetwork) return;
-  if (WiFi.status() == WL_CONNECTED) {
-    pluginevents::drain(&renderer);
-    return;
-  }
-  // Any connect-flagged queued event justifies the join, not only
-  // sleep.enter: reader.session is queued while reading and delivered on this
-  // same sleep, and a progress-sync plugin usually subscribes to it alone.
-#if WADDLE_PRIVATE  // WADDLE: never join Wi-Fi in the background
-  return;
-#endif
-  if (!pluginevents::wantsConnectAny()) return;
-  if (powerManager.getBatteryPercentage() < 20) return;
-  const auto cred = WIFI_STORE.findCredential(WIFI_STORE.getLastConnectedSsid());
-  if (!cred) return;
-
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(cred->ssid.c_str(), cred->password.c_str());
-  const unsigned long joinDeadline = millis() + 10000;
-  while (WiFi.status() != WL_CONNECTED && millis() < joinDeadline) {
-    delay(100);
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    trustedtime::startSync();  // snap the clock floor while the network is up
-    pluginevents::drain(&renderer);
-  } else {
-    LOG_DBG("MAIN", "Sleep-event WiFi join timed out; deferring delivery");
-  }
-}
-
 #if FREEINK_DEVICE_PICCO
 // Charge strip along the bottom of the retained sleep screen.
 static void drawSleepChargeStrip(const bool charging, const uint16_t percent) {
@@ -472,7 +410,8 @@ void enterDeepSleep(bool fromTimeout = false) {
   deepSleepInProgress = true;
   const bool bluetoothStopped = bleturner::beforeSleep(2000);
   if (!bluetoothStopped) LOG_ERR("SLP", "Bluetooth did not stop; deferring sleep-event delivery");
-  deliverSleepPluginEvents(bluetoothStopped);
+  // Activity-owned state is saved before the sleep screen is drawn.
+  activityManager.prepareForSleep();
 
   const bool isQuickResumeSleep =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -661,13 +600,11 @@ void setup() {
   timezones::applyToClock();
   RECENT_BOOKS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
-  KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
   OPDS_TOKENS.loadFromFile();
   LCP_PASSPHRASES.loadFromFile();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
-  pluginevents::refreshSubscriptions();
   // Seed the system clock from the battery-backed RTC: on RTC boards it is the
   // only real clock across power-off, and time() is what plugin event
   // timestamps, TLS and file dates read. Placed before trustedtime::init(),

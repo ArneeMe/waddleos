@@ -21,7 +21,6 @@
 #include "CrossPointSettings.h"
 #include "FontDownloadActivity.h"
 #include "HomeButtonSettingsActivity.h"
-#include "KOReaderSettingsActivity.h"
 #include "KeyboardLayoutsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
@@ -38,7 +37,6 @@
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
-#include "util/PluginEvents.h"
 
 namespace fui = freeink::ui;
 
@@ -133,9 +131,6 @@ void SettingsActivity::rebuildSettings() {
   if (bleturner::status().compiledIn) {
     addAction(SettingsSection::Network, StrId::STR_BT_PAGE_TURNER, SettingAction::Bluetooth);
   }
-#if !WADDLE_PRIVATE  // WADDLE: cloud sync hidden
-  addAction(SettingsSection::Network, StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync);
-#endif
   addAction(SettingsSection::Network, StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser);
   addAction(SettingsSection::Network, StrId::STR_PLUGINS, SettingAction::Plugins);
 
@@ -301,9 +296,6 @@ void SettingsActivity::toggleSelectedSetting() {
           LOG_ERR("SETTINGS", "OOM: ClockSettingsActivity");
         }
         break;
-      case SettingAction::KOReaderSync:
-        startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
-        break;
       case SettingAction::OPDSBrowser:
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
@@ -377,8 +369,6 @@ void SettingsActivity::toggleSelectedSetting() {
           // Turning plugins on brings back a dismissed Plugin Hub install row.
           if (SETTINGS.pluginsEnabled) SETTINGS.pluginHubPromptHidden = 0;
           SETTINGS.saveToFile();
-          // Applies to event delivery now, not after a reboot.
-          pluginevents::refreshSubscriptions();
           rebuildSettings();
         });
         requestUpdate();

@@ -15,7 +15,6 @@
 
 #include "CrossPointSettings.h"
 #include "HomeButtonSettings.h"
-#include "KOReaderCredentialStore.h"
 #include "ReaderFontSizes.h"
 #include "activities/settings/SettingsActivity.h"
 #include "components/UITheme.h"
@@ -182,8 +181,8 @@ inline SettingInfo buildDictionarySetting(const std::vector<DictionaryEntry>& di
 }
 
 inline std::vector<StrId> buildLongPressMenuValues() {
-  std::vector<StrId> values = {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION,
-                               StrId::STR_DICTIONARY};
+  // No KOReader sync in WaddleOS: the list starts at LP_MENU_DISABLED.
+  std::vector<StrId> values = {StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY};
   values.reserve(CrossPointSettings::LONG_PRESS_MENU_FUNCTION_COUNT);
   if (BoardConfig::hasHomeKey()) values.push_back(StrId::STR_READER_MENU);
   values.push_back(StrId::STR_SAVE_CLIPPING);
@@ -192,20 +191,23 @@ inline std::vector<StrId> buildLongPressMenuValues() {
 }
 
 inline uint8_t longPressMenuDisplayValue() {
+  // Display index = raw - 1 (no KOReader entry), minus one more after the
+  // reader-menu slot on boards without a home key.
   const uint8_t raw = SETTINGS.longPressMenuFunction;
-  if (raw <= CrossPointSettings::LP_MENU_DICTIONARY) return raw;
+  if (raw == CrossPointSettings::LP_MENU_KOSYNC) return 0;
+  if (raw <= CrossPointSettings::LP_MENU_DICTIONARY) return raw - 1;
   if (raw == CrossPointSettings::LP_MENU_READER_MENU) {
-    return BoardConfig::hasHomeKey() ? CrossPointSettings::LP_MENU_READER_MENU : CrossPointSettings::LP_MENU_DISABLED;
+    return BoardConfig::hasHomeKey() ? CrossPointSettings::LP_MENU_READER_MENU - 1 : 0;
   }
-  if (raw < CrossPointSettings::LONG_PRESS_MENU_FUNCTION_COUNT) return BoardConfig::hasHomeKey() ? raw : raw - 1;
-  return CrossPointSettings::LP_MENU_DISABLED;
+  if (raw < CrossPointSettings::LONG_PRESS_MENU_FUNCTION_COUNT) return BoardConfig::hasHomeKey() ? raw - 1 : raw - 2;
+  return 0;
 }
 
 inline void setLongPressMenuFromDisplayValue(const uint8_t displayValue) {
-  if (displayValue <= CrossPointSettings::LP_MENU_DICTIONARY) {
-    SETTINGS.longPressMenuFunction = displayValue;
+  if (displayValue < CrossPointSettings::LP_MENU_DICTIONARY) {
+    SETTINGS.longPressMenuFunction = displayValue + 1;
   } else {
-    SETTINGS.longPressMenuFunction = BoardConfig::hasHomeKey() ? displayValue : displayValue + 1;
+    SETTINGS.longPressMenuFunction = BoardConfig::hasHomeKey() ? displayValue + 1 : displayValue + 2;
   }
 }
 
@@ -235,7 +237,6 @@ inline std::vector<ShortPowerButtonOption> shortPowerButtonOptions() {
   // Touch boards without a home key have no button for these shortcuts.
   if (BoardConfig::hasTouch() && !BoardConfig::hasHomeKey()) {
     options.push_back({StrId::STR_BOOKMARK_OPTION, CrossPointSettings::PWR_BOOKMARK});
-    options.push_back({StrId::STR_KOSYNC, CrossPointSettings::PWR_SYNC});
     options.push_back({StrId::STR_READER_MENU, CrossPointSettings::PWR_READER_MENU});
   }
   return options;

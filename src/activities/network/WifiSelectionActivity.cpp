@@ -16,7 +16,6 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "util/PluginEvents.h"
 #if WADDLE_PRIVATE  // WADDLE: privacy build
 #include "waddle/WaddlePrivacy.h"
 #endif
@@ -548,11 +547,6 @@ void WifiSelectionActivity::checkConnectionStatus() {
       RenderLock lock(*this);
       WIFI_STORE.setLastConnectedSsid(selectedSSID);
     }
-
-    // Every station join is a window where plugin senders are deliverable, so
-    // drain the plugin outboxes here (web server up and sleep entry are the
-    // other such moments). Cheap no-op when nothing is queued.
-    pluginevents::drain(&renderer);
 
     // If we entered a new password, ask if user wants to save it
     // Otherwise, immediately complete so parent can start web server

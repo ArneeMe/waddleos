@@ -3,7 +3,6 @@
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
-#include <KOReaderDocumentId.h>
 #include <Memory.h>
 #include <TrustedTime.h>
 
@@ -18,7 +17,6 @@
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "XtcReaderActivity.h"
-#include "util/PluginEvents.h"
 
 ReaderActivity::ReaderActivity(const char* name, GfxRenderer& renderer, MappedInputManager& mappedInput,
                                std::string bookPath, const bool allowFastInitialRefresh)
@@ -90,8 +88,6 @@ void ReaderActivity::rememberBookOnceRendered() {
   APP_STATE.openEpubPath = bookPath;
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(bookPath, getBookTitle(), getBookAuthor(), getBookThumbBmpPath());
-  const pluginevents::Var openVars[] = {{"book", bookPath.c_str()}};
-  pluginevents::emit(pluginevents::Event::ReaderOpen, openVars, 1);
 }
 
 void ReaderActivity::onExit() {
@@ -104,16 +100,7 @@ void ReaderActivity::onExit() {
 
   LOG_INF("MEM", "reader exit: free=%u max_block=%u", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
 
-  // Flush BEFORE the ReaderExit event: the session's final progress must be
-  // durable before a subscriber can act on the exit notification.
   flushReaderSession();
-
-  if (pluginevents::anySubscriber(pluginevents::Event::ReaderExit)) {
-    char percent[8];
-    snprintf(percent, sizeof(percent), "%d", getScreenshotInfo().progressPercent);
-    const pluginevents::Var vars[] = {{"book", bookPath.c_str()}, {"percent", percent}};
-    pluginevents::emit(pluginevents::Event::ReaderExit, vars, 2);
-  }
 
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   APP_STATE.readerActivityLoadCount = 0;
@@ -125,36 +112,8 @@ void ReaderActivity::onExit() {
 
 void ReaderActivity::prepareForSleep() { flushReaderSession(); }
 
-void ReaderActivity::flushReaderSession() {
-  if (!readerSession.isEmitWorthy() || !pluginevents::anySubscriber(pluginevents::Event::ReaderSession)) {
-    readerSession.reset();
-    return;
-  }
-
-  const std::string document = KOReaderDocumentId::calculate(bookPath);
-  const bool validDocument =
-      document.size() == 32 && std::all_of(document.begin(), document.end(), [](const unsigned char c) {
-        return std::isdigit(c) || (c >= 'a' && c <= 'f');
-      });
-  if (validDocument) {
-    char startTime[24];
-    char endTime[24];
-    char duration[16];
-    char startProgress[8];
-    char endProgress[8];
-    snprintf(startTime, sizeof(startTime), "%lld", static_cast<long long>(readerSession.startTime()));
-    snprintf(endTime, sizeof(endTime), "%lld", static_cast<long long>(readerSession.endTime()));
-    snprintf(duration, sizeof(duration), "%lu", static_cast<unsigned long>(readerSession.durationSeconds()));
-    snprintf(startProgress, sizeof(startProgress), "%u", readerSession.startProgressBp());
-    snprintf(endProgress, sizeof(endProgress), "%u", readerSession.endProgressBp());
-    const pluginevents::Var vars[] = {{"book", bookPath.c_str()},       {"document", document.c_str()},
-                                      {"start_time", startTime},        {"end_time", endTime},
-                                      {"duration_seconds", duration},   {"start_progress_bp", startProgress},
-                                      {"end_progress_bp", endProgress}, {"progress_scale", "10000"}};
-    pluginevents::emit(pluginevents::Event::ReaderSession, vars, 8);
-  }
-  readerSession.reset();
-}
+// Reading sessions are not reported anywhere in WaddleOS.
+void ReaderActivity::flushReaderSession() { readerSession.reset(); }
 
 bool ReaderActivity::handleBackNavigation() {
   return ReaderUtils::handleBackNavigation(mappedInput, activityManager, bookPath.c_str(),
