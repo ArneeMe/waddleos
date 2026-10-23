@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ArduinoJson.h>
+#include <I18nKeys.h>
 #include <BlePageTurner.h>
 #include <Epub/ReaderRenderSpec.h>
 #include <PersistableStore.h>
@@ -259,7 +260,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t clockFormat = 0;
   // Index into the timezone table (src/util/Timezones.cpp, append-only).
   // 255 = never chosen; falls back to the legacy UTC offset, then UTC.
-  uint8_t clockTimezone = 255;
+  // WaddleOS default: Oslo (index 19, CET/CEST).
+  uint8_t clockTimezone = 19;
   // CLOCK_DST_MODE: follow the zone's DST rule, or force it on/off.
   uint8_t clockDst = CLOCK_DST_AUTO;
   // Show the clock opposite the battery in every header band that draws one.
@@ -395,7 +397,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
   uint8_t slideSwitchAction = SLIDE_SWITCH_FRONTLIGHT;
   // Language setting (Language enum index, default 0 = EN)
-  uint8_t language = 0;
+  // WaddleOS default: Norsk bokmål.
+  uint8_t language = static_cast<uint8_t>(Language::NB);
   // Keyboard layouts the user can reach, using keyboard_layouts::ALL table bits.
   // 0 means "not configured", resolved to the UI language's layout plus English.
   // Any other value is an explicit choice and is used as-is: the language of the

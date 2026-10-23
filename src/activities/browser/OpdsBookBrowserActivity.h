@@ -107,27 +107,9 @@ class OpdsBookBrowserActivity final : public CatalogActivity {
   void buildBrowsingScreen(UiScreen& screen);
   static void onPageEvent(const freeink::ui::ActionEvent& event, void* user);
 
-  // LCP acquisition: fetch the license, fulfill through the LCP service,
-  // then prompt for the passphrase and store the device-wrapped book key.
-  void downloadLcpBook(const OpdsEntry& book);
-  enum class LcpUnlock { Ok, WrongPassphrase, Failed };
-  // Content key wrapped to this device's enrolled X25519 key (base64 fields).
-  struct LcpWrappedKey {
-    std::string epk, iv, ct, tag;
-  };
-  LcpUnlock requestLcpUnlock(const std::string& userKeyHex);
-  // Saved per-provider hash first; the keyboard only on a miss or a 403.
-  void startLcpUnlock();
-  void promptLcpPassphrase(bool retry);
-  // Decodes the /unlock response ({content_key: b64, expires: epoch}).
-  static bool parseUnlockResponse(const std::string& response, LcpWrappedKey* wrapped, int64_t* expiresAt);
+  void downloadLcpBook(const OpdsEntry& book);  // refuses DRM books
   std::string downloadDestination(const OpdsEntry& book) const;
   bool verifyAndRegisterEpub(const std::string& filename);
-  // Fulfilled LCP book awaiting its passphrase (path + parsed license).
-  freeink::content::LcpLicense pendingLcpLicense;
-  // Raw license JSON, kept verbatim for the /unlock request body.
-  std::string pendingLcpLicenseText;
-  std::string pendingLcpPath;
 
   void fetchFeed(const std::string& path);
   void releaseEntries();

@@ -281,7 +281,8 @@ void CrossPointWebServer::begin() {
   wsServer->onEvent(wsEventCallback);
   LOG_DBG("WEB", "WebSocket server started");
 
-  udpActive = udp.begin(LOCAL_UDP_PORT);
+  // No discovery replies: the reader does not announce itself on the network.
+  udpActive = false;
   LOG_DBG("WEB", "Discovery UDP %s on port %d", udpActive ? "enabled" : "failed", LOCAL_UDP_PORT);
 
   // Do not subscribe the serving task to the task watchdog. Arduino WebServer
@@ -323,7 +324,7 @@ void CrossPointWebServer::resumeTransferServices() {
       LOG_ERR("WEB", "OOM: WebSocket server restart");
     }
   }
-  if (udpActive) udpActive = udp.begin(LOCAL_UDP_PORT);
+
   LOG_DBG("WEB", "Transfer services resumed, heap %u, max block %u", (unsigned)ESP.getFreeHeap(),
           (unsigned)ESP.getMaxAllocHeap());
 }

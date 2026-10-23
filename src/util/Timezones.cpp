@@ -31,7 +31,7 @@ constexpr TimezoneInfo TABLE[] = {
     {"Azores", "AZOT1AZOST,M3.5.0/0,M10.5.0/1", -4},
     {"UTC", "UTC0", 0},
     {"London / Dublin / Lisbon", "GMT0BST,M3.5.0/1,M10.5.0", 0},
-    {"Berlin / Paris / Madrid / Rome", "CET-1CEST,M3.5.0,M10.5.0/3", 4},
+    {"Oslo / Berlin / Paris / Rome", "CET-1CEST,M3.5.0,M10.5.0/3", 4},
     {"Lagos / Algiers", "WAT-1", 4},
     {"Athens / Helsinki / Kyiv", "EET-2EEST,M3.5.0/3,M10.5.0/4", 8},
     {"Cairo", "EET-2EEST,M4.5.5/0,M10.5.4/24", 8},

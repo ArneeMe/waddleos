@@ -49,13 +49,11 @@ void stopDnsServer() {
   dnsServer = nullptr;
 }
 
+// WaddleOS does not announce the reader on the network (no mDNS); use the IP.
 void restartMdns(const char* hostname, const char* tag) {
+  (void)hostname;
+  (void)tag;
   MDNS.end();
-  if (MDNS.begin(hostname)) {
-    LOG_DBG(tag, "mDNS started: http://%s.local/", hostname);
-  } else {
-    LOG_DBG(tag, "WARNING: mDNS failed to start");
-  }
 }
 
 // 0..4 bars from RSSI (dBm), with 3 dBm hysteresis on currentBars to suppress flicker.
@@ -527,17 +525,11 @@ void CrossPointWebServerActivity::renderServerRunning() const {
                       EpdFontFamily::BOLD);
     startY += height10 + metrics.verticalSpacing * 2;
 
-    std::string hostnameUrl = std::string("http://") + AP_HOSTNAME + ".local/";
-    std::string ipUrl = tr(STR_OR_HTTP_PREFIX) + connectedIP + "/";
-
-    // Show QR code for URL
+    // No mDNS in WaddleOS, so the address is the IP.
+    const std::string ipUrl = "http://" + connectedIP + "/";
     const Rect qrBoundsUrl(metrics.contentSidePadding, startY, QR_CODE_WIDTH, QR_CODE_HEIGHT);
-    QrUtils::drawQrCode(renderer, qrBoundsUrl, hostnameUrl);
-
-    // Show IP address as fallback
+    QrUtils::drawQrCode(renderer, qrBoundsUrl, ipUrl);
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding + QR_CODE_WIDTH + metrics.verticalSpacing, startY + 80,
-                      hostnameUrl.c_str());
-    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding + QR_CODE_WIDTH + metrics.verticalSpacing, startY + 100,
                       ipUrl.c_str());
   } else {
     startY += metrics.verticalSpacing * 2;
@@ -558,10 +550,6 @@ void CrossPointWebServerActivity::renderServerRunning() const {
     // Show web server URL prominently
     renderer.drawCenteredText(UI_10_FONT_ID, startY, webInfo.c_str(), true);
     startY += height10 + 5;
-
-    // Also show hostname URL
-    std::string hostnameUrl = std::string(tr(STR_OR_HTTP_PREFIX)) + AP_HOSTNAME + ".local/";
-    renderer.drawCenteredText(SMALL_FONT_ID, startY, hostnameUrl.c_str(), true);
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_EXIT), "", "", "");

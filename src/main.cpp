@@ -32,7 +32,6 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
-#include "LcpPassphraseStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "OpdsTokenStore.h"
@@ -602,7 +601,6 @@ void setup() {
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   OPDS_STORE.loadFromFile();
   OPDS_TOKENS.loadFromFile();
-  LCP_PASSPHRASES.loadFromFile();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
   // Seed the system clock from the battery-backed RTC: on RTC boards it is the

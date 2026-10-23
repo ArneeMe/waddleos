@@ -19,7 +19,6 @@
 #include "ClearCacheActivity.h"
 #include "ClockSettingsActivity.h"
 #include "CrossPointSettings.h"
-#include "FontDownloadActivity.h"
 #include "HomeButtonSettingsActivity.h"
 #include "KeyboardLayoutsActivity.h"
 #include "LanguageSelectActivity.h"
@@ -107,7 +106,6 @@ void SettingsActivity::rebuildSettings() {
   addAction(SettingsSection::General, StrId::STR_LANGUAGE, SettingAction::Language);
   addAction(SettingsSection::General, StrId::STR_KEYBOARD_LAYOUTS, SettingAction::KeyboardLayouts);
   addAction(SettingsSection::Reader, StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings);
-  addAction(SettingsSection::Reader, StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts);
   if (BoardConfig::hasHomeKey()) {
     addAction(SettingsSection::Controls, StrId::STR_HOME_BUTTON, SettingAction::HomeButton);
   }
@@ -335,13 +333,6 @@ void SettingsActivity::toggleSelectedSetting() {
         break;
       case SettingAction::SdFirmwareUpdate:
         startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);
-        break;
-      case SettingAction::DownloadFonts:
-        startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
-                               [this](const ActivityResult&) {
-                                 SETTINGS.saveToFile();
-                                 rebuildSettings();
-                               });
         break;
       case SettingAction::TextSettings:
         startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),

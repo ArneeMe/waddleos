@@ -26,7 +26,6 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "activities/reader/DictionaryDefinitionActivity.h"  // plain-text README viewer
-#include "activities/settings/PluginHubInstallActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/DetailsActivity.h"
 #include "components/CatalogScreens.h"
@@ -429,8 +428,9 @@ void PluginCatalogActivity::onEnter() {
 void PluginCatalogActivity::enterPluginPicker() {
   Storage.remove(BROWSE_TMP_PATH);
   installedPlugins = discoverPlugins();
-  pluginHubAvailable = PluginHubInstallActivity::isAvailable();
-  showPluginHubInstallRow = !pluginHubAvailable && !SETTINGS.pluginHubPromptHidden;
+  // No Plugin Hub in WaddleOS: plugins are copied to the SD card by hand.
+  pluginHubAvailable = false;
+  showPluginHubInstallRow = false;
 
   manifestPath.clear();
   manifest = Manifest{};
@@ -1204,29 +1204,6 @@ void PluginCatalogActivity::activateIndex(const int index) {
       return;
     }
     const int pluginStart = showOpds ? 1 : 0;
-    if (showPluginHubInstallRow && index == pluginStart) {
-      static constexpr StrId OPTIONS[] = {StrId::STR_INSTALL, StrId::STR_HIDE, StrId::STR_CANCEL};
-      pluginHubPopup.show(StrId::STR_PLUGIN_HUB, OPTIONS, 3, 0, [this](const int selected) {
-        if (selected == 0) {
-          auto installer = makeUniqueNoThrow<PluginHubInstallActivity>(renderer, mappedInput, false);
-          if (!installer) {
-            LOG_ERR("PCAT", "OOM: Plugin Hub installer");
-            return;
-          }
-          startActivityForResult(std::move(installer), [this](const ActivityResult& result) {
-            ignoreHubInstallerBackRelease =
-                result.isCancelled && mappedInput.isPressed(MappedInputManager::Button::Back);
-            enterPluginPicker();
-          });
-        } else if (selected == 1) {
-          SETTINGS.pluginHubPromptHidden = 1;
-          SETTINGS.saveToFile();
-          enterPluginPicker();
-        }
-      });
-      requestUpdate();
-      return;
-    }
     const int syntheticHubRows = showPluginHubInstallRow ? 1 : 0;
     const PluginRef& plugin = installedPlugins[index - pluginStart - syntheticHubRows];
     const auto action = PluginLocations::pickerAction(plugin.deviceKind, !plugin.readmePath.empty());
