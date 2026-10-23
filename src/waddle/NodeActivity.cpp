@@ -28,6 +28,14 @@ constexpr size_t MAX_PRESETS = 4;
 // Optional override: a file with just the Node's IP address.
 constexpr const char* NODE_IP_FILE = "/.waddle/node-ip.txt";
 
+// Short button names for the Node's inputs, matched on the preset URL so a
+// renamed preset in the BluOS app still gets the short name.
+const char* shortName(const std::string& url) {
+  if (url.rfind("Capture:hw:imxspdif", 0) == 0) return "TV";
+  if (url.rfind("Capture:plughw:soundadc", 0) == 0) return "LP";
+  return nullptr;
+}
+
 std::string nodeHost() {
   if (Storage.exists(NODE_IP_FILE)) {
     String ip = Storage.readFile(NODE_IP_FILE);
@@ -73,6 +81,9 @@ void NodeActivity::loadNode() {
     state = State::NO_NODE;
   } else {
     if (presets.size() > MAX_PRESETS) presets.resize(MAX_PRESETS);
+    for (auto& preset : presets) {
+      if (const char* name = shortName(preset.url)) preset.name = name;
+    }
     state = State::READY;
   }
   lastPollAt = millis();
@@ -191,9 +202,19 @@ void drawButton(const GfxRenderer& renderer, const int x, const int y, const int
   } else {
     renderer.drawRoundedRect(x, y, w, h, 2, 10, true);
   }
-  const int textW = renderer.getTextWidth(UI_12_FONT_ID, label, EpdFontFamily::BOLD);
+  // Shorten with "..." until the label fits inside the button.
+  std::string text = label;
+  const int maxW = w - 16;
+  while (text.size() > 1 && renderer.getTextWidth(UI_12_FONT_ID, text.c_str(), EpdFontFamily::BOLD) > maxW) {
+    text.erase(text.size() - (text.size() > 3 && text.compare(text.size() - 3, 3, "...") == 0 ? 4 : 1));
+    // Do not leave half of a UTF-8 character (æ, ø, å).
+    while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xC0) == 0x80) text.pop_back();
+    if (!text.empty() && static_cast<unsigned char>(text.back()) >= 0xC0) text.pop_back();
+    if (text.size() < 3 || text.compare(text.size() - 3, 3, "...") != 0) text += "...";
+  }
+  const int textW = renderer.getTextWidth(UI_12_FONT_ID, text.c_str(), EpdFontFamily::BOLD);
   const int textY = y + (h - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
-  renderer.drawText(UI_12_FONT_ID, x + (w - textW) / 2, textY, label, !selected, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, x + (w - textW) / 2, textY, text.c_str(), !selected, EpdFontFamily::BOLD);
 }
 
 }  // namespace
