@@ -24,6 +24,25 @@ void drawPenguin(const GfxRenderer& renderer, const int x, const int y, const in
   }
 }
 
+namespace {
+// '#' is black, anything else is left untouched.
+constexpr const char* NOTE_SINGLE[] = {"   #   ", "   ##  ", "   # # ", "   #  #", "   #   ",
+                                       "   #   ", " ###   ", "####   ", "####   ", " ##    "};
+constexpr const char* NOTE_DOUBLE[] = {"  #####", "  #   #", "  #   #", "  #   #", "  #   #",
+                                       " ##  ##", "### ###", "### ###", " #   # "};
+}  // namespace
+
+void drawNote(const GfxRenderer& renderer, const int x, const int y, const int scale, const int kind) {
+  const char* const* rows = kind == 0 ? NOTE_SINGLE : NOTE_DOUBLE;
+  const int rowCount = kind == 0 ? 10 : 9;
+  for (int row = 0; row < rowCount; row++) {
+    for (int col = 0; rows[row][col] != '\0'; col++) {
+      if (rows[row][col] != '#') continue;
+      renderer.fillRect(x + col * scale, y + row * scale, scale, scale);
+    }
+  }
+}
+
 void drawSplash(const GfxRenderer& renderer, const char* subtitle) {
   constexpr int scale = 5;
   const int size = WADDLE_PENGUIN_SIZE * scale;

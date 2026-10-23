@@ -25,6 +25,9 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#if WADDLE  // WADDLE: Bluesound remote
+#include "waddle/NodeActivity.h"
+#endif
 
 int HomeActivity::getMenuItemCount() const {
   int count = 4;  // File Browser, Library, File transfer, Settings
@@ -34,6 +37,9 @@ int HomeActivity::getMenuItemCount() const {
   if (hasLibrarySlot()) {
     count++;
   }
+#if WADDLE  // WADDLE: "Node" after Settings
+  count++;
+#endif
   return count;
 }
 
@@ -311,6 +317,12 @@ void HomeActivity::loop() {
       return;
     }
     const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
+#if WADDLE  // WADDLE: the last row opens the Node remote
+    if (menuIndex == getMenuItemCount() - static_cast<int>(recentBooks.size()) - 1) {
+      activityManager.replaceActivity(std::make_unique<NodeActivity>(renderer, mappedInput));
+      return;
+    }
+#endif
     switch (indexToMenuItem(menuIndex, hasLibrarySlot())) {
       case HomeMenuItem::FILE_BROWSER:
         onFileBrowserOpen();
@@ -532,6 +544,11 @@ void HomeActivity::render(RenderLock&&) {
     menuItems.insert(menuItems.begin() + 2, hasPlugins ? tr(STR_PLUGINS) : tr(STR_OPDS_BROWSER));
     menuIcons.insert(menuIcons.begin() + 2, Plugins);
   }
+
+#if WADDLE  // WADDLE: Bluesound remote, last row
+  menuItems.push_back("Node");
+  menuIcons.push_back(Wifi);
+#endif
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme

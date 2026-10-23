@@ -74,6 +74,14 @@ Enable them in **Settings → Connectivity → Plugins**.
 - [ ] The same catalog can list firmware `.bin` files.
 - Simpler alternative: an OPDS feed on arnee.me. The reader supports OPDS already.
 
+### Bluesound Node remote
+
+- [x] "Node" on the home screen: presets as sources (Spotify, TV, Platespiller),
+      volume, play/pause, next/previous (`src/waddle/NodeActivity.*`, `BluOsClient.*`).
+      BluOS API on port 11000, local network only, no account.
+- Node IP: `192.168.50.239` (build flag `WADDLE_NODE_IP`), or put another IP in
+  `/.waddle/node-ip.txt` on the SD card.
+
 ### Other ideas
 
 - RSS and articles, with a host allowlist.
