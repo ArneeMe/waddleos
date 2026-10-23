@@ -1,7 +1,7 @@
 name: WaddleOS build
 
-# Builds the X4 Pro firmware on every push to waddle and publishes it to the
-# rolling "waddle-latest" pre-release:
+# Builds the X4 Pro firmware for pull requests into waddle (check only) and on
+# every push to waddle, which also publishes it to the "waddle-latest" pre-release:
 #   https://github.com/ArneeMe/ebook-os/releases/download/waddle-latest/waddleos-x4pro.bin
 
 on:
@@ -10,10 +10,12 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**.md'
+  pull_request:
+    branches: [waddle]
   workflow_dispatch:
 
 concurrency:
-  group: waddle-build
+  group: waddle-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -57,6 +59,7 @@ jobs:
         run: pio run -e "$PIO_ENV" -j1
 
       - name: Publish to waddle-latest
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -70,6 +73,9 @@ jobs:
             gh release create waddle-latest --prerelease --title "WaddleOS latest" --notes "$notes" --target "$GITHUB_SHA"
           fi
           gh release upload waddle-latest waddleos-x4pro.bin --clobber
+
+      - name: Copy firmware
+        run: cp ".pio/build/$PIO_ENV/firmware.bin" waddleos-x4pro.bin
 
       - uses: actions/upload-artifact@v6
         with:
