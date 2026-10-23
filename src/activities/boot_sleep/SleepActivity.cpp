@@ -27,6 +27,9 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
+#if WADDLE  // WADDLE: penguin splash
+#include "waddle/WaddleDraw.h"
+#endif
 #include "images/MoonIcon.h"
 
 namespace {
@@ -707,6 +710,11 @@ void SleepActivity::renderDefaultSleepScreen() const {
   const auto pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
+#if WADDLE  // WADDLE: penguin splash, never inverted (an inverted penguin looks wrong)
+  (void)pageWidth;
+  (void)pageHeight;
+  waddle::drawSplash(renderer, tr(STR_SLEEPING));
+#else
   renderer.drawImage(Logo120, (pageWidth - 120) / 2, (pageHeight - 120) / 2, 120, 120);
   renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 70, tr(STR_CROSSPOINT), true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 95, tr(STR_SLEEPING));
@@ -715,6 +723,7 @@ void SleepActivity::renderDefaultSleepScreen() const {
   if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT) {
     renderer.invertScreen();
   }
+#endif
 
   renderer.displayBuffer(kSleepClean);
 }

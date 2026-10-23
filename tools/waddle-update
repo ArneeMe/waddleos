@@ -174,19 +174,21 @@ def upload(ip, name, data):
 
 
 def apply(ip, name):
-    """Asks the reader to install the file. Needs /api/firmware/apply (not built yet)."""
-    step("Installing")
+    """Asks the reader to install the file (/api/firmware/apply, WaddleOS only)."""
+    step("Asking the reader to install")
     req = urllib.request.Request(f"http://{ip}/api/firmware/apply?path=/{name}", method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=10):
-            ok("The reader is installing and will restart")
+        # The reader checks the whole image first, which takes a few seconds.
+        with urllib.request.urlopen(req, timeout=60):
+            ok("Image accepted by the reader")
+            print(f"    {B}Confirm the update on the reader.{N} It installs and restarts by itself.")
             return True
     except urllib.error.HTTPError as e:
         if e.code != 404:
             die(f"The reader refused the update (HTTP {e.code}): {e.read().decode(errors='replace')[:200]}")
     except (urllib.error.URLError, OSError):
         die("Lost the connection while starting the install")
-    warn("This firmware cannot install over Wi-Fi yet. Finish on the reader:")
+    warn("The firmware on the reader cannot install over Wi-Fi yet. Finish on the reader:")
     print(f"    {B}Settings → firmware update → /{name}{N}")
     return False
 
@@ -214,7 +216,7 @@ def main():
     reader_status(args.ip)
     upload(args.ip, ASSET, data)
     installed = apply(args.ip, ASSET)
-    print(f"\n{G}{B}🐧 {'Done! Waddle on.' if installed else 'Uploaded. Tap install on the reader.'}{N}\n")
+    print(f"\n{G}{B}🐧 {'Done! Waddle on.' if installed else 'Uploaded. Finish on the reader.'}{N}\n")
 
 
 if __name__ == "__main__":

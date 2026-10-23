@@ -56,6 +56,9 @@
 #include "util/PluginHttp.h"
 #include "util/PluginLocations.h"
 #include "util/TaskWatchdog.h"
+#if WADDLE  // WADDLE: firmware apply endpoint
+#include "waddle/WaddleFirmwareApi.h"
+#endif
 
 static void sendStaticContent(WebServer* server, const char* data, size_t len, const char* etag,
                               const char* contentType);
@@ -267,6 +270,10 @@ void CrossPointWebServer::begin() {
   server->on("/api/wifi", HTTP_GET, [this] { handleGetWifiNetworks(); });
   server->on("/api/wifi", HTTP_POST, [this] { handlePostWifiNetwork(); });
   server->on("/api/wifi/delete", HTTP_POST, [this] { handleDeleteWifiNetwork(); });
+
+#if WADDLE  // WADDLE: install an uploaded .bin over Wi-Fi
+  waddle::firmware::registerRoutes(*server);
+#endif
 
   server->onNotFound([this] { handleNotFound(); });
   LOG_DBG("WEB", "[MEM] Free heap after route setup: %d bytes", ESP.getFreeHeap());

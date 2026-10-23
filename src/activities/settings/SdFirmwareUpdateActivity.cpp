@@ -18,6 +18,13 @@ void SdFirmwareUpdateActivity::onEnter() {
   Activity::onEnter();
   // Build-identity marker — confirms which firmware build owns the SD update flow.
   LOG_INF("FW", "SdFirmwareUpdateActivity build=%s %s recovery=%d", __DATE__, __TIME__, recoveryMode ? 1 : 0);
+#if WADDLE  // WADDLE: preset file, validated and confirmed from loop()
+  if (!presetPath.empty()) {
+    state = State::VALIDATING;
+    requestUpdate();
+    return;
+  }
+#endif
   state = State::PICKING;
   launchPicker();
 }
@@ -192,6 +199,14 @@ void SdFirmwareUpdateActivity::performUpdate() {
 }
 
 void SdFirmwareUpdateActivity::loop() {
+#if WADDLE  // WADDLE: run the preset file through the normal picker-result path
+  if (!presetPath.empty()) {
+    FilePathResult preset{std::move(presetPath)};
+    presetPath.clear();
+    onPickerResult(ActivityResult(std::move(preset)));
+    return;
+  }
+#endif
   if (state == State::FAILED) {
     int x = 0;
     int y = 0;
