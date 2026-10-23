@@ -95,6 +95,7 @@ Keep this table up to date. One row per upstream file.
 | `src/activities/network/CrossPointWebServerActivity.cpp` | `#if WADDLE` includes and a block after the `handleClient()` loop | Opens the SD update for a queued `.bin` |
 | `src/activities/settings/SdFirmwareUpdateActivity.*` | `#if WADDLE` constructor with a preset path, checks in `onEnter()` and `loop()` | Skip the file picker when started from the API |
 | `src/activities/boot_sleep/BootActivity.cpp`, `SleepActivity.cpp` | `#if WADDLE` swaps the logo block for `waddle::drawSplash()` | Penguin boot and sleep screens. The default sleep screen is not inverted |
+| `src/activities/home/HomeActivity.cpp` | `#if WADDLE` include, one more menu row ("Node") in count, render and selection | Bluesound remote (`src/waddle/NodeActivity.*`) |
 
 ## Upstream AI rules
 
