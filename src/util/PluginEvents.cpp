@@ -141,6 +141,12 @@ bool wantsConnectAny() {
 }
 
 void emit(const Event e, const Var* vars, const size_t varCount) {
+#if WADDLE_PRIVATE  // WADDLE: reading activity (book, times, progress) is never queued for plugins
+  (void)e;
+  (void)vars;
+  (void)varCount;
+  return;
+#endif
   if (!anySubscriber(e)) return;
 
   // One line: {"e":"reader.exit","id":"3fa9c21b-7","ts":1734212345,"vars":{"book":"...","percent":"74"}}
@@ -401,6 +407,11 @@ bool deliverLine(const DrainManifest& mf, const std::string& lineText, std::stri
 }  // namespace
 
 void drain(GfxRenderer* renderer, const size_t maxEvents) {
+#if WADDLE_PRIVATE  // WADDLE: also drop anything queued by an older build
+  (void)renderer;
+  (void)maxEvents;
+  return;
+#endif
   size_t budget = maxEvents;
   for (const auto& sub : subscribers) {
     if (budget == 0) break;

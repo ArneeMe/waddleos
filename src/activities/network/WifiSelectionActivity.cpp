@@ -197,9 +197,6 @@ void WifiSelectionActivity::startWifiScan(const bool autoScan) {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   delay(100);
-#if WADDLE_PRIVATE  // WADDLE: new random MAC for every scan
-  waddle::privacy::prepareScan();
-#endif
 
   // Start async scan
   WiFi.scanNetworks(true);  // true = async scan
@@ -481,8 +478,8 @@ void WifiSelectionActivity::attemptConnection() {
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
 
-#if WADDLE_PRIVATE  // WADDLE: neutral hostname, per-network MAC
-  waddle::privacy::prepareStation(selectedSSID.c_str());
+#if WADDLE_PRIVATE  // WADDLE: neutral hostname, no MAC in it
+  WiFi.setHostname(waddle::privacy::HOSTNAME);
 #else
   // Set hostname so routers show "CrossPoint-Reader-AABBCCDDEEFF" instead of "esp32-XXXXXXXXXXXX"
   uint8_t mac[6] = {};

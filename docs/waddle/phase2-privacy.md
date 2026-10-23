@@ -10,8 +10,9 @@ Status: first part built behind `WADDLE_PRIVATE` (on in `x4pro-waddle`). See
 
 | Leak | Before | Now | Code |
 |---|---|---|---|
-| Factory MAC `cc:68:c7:b1:ec:dc` on every scan and join | Trackable by Wi-Fi sensing anywhere | New random MAC for each scan; a stable MAC per network, derived from the device and the network name | `src/waddle/WaddlePrivacy.*`, `WifiSelectionActivity.cpp`, `NodeActivity.cpp` |
-| DHCP hostname `CrossPoint-Reader-<MAC>` | In every router log | `reader` | same |
+| DHCP hostname `CrossPoint-Reader-<MAC>` | In every router log | `reader` | `WifiSelectionActivity.cpp`, `NodeActivity.cpp` |
+| Plugin events: book, start/end time, duration, progress for every reading session | Queued and sent to subscribed plugins whenever the reader goes online | Never queued, never sent | `src/util/PluginEvents.cpp` |
+| KOReader progress sync (menu, long press, Home key) | Uploads book hash and position | Disabled, menu item hidden | `EpubReaderActivity.cpp`, `EpubReaderMenuActivity.cpp` |
 | NTP to `pool.ntp.org` / `time.nist.gov` on every join | Reveals IP and online times | Off. The RTC keeps time; Settings > Clock > Sync is still there to do it by hand | `WifiSelectionActivity.cpp` |
 | Wi-Fi join at sleep for plugins | Background network use | Never | `src/main.cpp` |
 | CORS `*` on the web server | Any web page in a browser on the LAN could use the API | Off | `CrossPointWebServer.cpp` |
@@ -19,8 +20,10 @@ Status: first part built behind `WADDLE_PRIVATE` (on in `x4pro-waddle`). See
 | User agent `CrossPoint-ESP32-<version>` | Fingerprint for servers | `reader` | `HttpDownloader.cpp`, `PluginHttp.cpp` |
 | KOReader sync, Check for updates | Talk to `sync.crosspointreader.com`, CrossPoint's GitHub | Hidden from Settings (updates come from `tools/waddle-update`) | `SettingsActivity.cpp` |
 
-Still open: host allowlist, Plugin Hub and font download, Bluetooth random
-address and passive scan (Bluetooth is off unless turned on), mDNS and UDP
+Not changed on purpose: the factory MAC address (the router's fixed IP for
+the reader depends on it).
+
+Still open: host allowlist, Plugin Hub and font download, mDNS and UDP
 discovery during File Transfer (LAN only).
 
 ## Approach

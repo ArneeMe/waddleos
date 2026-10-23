@@ -90,7 +90,7 @@ void NodeActivity::startWifi() {
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
 #if WADDLE_PRIVATE
-  waddle::privacy::prepareStation(cred->ssid.c_str());
+  WiFi.setHostname(waddle::privacy::HOSTNAME);
 #endif
   LOG_INF("NODE", "joining %s", cred->ssid.c_str());
   if (cred->password.empty()) {
