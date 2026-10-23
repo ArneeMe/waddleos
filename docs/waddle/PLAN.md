@@ -16,7 +16,19 @@ How to work in this fork: see [FORK.md](FORK.md).
 - [x] Name and mascot chosen: WaddleOS, penguin (`assets/waddle/`).
 - [x] File upload over Wi-Fi from Arch works (`curl` to `/upload`).
 - [x] Penguin sleep screen as `sleep.bmp` (Sleep Screen → Custom).
-- [ ] Our own build running on the device.
+- [x] `addwaddle` upload script (`tools/addwaddle`).
+- [x] Waddle home theme: penguin greeting "Hei Arne!" with a random line,
+      a penguin on the book tile, a penguin family at the bottom (`src/waddle/`).
+- [x] GitHub Actions builds only the X4 Pro (`.github/workflows/waddle-build.yml`).
+      Upstream workflows removed.
+- [ ] Our own build running on the device (download `waddle-latest`, then install).
+
+## How we work
+
+- Work on a branch, open a PR into `waddle` in `ArneeMe/ebook-os`, merge it.
+- The PR build checks that the firmware compiles. A merge to `waddle` publishes
+  `waddleos-x4pro.bin` to the `waddle-latest` pre-release.
+- Never open anything in the upstream repo. See [FORK.md](FORK.md).
 
 ## Step 1: update over Wi-Fi with one command
 
@@ -35,14 +47,15 @@ Goal: run one script on Arch, and the reader installs the new firmware.
 
 ## Step 2: design (boot and sleep)
 
-- [ ] Build target `x4pro-waddle` with version string `…-waddle`.
+- [x] Build target `x4pro-waddle` with version string `…-waddle`.
+- [x] Home screen theme (`src/waddle/WaddleTheme.*`).
 - [ ] `src/images/WaddleLogo120.h`: 1-bit penguin, made with `scripts/convert_icon.py`
       from `assets/waddle/waddle-logo-120.png`.
 - [ ] Boot and default sleep screens show the penguin and "WaddleOS"
       (`src/activities/boot_sleep/BootActivity.cpp`, `SleepActivity.cpp:705`).
       Note: the default sleep screen is inverted (dark) unless set to Light.
 - [ ] Later: grayscale penguin built into the firmware (the boot logo is 1-bit today).
-- [ ] README for WaddleOS, with credit to CrossPoint.
+- [x] README for WaddleOS, with credit to CrossPoint (`.github/README.md`).
 
 ## Step 3: privacy
 
