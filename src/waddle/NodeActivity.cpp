@@ -25,8 +25,11 @@ namespace {
 constexpr unsigned long WIFI_TIMEOUT_MS = 15000;
 constexpr unsigned long POLL_MS = 5000;
 constexpr int VOLUME_STEP_DB = 2;
-// Notes move one step this often while playing: slow enough for e-ink.
-constexpr unsigned long NOTE_MS = 6000;
+// Notes move one step this often while playing. Each step is a fast refresh
+// of the whole screen; every NOTE_CLEAN_FRAMES steps a half refresh clears
+// e-ink ghosting.
+constexpr unsigned long NOTE_MS = 1000;
+constexpr int NOTE_CLEAN_FRAMES = 60;
 constexpr size_t MAX_PRESETS = 4;
 // Optional override: a file with just the Node's IP address.
 constexpr const char* NODE_IP_FILE = "/.waddle/node-ip.txt";
@@ -337,5 +340,6 @@ void NodeActivity::render(RenderLock&&) {
     }
   }
 
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  const bool clean = noteFrame > 0 && noteFrame % NOTE_CLEAN_FRAMES == 0;
+  renderer.displayBuffer(clean ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH);
 }
