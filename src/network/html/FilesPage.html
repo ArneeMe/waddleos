@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Files - CrossPoint Reader</title>
+  <title>Files - WaddleOS</title>
   <script src="/js/jszip.min.js"></script>
   <style>
     /* Shared presentation for SD-card plugins mounted in the File Manager.
@@ -1630,7 +1630,6 @@
   </div>
 </div>
 
-<div id="plugin-container"></div>
 
 </main>
 <!--#include file="shared/Footer.html.inc" -->
@@ -1940,7 +1939,7 @@
 
   if (currentPath !== '/') {
     const leaf = currentPath.split('/').filter(Boolean).pop();
-    if (leaf) document.title = leaf + ' - Files - CrossPoint Reader';
+    if (leaf) document.title = leaf + ' - Files - WaddleOS';
   }
 
   // Network status monitoring
@@ -2037,9 +2036,6 @@
   async function hydrate() {
     // Fetch CrossPoint version
     fetchVersion();
-
-    // Load any SD-hosted plugins that mount on the File Manager page.
-    loadPlugins('files');
 
     // Keep upload cleanup rules when a dialog is cancelled or its backdrop is clicked.
     const closeModal = {
@@ -3896,7 +3892,7 @@ function exportLogToFile(filename = null, isBatch = false) {
   }
   // Extract text from log entries
   const entries = logContainer.querySelectorAll('.log-entry');
-  let logText = `CrossPoint Reader ${crosspointVersion} - EPUB Conversion Log\n`;
+  let logText = `WaddleOS ${crosspointVersion} - EPUB Conversion Log\n`;
   logText += `Generated: ${new Date().toLocaleString()}\n`;
   logText += `${'='.repeat(60)}\n\n`;
 
@@ -6313,7 +6309,6 @@ function retryAllFailedUploads() {
 
     xhr.send(formData);
   }
-<!--#include file="shared/PluginHost.js.inc" -->
   hydrate();
 </script>
 </body>

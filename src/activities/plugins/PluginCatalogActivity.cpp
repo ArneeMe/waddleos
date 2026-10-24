@@ -26,7 +26,6 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "activities/reader/DictionaryDefinitionActivity.h"  // plain-text README viewer
-#include "activities/settings/PluginHubInstallActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/DetailsActivity.h"
 #include "components/CatalogScreens.h"
@@ -35,7 +34,6 @@
 #include "network/ProtectedPaths.h"
 #include "util/BookCacheUtils.h"
 #include "util/FirmwareIdentity.h"
-#include "util/PluginEvents.h"
 #include "util/PluginHttp.h"
 #include "util/PluginLocations.h"
 #include "util/PluginPickerLayout.h"
@@ -133,23 +131,6 @@ bool catalogEntryCompatible(const std::string& family, const std::string& apiMin
                             const std::string& requiredCapabilities) {
   return matchesCsvRestriction(family, firmwareidentity::FAMILY) && matchesPluginApiMinimum(apiMin) &&
          matchesCapabilities(requiredCapabilities);
-}
-
-// Plugin folder name from its "<root>/<name>/device.json" manifest path.
-std::string pluginNameFromManifestPath(const std::string& manifestPath) {
-  const size_t slash = manifestPath.rfind('/');
-  if (slash == std::string::npos || slash == 0) return "";
-  const size_t parent = manifestPath.rfind('/', slash - 1);
-  if (parent == std::string::npos) return "";
-  return manifestPath.substr(parent + 1, slash - parent - 1);
-}
-
-// book.downloaded plugin event, fired after a catalog download lands on SD.
-void emitBookDownloaded(const std::string& manifestPath, const std::string& path, const std::string& title) {
-  if (!pluginevents::anySubscriber(pluginevents::Event::BookDownloaded)) return;
-  const std::string plugin = pluginNameFromManifestPath(manifestPath);
-  const pluginevents::Var vars[] = {{"path", path.c_str()}, {"title", title.c_str()}, {"plugin", plugin.c_str()}};
-  pluginevents::emit(pluginevents::Event::BookDownloaded, vars, 3);
 }
 
 // Streams the browse temp file through a catalog list parser (null on OOM).
@@ -447,31 +428,9 @@ void PluginCatalogActivity::onEnter() {
 void PluginCatalogActivity::enterPluginPicker() {
   Storage.remove(BROWSE_TMP_PATH);
   installedPlugins = discoverPlugins();
-  pluginHubAvailable = PluginHubInstallActivity::isAvailable();
-  showPluginHubInstallRow = !pluginHubAvailable && !SETTINGS.pluginHubPromptHidden;
-  // Discovery just re-read the plugin folders; keep the event subscription
-  // table in step so a plugin installed since boot starts receiving events
-  // (and a removed one stops) without a restart.
-  pluginevents::refreshSubscriptions();
-  // Disclose which device events each plugin receives (and so what reading
-  // activity it can send off the device). Events precede the optional summary.
-  static constexpr StrId EVENT_LABELS[] = {StrId::STR_EVENT_BOOK_OPEN, StrId::STR_EVENT_BOOK_CLOSE,
-                                           StrId::STR_EVENT_READING_SESSION, StrId::STR_EVENT_DOWNLOAD,
-                                           StrId::STR_EVENT_SLEEP};
-  static_assert(sizeof(EVENT_LABELS) / sizeof(EVENT_LABELS[0]) == static_cast<size_t>(pluginevents::Event::COUNT));
-  for (auto& plugin : installedPlugins) {
-    const uint8_t mask = pluginevents::subscriptionMask(plugin.name.c_str());
-    if (mask == 0) continue;
-    std::string events;
-    for (size_t i = 0; i < std::size(EVENT_LABELS); i++) {
-      if (!(mask & (1u << i))) continue;
-      if (!events.empty()) events += ", ";
-      events += I18N.get(EVENT_LABELS[i]);
-    }
-    char line[192];
-    snprintf(line, sizeof(line), tr(STR_PLUGIN_RECEIVES_EVENTS), events.c_str());
-    plugin.description = plugin.description.empty() ? line : std::string(line) + ". " + plugin.description;
-  }
+  // No Plugin Hub in WaddleOS: plugins are copied to the SD card by hand.
+  pluginHubAvailable = false;
+  showPluginHubInstallRow = false;
 
   manifestPath.clear();
   manifest = Manifest{};
@@ -1031,10 +990,6 @@ HttpDownloader::DownloadError PluginCatalogActivity::downloadBundle(const Item& 
     }
   }
   complete = true;
-  emitBookDownloaded(manifestPath, staged.empty() ? "" : staged.front(), item.title);
-  // Bundles are how plugins install (plugin-store); pick up any new event
-  // subscriptions without a restart. Cheap: a few small manifest reads.
-  pluginevents::refreshSubscriptions();
   return HttpDownloader::OK;
 }
 
@@ -1133,7 +1088,6 @@ HttpDownloader::DownloadError PluginCatalogActivity::downloadBook(const Item& it
     }
   }
 
-  emitBookDownloaded(manifestPath, dest, item.title);
   return HttpDownloader::OK;
 }
 
@@ -1249,29 +1203,6 @@ void PluginCatalogActivity::activateIndex(const int index) {
       return;
     }
     const int pluginStart = showOpds ? 1 : 0;
-    if (showPluginHubInstallRow && index == pluginStart) {
-      static constexpr StrId OPTIONS[] = {StrId::STR_INSTALL, StrId::STR_HIDE, StrId::STR_CANCEL};
-      pluginHubPopup.show(StrId::STR_PLUGIN_HUB, OPTIONS, 3, 0, [this](const int selected) {
-        if (selected == 0) {
-          auto installer = makeUniqueNoThrow<PluginHubInstallActivity>(renderer, mappedInput, false);
-          if (!installer) {
-            LOG_ERR("PCAT", "OOM: Plugin Hub installer");
-            return;
-          }
-          startActivityForResult(std::move(installer), [this](const ActivityResult& result) {
-            ignoreHubInstallerBackRelease =
-                result.isCancelled && mappedInput.isPressed(MappedInputManager::Button::Back);
-            enterPluginPicker();
-          });
-        } else if (selected == 1) {
-          SETTINGS.pluginHubPromptHidden = 1;
-          SETTINGS.saveToFile();
-          enterPluginPicker();
-        }
-      });
-      requestUpdate();
-      return;
-    }
     const int syntheticHubRows = showPluginHubInstallRow ? 1 : 0;
     const PluginRef& plugin = installedPlugins[index - pluginStart - syntheticHubRows];
     const auto action = PluginLocations::pickerAction(plugin.deviceKind, !plugin.readmePath.empty());

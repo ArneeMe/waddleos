@@ -17,7 +17,6 @@
 #include "activities/network/CalibreConnectActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "util/PluginEvents.h"
 #include "util/QrUtils.h"
 #include "util/TaskWatchdog.h"
 #if WADDLE_PRIVATE  // WADDLE: privacy build
@@ -50,13 +49,11 @@ void stopDnsServer() {
   dnsServer = nullptr;
 }
 
+// WaddleOS does not announce the reader on the network (no mDNS); use the IP.
 void restartMdns(const char* hostname, const char* tag) {
+  (void)hostname;
+  (void)tag;
   MDNS.end();
-  if (MDNS.begin(hostname)) {
-    LOG_DBG(tag, "mDNS started: http://%s.local/", hostname);
-  } else {
-    LOG_DBG(tag, "WARNING: mDNS failed to start");
-  }
 }
 
 // 0..4 bars from RSSI (dBm), with 3 dBm hysteresis on currentBars to suppress flicker.
@@ -122,11 +119,6 @@ void CrossPointWebServerActivity::onExit() {
   state = WebServerActivityState::SHUTTING_DOWN;
   stopDnsServer();
   MDNS.end();
-
-  // Web uploads may have installed or removed plugins. Non-touch devices
-  // reboot below (setup() re-reads everything), but touch devices end the
-  // session in place, so re-read event subscriptions here.
-  pluginevents::refreshSubscriptions();
 
   // Skip reboot if WiFi was never activated (e.g. user backed out of mode selection).
   if (WiFi.getMode() != WIFI_MODE_NULL) {
@@ -337,13 +329,6 @@ void CrossPointWebServerActivity::startWebServer() {
     LOG_DBG("WEBACT", "Web server started successfully");
     lastWifiBars = isApMode ? 0 : barsForRssi(WiFi.RSSI(), 0);
 
-    // The device is online: deliver queued plugin events through their
-    // manifest handlers. STA only (AP mode has no internet route); bounded by
-    // the drain's per-call event budget so serving is not noticeably delayed.
-    if (!isApMode) {
-      pluginevents::drain(&renderer);
-    }
-
     // Force an immediate render since we're transitioning from a subactivity
     // that had its own rendering task. We need to make sure our display is shown.
     requestUpdate();
@@ -540,17 +525,11 @@ void CrossPointWebServerActivity::renderServerRunning() const {
                       EpdFontFamily::BOLD);
     startY += height10 + metrics.verticalSpacing * 2;
 
-    std::string hostnameUrl = std::string("http://") + AP_HOSTNAME + ".local/";
-    std::string ipUrl = tr(STR_OR_HTTP_PREFIX) + connectedIP + "/";
-
-    // Show QR code for URL
+    // No mDNS in WaddleOS, so the address is the IP.
+    const std::string ipUrl = "http://" + connectedIP + "/";
     const Rect qrBoundsUrl(metrics.contentSidePadding, startY, QR_CODE_WIDTH, QR_CODE_HEIGHT);
-    QrUtils::drawQrCode(renderer, qrBoundsUrl, hostnameUrl);
-
-    // Show IP address as fallback
+    QrUtils::drawQrCode(renderer, qrBoundsUrl, ipUrl);
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding + QR_CODE_WIDTH + metrics.verticalSpacing, startY + 80,
-                      hostnameUrl.c_str());
-    renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding + QR_CODE_WIDTH + metrics.verticalSpacing, startY + 100,
                       ipUrl.c_str());
   } else {
     startY += metrics.verticalSpacing * 2;
@@ -571,10 +550,6 @@ void CrossPointWebServerActivity::renderServerRunning() const {
     // Show web server URL prominently
     renderer.drawCenteredText(UI_10_FONT_ID, startY, webInfo.c_str(), true);
     startY += height10 + 5;
-
-    // Also show hostname URL
-    std::string hostnameUrl = std::string(tr(STR_OR_HTTP_PREFIX)) + AP_HOSTNAME + ".local/";
-    renderer.drawCenteredText(SMALL_FONT_ID, startY, hostnameUrl.c_str(), true);
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_EXIT), "", "", "");

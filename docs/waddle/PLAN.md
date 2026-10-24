@@ -5,7 +5,7 @@ for the Xteink X4 Pro. Repo: `ArneeMe/waddleos`. Mascot: a pixel-art penguin.
 
 Goals: my own look, easy updates over Wi-Fi, and nothing phones home.
 
-How to work in this fork: see [FORK.md](FORK.md).
+How to work on WaddleOS: see [AGENTS.md](../../AGENTS.md).
 
 ## Status
 
@@ -28,7 +28,7 @@ How to work in this fork: see [FORK.md](FORK.md).
 - Work on a branch, open a PR into `waddle` in `ArneeMe/waddleos`, merge it.
 - The PR build checks that the firmware compiles. A merge to `waddle` publishes
   `waddleos-x4pro.bin` to the `waddle-latest` pre-release.
-- Never open anything in the upstream repo. See [FORK.md](FORK.md).
+- Never open anything in the upstream repo.
 
 ## Step 1: update over Wi-Fi with one command (built, not tested on the device)
 

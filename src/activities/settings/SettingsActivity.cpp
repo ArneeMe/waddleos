@@ -19,14 +19,11 @@
 #include "ClearCacheActivity.h"
 #include "ClockSettingsActivity.h"
 #include "CrossPointSettings.h"
-#include "FontDownloadActivity.h"
 #include "HomeButtonSettingsActivity.h"
-#include "KOReaderSettingsActivity.h"
 #include "KeyboardLayoutsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
-#include "OtaUpdateActivity.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsList.h"
@@ -39,7 +36,6 @@
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
-#include "util/PluginEvents.h"
 
 namespace fui = freeink::ui;
 
@@ -110,7 +106,6 @@ void SettingsActivity::rebuildSettings() {
   addAction(SettingsSection::General, StrId::STR_LANGUAGE, SettingAction::Language);
   addAction(SettingsSection::General, StrId::STR_KEYBOARD_LAYOUTS, SettingAction::KeyboardLayouts);
   addAction(SettingsSection::Reader, StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings);
-  addAction(SettingsSection::Reader, StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts);
   if (BoardConfig::hasHomeKey()) {
     addAction(SettingsSection::Controls, StrId::STR_HOME_BUTTON, SettingAction::HomeButton);
   }
@@ -134,22 +129,11 @@ void SettingsActivity::rebuildSettings() {
   if (bleturner::status().compiledIn) {
     addAction(SettingsSection::Network, StrId::STR_BT_PAGE_TURNER, SettingAction::Bluetooth);
   }
-#if !WADDLE_PRIVATE  // WADDLE: cloud sync hidden
-  addAction(SettingsSection::Network, StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync);
-#endif
   addAction(SettingsSection::Network, StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser);
   addAction(SettingsSection::Network, StrId::STR_PLUGINS, SettingAction::Plugins);
 
-  // OTA fetches this board's own release asset (see OtaUpdater); boards whose
-  // asset isn't published yet just report no update available. The Picco's
-  // stock layout has one app slot (partitions_picco.csv), so it cannot update
-  // itself either way.
-  if (!BoardConfig::isPicco()) {
-#if !WADDLE_PRIVATE  // WADDLE: updates come from tools/waddle-update, not CrossPoint's GitHub
-    addAction(SettingsSection::General, StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates);
-#endif
-    addAction(SettingsSection::General, StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate);
-  }
+  // Updates come from tools/waddle-update (Wi-Fi) or a .bin on the SD card.
+  addAction(SettingsSection::General, StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate);
   addAction(SettingsSection::General, StrId::STR_ABOUT, SettingAction::About);
   rebuildRowItems();
 }
@@ -310,9 +294,6 @@ void SettingsActivity::toggleSelectedSetting() {
           LOG_ERR("SETTINGS", "OOM: ClockSettingsActivity");
         }
         break;
-      case SettingAction::KOReaderSync:
-        startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
-        break;
       case SettingAction::OPDSBrowser:
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
@@ -350,18 +331,8 @@ void SettingsActivity::toggleSelectedSetting() {
       case SettingAction::ClearCache:
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
         break;
-      case SettingAction::CheckForUpdates:
-        startActivityForResult(std::make_unique<OtaUpdateActivity>(renderer, mappedInput), resultHandler);
-        break;
       case SettingAction::SdFirmwareUpdate:
         startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);
-        break;
-      case SettingAction::DownloadFonts:
-        startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
-                               [this](const ActivityResult&) {
-                                 SETTINGS.saveToFile();
-                                 rebuildSettings();
-                               });
         break;
       case SettingAction::TextSettings:
         startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
@@ -389,8 +360,6 @@ void SettingsActivity::toggleSelectedSetting() {
           // Turning plugins on brings back a dismissed Plugin Hub install row.
           if (SETTINGS.pluginsEnabled) SETTINGS.pluginHubPromptHidden = 0;
           SETTINGS.saveToFile();
-          // Applies to event delivery now, not after a reboot.
-          pluginevents::refreshSubscriptions();
           rebuildSettings();
         });
         requestUpdate();

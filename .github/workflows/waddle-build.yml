@@ -73,7 +73,17 @@ jobs:
           uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
 
       - name: Build
-        run: pio run -e "$PIO_ENV" -j"$(nproc)"
+        run: |
+          set -o pipefail
+          pio run -e "$PIO_ENV" -j"$(nproc)" 2>&1 | tee build.log
+
+      # Compiler errors as annotations, readable through the checks API.
+      - name: Report build errors
+        if: failure()
+        run: |
+          grep -E "error:|undefined reference|\*\*\*" build.log | sort -u | head -40 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
 
       - name: Publish to waddle-latest
         if: github.event_name != 'pull_request'
