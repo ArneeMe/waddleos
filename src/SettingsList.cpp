@@ -190,11 +190,6 @@ void forEachBaseSetting(SettingVisitor visit, void* context) {
     emit(SettingInfo::Toggle(StrId::STR_BACK_SHORT_TO_FILE_BROWSER, &CrossPointSettings::backShortToFileBrowser,
                              "backShortToFileBrowser", StrId::STR_CAT_CONTROLS));
 
-  // Persisted here; set from the Connectivity -> Plugins popup.
-  emit(SettingInfo::Toggle(StrId::STR_PLUGINS, &CrossPointSettings::pluginsEnabled, "pluginsEnabled").withWebHidden());
-  emit(SettingInfo::Toggle(StrId::STR_PLUGIN_HUB, &CrossPointSettings::pluginHubPromptHidden, "pluginHubPromptHidden")
-           .withWebHidden());
-
   // --- System ---
   emit(SettingInfo::Value(
       StrId::STR_TIME_TO_SLEEP, &CrossPointSettings::sleepTimeoutMinutes,
@@ -208,16 +203,6 @@ void forEachBaseSetting(SettingVisitor visit, void* context) {
                            "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM));
   emit(SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                            "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM));
-
-  // OPDS download folder: persisted + web-exposed, but category-less so it
-  // is hidden from the on-device Settings screen (edited via OPDS UI).
-  emit(SettingInfo::String(StrId::STR_OPDS_DOWNLOAD_FOLDER, &SETTINGS.opdsDownloadFolder[0],
-                           sizeof(SETTINGS.opdsDownloadFolder), "opdsDownloadFolder"));
-  // OPDS download filename format: persisted + web-exposed, category-less so it
-  // is hidden from the on-device Settings screen (cycled from the OPDS UI).
-  emit(SettingInfo::Enum(StrId::STR_OPDS_FILENAME_FORMAT, &CrossPointSettings::opdsFilenameFormat,
-                         {StrId::STR_FMT_AUTHOR_TITLE, StrId::STR_FMT_TITLE_AUTHOR, StrId::STR_FMT_TITLE},
-                         "opdsFilenameFormat"));
 
   // Frontlight quick-panel state: persisted and web-exposed, but hidden
   // from the on-device Settings screen because the swipe panel owns it.

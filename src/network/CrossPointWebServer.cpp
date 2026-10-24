@@ -34,7 +34,6 @@
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
 #include "FontInstaller.h"
-#include "OpdsServerStore.h"
 #include "ProtectedPaths.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
@@ -246,10 +245,6 @@ void CrossPointWebServer::begin() {
   server->on("/api/fonts/upload", HTTP_POST, [this] { handleFontUpload(); }, [this] { handleFontUploadData(); });
   server->on("/api/fonts/delete", HTTP_POST, [this] { handleFontDelete(); });
 
-  // OPDS server endpoints
-  server->on("/api/opds", HTTP_GET, [this] { handleGetOpdsServers(); });
-  server->on("/api/opds", HTTP_POST, [this] { handlePostOpdsServer(); });
-  server->on("/api/opds/delete", HTTP_POST, [this] { handleDeleteOpdsServer(); });
 
   // Wi-Fi credential endpoints
   server->on("/api/wifi", HTTP_GET, [this] { handleGetWifiNetworks(); });
@@ -1484,172 +1479,6 @@ void CrossPointWebServer::handlePostSettings() {
 
   LOG_DBG("WEB", "Applied %d setting(s)", applied);
   server->send(200, "text/plain", String("Applied ") + String(applied) + " setting(s)");
-}
-
-// ---- OPDS Server API ----
-
-void CrossPointWebServer::handleGetOpdsServers() const {
-  const auto& servers = OPDS_STORE.getServers();
-
-  // Stream JSON array incrementally to avoid allocating the full response in memory
-  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server->send(200, "application/json", "");
-  server->sendContent("[");
-
-  char output[512];
-  constexpr size_t outputSize = sizeof(output);
-  JsonDocument doc;
-
-  for (size_t i = 0; i < servers.size(); i++) {
-    doc.clear();
-    doc["index"] = i;
-    doc["name"] = servers[i].name;
-    doc["url"] = servers[i].url;
-    doc["username"] = servers[i].username;
-    // Never expose passwords over the API — only indicate whether one is set
-    doc["hasPassword"] = !servers[i].password.empty();
-    // Header values may hold secrets (e.g. an auth proxy token) — same treatment as passwords
-    JsonArray headersArr = doc["headers"].to<JsonArray>();
-    for (const auto& header : servers[i].customHeaders) {
-      JsonObject h = headersArr.add<JsonObject>();
-      h["name"] = header.name;
-      h["hasValue"] = !header.value.empty();
-    }
-
-    const size_t written = serializeJson(doc, output, outputSize);
-    if (written >= outputSize) continue;
-
-    if (i > 0) server->sendContent(",");
-    server->sendContent(output);
-    yield();                          // Yield to allow WiFi and other tasks to process during a slow send
-    resetTaskWatchdogIfSubscribed();  // Reset watchdog: each sendContent() is a blocking network write
-  }
-
-  server->sendContent("]");
-  server->sendContent("");
-  LOG_DBG("WEB", "Served OPDS servers API (%zu servers)", servers.size());
-}
-
-void CrossPointWebServer::handlePostOpdsServer() {
-  if (!server->hasArg("plain")) {
-    server->send(400, "text/plain", "Missing JSON body");
-    return;
-  }
-
-  const String body = server->arg("plain");
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, body);
-  if (err) {
-    server->send(400, "text/plain", String("Invalid JSON: ") + err.c_str());
-    return;
-  }
-
-  OpdsServer opdsServer;
-  opdsServer.name = doc["name"] | std::string("");
-  opdsServer.url = doc["url"] | std::string("");
-  opdsServer.username = doc["username"] | std::string("");
-
-  // The password field is optional in the JSON payload. When absent (vs. present but empty),
-  // we preserve the existing password — the web UI omits it when the user hasn't changed it.
-  bool hasPasswordField = doc["password"].is<const char*>() || doc["password"].is<std::string>();
-  std::string password = doc["password"] | std::string("");
-
-  // Custom headers: the "headers" array is optional and, when present, is expected to have
-  // one entry per slot. Each entry's "value" key is optional the same way "password" is above
-  // — absent means preserve that slot's existing value on update.
-  bool hasHeadersField = doc["headers"].is<JsonArrayConst>();
-  std::array<std::string, OpdsServer::MAX_CUSTOM_HEADERS> headerNames;
-  std::array<bool, OpdsServer::MAX_CUSTOM_HEADERS> headerValueProvided{};
-  std::array<std::string, OpdsServer::MAX_CUSTOM_HEADERS> headerValues;
-  if (hasHeadersField) {
-    size_t i = 0;
-    for (JsonObjectConst h : doc["headers"].as<JsonArrayConst>()) {
-      if (i >= OpdsServer::MAX_CUSTOM_HEADERS) break;
-      headerNames[i] = h["name"] | std::string("");
-      headerValueProvided[i] = h["value"].is<const char*>() || h["value"].is<std::string>();
-      headerValues[i] = h["value"] | std::string("");
-      i++;
-    }
-  }
-
-  if (doc["index"].is<int>()) {
-    int idx = doc["index"].as<int>();
-    if (idx < 0 || idx >= static_cast<int>(OPDS_STORE.getCount())) {
-      server->send(400, "text/plain", "Invalid server index");
-      return;
-    }
-    const auto* existing = OPDS_STORE.getServer(static_cast<size_t>(idx));
-    // Preserve existing password if not explicitly provided
-    if (!hasPasswordField && existing) password = existing->password;
-    opdsServer.password = password;
-
-    for (size_t i = 0; i < OpdsServer::MAX_CUSTOM_HEADERS; i++) {
-      if (hasHeadersField) {
-        opdsServer.customHeaders[i].name = headerNames[i];
-        if (headerNames[i].empty()) {
-          // An empty name clears the slot outright — never leave a stale value
-          // paired with no name, even if the payload omitted "value".
-          opdsServer.customHeaders[i].value.clear();
-        } else {
-          opdsServer.customHeaders[i].value =
-              headerValueProvided[i] ? headerValues[i] : (existing ? existing->customHeaders[i].value : std::string());
-        }
-      } else if (existing) {
-        opdsServer.customHeaders[i] = existing->customHeaders[i];
-      }
-    }
-
-    OPDS_STORE.updateServer(static_cast<size_t>(idx), opdsServer);
-    LOG_DBG("WEB", "Updated OPDS server at index %d", idx);
-  } else {
-    opdsServer.password = password;
-
-    if (hasHeadersField) {
-      for (size_t i = 0; i < OpdsServer::MAX_CUSTOM_HEADERS; i++) {
-        opdsServer.customHeaders[i].name = headerNames[i];
-        opdsServer.customHeaders[i].value = headerValues[i];
-      }
-    }
-
-    if (!OPDS_STORE.addServer(opdsServer)) {
-      server->send(400, "text/plain", "Cannot add server (limit reached)");
-      return;
-    }
-    LOG_DBG("WEB", "Added new OPDS server: %s", opdsServer.name.c_str());
-  }
-
-  server->send(200, "text/plain", "OK");
-}
-
-// Uses POST (not HTTP DELETE) because ESP32 WebServer doesn't support DELETE with body.
-void CrossPointWebServer::handleDeleteOpdsServer() {
-  if (!server->hasArg("plain")) {
-    server->send(400, "text/plain", "Missing JSON body");
-    return;
-  }
-
-  const String body = server->arg("plain");
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, body);
-  if (err) {
-    server->send(400, "text/plain", String("Invalid JSON: ") + err.c_str());
-    return;
-  }
-
-  if (!doc["index"].is<int>()) {
-    server->send(400, "text/plain", "Missing index");
-    return;
-  }
-
-  int idx = doc["index"].as<int>();
-  if (idx < 0 || idx >= static_cast<int>(OPDS_STORE.getCount())) {
-    server->send(400, "text/plain", "Invalid server index");
-    return;
-  }
-
-  OPDS_STORE.removeServer(static_cast<size_t>(idx));
-  LOG_DBG("WEB", "Deleted OPDS server at index %d", idx);
-  server->send(200, "text/plain", "OK");
 }
 
 // ---- Wi-Fi Credentials API ----

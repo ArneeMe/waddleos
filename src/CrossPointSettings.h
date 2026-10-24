@@ -320,14 +320,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t SCREEN_MARGIN_MAX = 40;
   static constexpr uint8_t SCREEN_MARGIN_STEP = 5;
   uint8_t screenMargin = SCREEN_MARGIN_MIN;
-  // OPDS download destination folder ("" = SD root). Global; edited from the
-  // OPDS server list. Persisted via a category-less SettingInfo::String in
-  // SettingsList.h, so it stays out of the on-device Settings screen.
-  char opdsDownloadFolder[64] = "";
-  // On-disk filename format for OPDS downloads (0=Author-Title default, 1=Title-Author,
-  // 2=Title). See OpdsFilenameFormat. Persisted via a category-less SettingInfo::Enum,
-  // edited from the OPDS server list; hidden from the on-device Settings screen.
-  uint8_t opdsFilenameFormat = 0;
   // Hide battery percentage
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press page turn button behavior
@@ -350,12 +342,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   char sdFontFamilyName[32] = "";
   // Dictionary folder name under /dictionaries (empty = no dictionary)
   char dictionaryName[32] = "";
-  // Master switch for all SD-card plugin discovery/execution. New installs keep
-  // this disabled; settings migration enables it when pre-existing plugin files
-  // are found so a firmware update never silently disables an existing setup.
-  uint8_t pluginsEnabled = 0;
-  // User hid the Plugin Hub install row; cleared when plugins are turned back on.
-  uint8_t pluginHubPromptHidden = 0;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
   // Show the title and author read from inside each book rather than its
