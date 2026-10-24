@@ -14,6 +14,9 @@ void drawNote(const GfxRenderer& renderer, int x, int y, int scale, int kind);
 // 32x32 speaker icon in the style of the menu icons, top-left at (x, y).
 void drawSpeakerIcon(const GfxRenderer& renderer, int x, int y);
 
+// 32x32 newspaper icon, same style.
+void drawNewsIcon(const GfxRenderer& renderer, int x, int y);
+
 // Boot and default sleep screen: big penguin centered on the screen, then
 // "WaddleOS" and `subtitle` below it.
 void drawSplash(const GfxRenderer& renderer, const char* subtitle);

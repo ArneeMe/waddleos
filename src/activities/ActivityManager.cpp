@@ -34,6 +34,7 @@
 #include "util/BmpViewerActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#include "waddle/NewsActivity.h"
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -361,6 +362,12 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 }
 
 void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefresh) {
+  // WADDLE: leaving the news paper goes back to the headline list.
+  if (initialMenuItem == HomeMenuItem::NONE && currentActivity && currentActivity->name == "EpubReader" &&
+      static_cast<ReaderActivity*>(currentActivity.get())->bookPath == waddle::news::EPUB_PATH) {
+    replaceActivity(std::make_unique<NewsActivity>(renderer, mappedInput, /*fetch=*/false));
+    return;
+  }
   if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
     const auto& activityName = currentActivity->name;
     if (activityName == "FileBrowser") {

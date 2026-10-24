@@ -82,9 +82,21 @@ Enable them in **Settings → Connectivity → Plugins**.
 - Node IP: `192.168.50.239` (build flag `WADDLE_NODE_IP`), or put another IP in
   `/.waddle/node-ip.txt` on the SD card.
 
+### Nyheter (NRK)
+
+- [x] arnee.me builds an EPUB of all NRK top stories every hour
+      (`ArneeMe/arneeme`: `nyheter/build.mjs`, `.github/workflows/nyheter.yml`)
+      and serves it at `arnee.me/api/nrk.epub`, with the headlines in `/api/nrk.json`.
+- [x] "Nyheter" on the home screen (`src/waddle/NewsActivity.*`): joins Wi-Fi,
+      fetches the paper to `/Nyheter/`, turns Wi-Fi off and lists the headlines.
+      A headline opens the reader at that article; Back returns to the list.
+      Read stories are kept in `/Nyheter/lest.txt`. The paper is not added to
+      recent books.
+- Skip an article: **Kontroller → Atferd ved langt trykk → Kapittelhopp**.
+- Later: long reads and blogs, the same way.
+
 ### Other ideas
 
-- RSS and articles, with a host allowlist.
 - Ideas from `docs/sd-plugins.md`: dictionary store, font or theme store,
   free-books catalog (Standard Ebooks, Gutenberg), read-later services.
 - Updates from GitHub releases: point `src/network/OtaUpdater.cpp:22` at

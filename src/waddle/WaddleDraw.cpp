@@ -30,6 +30,40 @@ constexpr const char* NOTE_SINGLE[] = {"   #   ", "   ##  ", "   # # ", "   #  #
                                        "   #   ", " ###   ", "####   ", "####   ", " ##    "};
 constexpr const char* NOTE_DOUBLE[] = {"  #####", "  #   #", "  #   #", "  #   #", "  #   #",
                                        " ##  ##", "### ###", "### ###", " #   # "};
+
+constexpr const char* NEWS_ICON[32] = {
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "    ########################    ",
+    "    ########################    ",
+    "    ##                    ##    ",
+    "    ##                    ##    ",
+    "    ##  ################  ##    ",
+    "    ##  ################  ##    ",
+    "    ##  ################  ##    ",
+    "    ##                    ##    ",
+    "    ##                    ##    ",
+    "    ##  #######  #######  ##    ",
+    "    ##  #######           ##    ",
+    "    ##  #######           ##    ",
+    "    ##  #######  #######  ##    ",
+    "    ##  #######           ##    ",
+    "    ##  #######           ##    ",
+    "    ##           #######  ##    ",
+    "    ##                    ##    ",
+    "    ##  ################  ##    ",
+    "    ##                    ##    ",
+    "    ##                    ##    ",
+    "    ########################    ",
+    "    ########################    ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                ",
+    "                                "};
 }  // namespace
 
 void drawNote(const GfxRenderer& renderer, const int x, const int y, const int scale, const int kind) {
@@ -83,6 +117,14 @@ void drawSpeakerIcon(const GfxRenderer& renderer, const int x, const int y) {
   for (int row = 0; row < 32; row++) {
     for (int col = 0; col < 32; col++) {
       if (SPEAKER_ICON[row][col] == '#') renderer.drawPixel(x + col, y + row, true);
+    }
+  }
+}
+
+void drawNewsIcon(const GfxRenderer& renderer, const int x, const int y) {
+  for (int row = 0; row < 32; row++) {
+    for (int col = 0; col < 32; col++) {
+      if (NEWS_ICON[row][col] == '#') renderer.drawPixel(x + col, y + row, true);
     }
   }
 }

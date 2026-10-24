@@ -10,8 +10,7 @@
 
 #include "MappedInputManager.h"
 #include "WaddleDraw.h"
-#include "WaddlePrivacy.h"
-#include "WifiCredentialStore.h"
+#include "WaddleWifi.h"
 #include "activities/ActivityManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -64,42 +63,16 @@ void NodeActivity::onEnter() {
 }
 
 void NodeActivity::onExit() {
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+  waddle::wifi::off();
   Activity::onExit();
 }
 
 void NodeActivity::startWifi() {
   connectStartedAt = millis();
   if (WiFi.status() == WL_CONNECTED) return;
-  // The store is only loaded by the Wi-Fi screens, so load it here too.
-  {
-    RenderLock lock(*this);
-    WIFI_STORE.loadFromFile();
-  }
-  auto cred = WIFI_STORE.findCredential(WIFI_STORE.getLastConnectedSsid());
-  if (!cred && WIFI_STORE.getCredentialCount() > 0) cred = WIFI_STORE.getCredentialAt(0);
-  if (!cred) {
-    LOG_ERR("NODE", "no saved Wi-Fi network");
+  if (!waddle::wifi::joinSaved(*this)) {
     state = State::NO_WIFI;
     requestUpdate();
-    return;
-  }
-  // Same sequence as WifiSelectionActivity::attemptConnection().
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true, true);
-  delay(100);
-  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
-  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
-#if WADDLE_PRIVATE
-  WiFi.setHostname(waddle::privacy::HOSTNAME);
-#endif
-  LOG_INF("NODE", "joining %s", cred->ssid.c_str());
-  if (cred->password.empty()) {
-    WiFi.begin(cred->ssid.c_str());
-  } else {
-    WiFi.begin(cred->ssid.c_str(), cred->password.c_str());
   }
 }
 
