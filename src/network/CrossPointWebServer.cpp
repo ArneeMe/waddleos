@@ -33,8 +33,6 @@
 
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
-#include "FontInstaller.h"
-#include "OpdsServerStore.h"
 #include "ProtectedPaths.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
@@ -42,7 +40,6 @@
 #include "WifiCredentialStore.h"
 #include "WifiPowerSaveGuard.h"
 #include "html/FilesPageHtml.generated.h"
-#include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
 #include "html/assets/crosspoint_iconSvg.generated.h"
@@ -53,9 +50,7 @@
 #include "util/DictionaryRegistry.h"
 #include "util/FirmwareIdentity.h"
 #include "util/TaskWatchdog.h"
-#if WADDLE  // WADDLE: firmware apply endpoint
 #include "waddle/WaddleFirmwareApi.h"
-#endif
 
 static void sendStaticContent(WebServer* server, const char* data, size_t len, const char* etag,
                               const char* contentType);
@@ -194,12 +189,7 @@ void CrossPointWebServer::begin() {
     return;
   }
 
-  // Add Access-Control-Allow-* headers to every response so web-based clients
-  // and PWAs on other origins can use the HTTP API. Preflight OPTIONS requests
-  // are answered in handleNotFound().
-#if !WADDLE_PRIVATE  // WADDLE: other web pages in the browser may not call the reader
-  server->enableCORS(true);
-#endif
+  // No CORS headers: other web pages in the browser may not call the reader.
 
   // Setup routes
   LOG_DBG("WEB", "Setting up routes...");
@@ -241,24 +231,14 @@ void CrossPointWebServer::begin() {
   server->on("/api/settings", HTTP_POST, [this] { handlePostSettings(); });
 
   // Font management endpoints
-  server->on("/fonts", HTTP_GET, [this] { handleFontsPage(); });
-  server->on("/api/fonts", HTTP_GET, [this] { handleFontList(); });
-  server->on("/api/fonts/upload", HTTP_POST, [this] { handleFontUpload(); }, [this] { handleFontUploadData(); });
-  server->on("/api/fonts/delete", HTTP_POST, [this] { handleFontDelete(); });
 
-  // OPDS server endpoints
-  server->on("/api/opds", HTTP_GET, [this] { handleGetOpdsServers(); });
-  server->on("/api/opds", HTTP_POST, [this] { handlePostOpdsServer(); });
-  server->on("/api/opds/delete", HTTP_POST, [this] { handleDeleteOpdsServer(); });
 
   // Wi-Fi credential endpoints
   server->on("/api/wifi", HTTP_GET, [this] { handleGetWifiNetworks(); });
   server->on("/api/wifi", HTTP_POST, [this] { handlePostWifiNetwork(); });
   server->on("/api/wifi/delete", HTTP_POST, [this] { handleDeleteWifiNetwork(); });
 
-#if WADDLE  // WADDLE: install an uploaded .bin over Wi-Fi
   waddle::firmware::registerRoutes(*server);
-#endif
 
   server->onNotFound([this] { handleNotFound(); });
   LOG_DBG("WEB", "[MEM] Free heap after route setup: %d bytes", ESP.getFreeHeap());
@@ -531,11 +511,7 @@ void CrossPointWebServer::handleStatus() const {
   doc["rssi"] = apMode ? 0 : WiFi.RSSI();
   doc["freeHeap"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
-  doc["device"] = gpio.deviceIsX3() ? "X3" : "X4";
-#else
   doc["device"] = BoardConfig::ACTIVE.name;
-#endif
 
   String response;
   serializeJson(doc, response);
@@ -1486,172 +1462,6 @@ void CrossPointWebServer::handlePostSettings() {
   server->send(200, "text/plain", String("Applied ") + String(applied) + " setting(s)");
 }
 
-// ---- OPDS Server API ----
-
-void CrossPointWebServer::handleGetOpdsServers() const {
-  const auto& servers = OPDS_STORE.getServers();
-
-  // Stream JSON array incrementally to avoid allocating the full response in memory
-  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server->send(200, "application/json", "");
-  server->sendContent("[");
-
-  char output[512];
-  constexpr size_t outputSize = sizeof(output);
-  JsonDocument doc;
-
-  for (size_t i = 0; i < servers.size(); i++) {
-    doc.clear();
-    doc["index"] = i;
-    doc["name"] = servers[i].name;
-    doc["url"] = servers[i].url;
-    doc["username"] = servers[i].username;
-    // Never expose passwords over the API — only indicate whether one is set
-    doc["hasPassword"] = !servers[i].password.empty();
-    // Header values may hold secrets (e.g. an auth proxy token) — same treatment as passwords
-    JsonArray headersArr = doc["headers"].to<JsonArray>();
-    for (const auto& header : servers[i].customHeaders) {
-      JsonObject h = headersArr.add<JsonObject>();
-      h["name"] = header.name;
-      h["hasValue"] = !header.value.empty();
-    }
-
-    const size_t written = serializeJson(doc, output, outputSize);
-    if (written >= outputSize) continue;
-
-    if (i > 0) server->sendContent(",");
-    server->sendContent(output);
-    yield();                          // Yield to allow WiFi and other tasks to process during a slow send
-    resetTaskWatchdogIfSubscribed();  // Reset watchdog: each sendContent() is a blocking network write
-  }
-
-  server->sendContent("]");
-  server->sendContent("");
-  LOG_DBG("WEB", "Served OPDS servers API (%zu servers)", servers.size());
-}
-
-void CrossPointWebServer::handlePostOpdsServer() {
-  if (!server->hasArg("plain")) {
-    server->send(400, "text/plain", "Missing JSON body");
-    return;
-  }
-
-  const String body = server->arg("plain");
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, body);
-  if (err) {
-    server->send(400, "text/plain", String("Invalid JSON: ") + err.c_str());
-    return;
-  }
-
-  OpdsServer opdsServer;
-  opdsServer.name = doc["name"] | std::string("");
-  opdsServer.url = doc["url"] | std::string("");
-  opdsServer.username = doc["username"] | std::string("");
-
-  // The password field is optional in the JSON payload. When absent (vs. present but empty),
-  // we preserve the existing password — the web UI omits it when the user hasn't changed it.
-  bool hasPasswordField = doc["password"].is<const char*>() || doc["password"].is<std::string>();
-  std::string password = doc["password"] | std::string("");
-
-  // Custom headers: the "headers" array is optional and, when present, is expected to have
-  // one entry per slot. Each entry's "value" key is optional the same way "password" is above
-  // — absent means preserve that slot's existing value on update.
-  bool hasHeadersField = doc["headers"].is<JsonArrayConst>();
-  std::array<std::string, OpdsServer::MAX_CUSTOM_HEADERS> headerNames;
-  std::array<bool, OpdsServer::MAX_CUSTOM_HEADERS> headerValueProvided{};
-  std::array<std::string, OpdsServer::MAX_CUSTOM_HEADERS> headerValues;
-  if (hasHeadersField) {
-    size_t i = 0;
-    for (JsonObjectConst h : doc["headers"].as<JsonArrayConst>()) {
-      if (i >= OpdsServer::MAX_CUSTOM_HEADERS) break;
-      headerNames[i] = h["name"] | std::string("");
-      headerValueProvided[i] = h["value"].is<const char*>() || h["value"].is<std::string>();
-      headerValues[i] = h["value"] | std::string("");
-      i++;
-    }
-  }
-
-  if (doc["index"].is<int>()) {
-    int idx = doc["index"].as<int>();
-    if (idx < 0 || idx >= static_cast<int>(OPDS_STORE.getCount())) {
-      server->send(400, "text/plain", "Invalid server index");
-      return;
-    }
-    const auto* existing = OPDS_STORE.getServer(static_cast<size_t>(idx));
-    // Preserve existing password if not explicitly provided
-    if (!hasPasswordField && existing) password = existing->password;
-    opdsServer.password = password;
-
-    for (size_t i = 0; i < OpdsServer::MAX_CUSTOM_HEADERS; i++) {
-      if (hasHeadersField) {
-        opdsServer.customHeaders[i].name = headerNames[i];
-        if (headerNames[i].empty()) {
-          // An empty name clears the slot outright — never leave a stale value
-          // paired with no name, even if the payload omitted "value".
-          opdsServer.customHeaders[i].value.clear();
-        } else {
-          opdsServer.customHeaders[i].value =
-              headerValueProvided[i] ? headerValues[i] : (existing ? existing->customHeaders[i].value : std::string());
-        }
-      } else if (existing) {
-        opdsServer.customHeaders[i] = existing->customHeaders[i];
-      }
-    }
-
-    OPDS_STORE.updateServer(static_cast<size_t>(idx), opdsServer);
-    LOG_DBG("WEB", "Updated OPDS server at index %d", idx);
-  } else {
-    opdsServer.password = password;
-
-    if (hasHeadersField) {
-      for (size_t i = 0; i < OpdsServer::MAX_CUSTOM_HEADERS; i++) {
-        opdsServer.customHeaders[i].name = headerNames[i];
-        opdsServer.customHeaders[i].value = headerValues[i];
-      }
-    }
-
-    if (!OPDS_STORE.addServer(opdsServer)) {
-      server->send(400, "text/plain", "Cannot add server (limit reached)");
-      return;
-    }
-    LOG_DBG("WEB", "Added new OPDS server: %s", opdsServer.name.c_str());
-  }
-
-  server->send(200, "text/plain", "OK");
-}
-
-// Uses POST (not HTTP DELETE) because ESP32 WebServer doesn't support DELETE with body.
-void CrossPointWebServer::handleDeleteOpdsServer() {
-  if (!server->hasArg("plain")) {
-    server->send(400, "text/plain", "Missing JSON body");
-    return;
-  }
-
-  const String body = server->arg("plain");
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, body);
-  if (err) {
-    server->send(400, "text/plain", String("Invalid JSON: ") + err.c_str());
-    return;
-  }
-
-  if (!doc["index"].is<int>()) {
-    server->send(400, "text/plain", "Missing index");
-    return;
-  }
-
-  int idx = doc["index"].as<int>();
-  if (idx < 0 || idx >= static_cast<int>(OPDS_STORE.getCount())) {
-    server->send(400, "text/plain", "Invalid server index");
-    return;
-  }
-
-  OPDS_STORE.removeServer(static_cast<size_t>(idx));
-  LOG_DBG("WEB", "Deleted OPDS server at index %d", idx);
-  server->send(200, "text/plain", "OK");
-}
-
 // ---- Wi-Fi Credentials API ----
 
 void CrossPointWebServer::handleGetWifiNetworks() const {
@@ -1996,243 +1806,5 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 
     default:
       break;
-  }
-}
-
-// --- Font management handlers ---
-
-void CrossPointWebServer::handleFontsPage() const {
-  sendStaticContent(server.get(), FontsPageHtml, sizeof(FontsPageHtml), FontsPageHtmlETag, "text/html");
-  LOG_DBG("WEB", "Served fonts page");
-}
-
-void CrossPointWebServer::handleFontList() const {
-  // Pick up any uploads/deletes that happened since the last reader load.
-  const_cast<SdCardFontSystem&>(sdFontSystem).refreshIfDirty();
-  const auto& families = sdFontSystem.registry().getFamilies();
-
-  JsonDocument doc;
-  JsonArray arr = doc["families"].to<JsonArray>();
-  doc["maxFamilies"] = SdCardFontRegistry::MAX_SD_FAMILIES;
-  // Vector (.ttf/.otf) fonts need PSRAM to stay resident; DRAM-only boards
-  // only take pre-rendered .cpfont uploads.
-  doc["vectorFonts"] = HalMemory::getPsramHeap().totalBytes > 0;
-
-  for (const auto& family : families) {
-    JsonObject fObj = arr.add<JsonObject>();
-    fObj["name"] = family.name;
-
-    JsonArray sizes = fObj["sizes"].to<JsonArray>();
-    for (uint8_t s : family.availableSizes()) {
-      sizes.add(s);
-    }
-
-    JsonArray files = fObj["files"].to<JsonArray>();
-    for (const auto& file : family.files) {
-      JsonObject fileObj = files.add<JsonObject>();
-      // Extract filename from full path
-      const char* name = strrchr(file.path.c_str(), '/');
-      fileObj["name"] = name ? name + 1 : file.path.c_str();
-
-      // Stat the file for size
-      HalFile f;
-      if (Storage.openFileForRead("WEB", file.path.c_str(), f)) {
-        fileObj["size"] = static_cast<unsigned long>(f.size());
-        f.close();
-      } else {
-        fileObj["size"] = 0;
-      }
-    }
-  }
-
-  sendJson(doc);
-}
-
-void CrossPointWebServer::handleFontUploadData() {
-  HTTPUpload& upload = server->upload();
-
-  switch (upload.status) {
-    case UPLOAD_FILE_START: {
-      resetTaskWatchdogIfSubscribed();
-      String family = server->arg("family");
-      fontUpload.file = HalFile();
-      fontUpload.familyName.clear();
-      fontUpload.filePath.clear();
-      fontUpload.valid = false;
-      fontUpload.magicChecked = false;
-      fontUpload.isVector = false;
-      fontUpload.bytesWritten = 0;
-      fontUpload.bufferPos = 0;
-      fontUpload.buffer.reset();
-
-      if (!FontInstaller::isValidFamilyName(family.c_str())) {
-        LOG_ERR("WEB", "Invalid font family name: %s", family.c_str());
-        break;
-      }
-
-      String filename = upload.filename;
-      filename.replace(' ', '_');
-      // Validate filename: rejects path traversal (../, /, \) and enforces
-      // a .cpfont/.ttf/.otf basename of alphanumeric + hyphen + underscore.
-      // Without this an attacker could supply
-      // "../../.crosspoint/settings.json" as a "filename" and have it written
-      // outside the fonts directory. Vector fonts need PSRAM to stay
-      // resident, so DRAM-only boards only accept .cpfont.
-      const bool psramCapable = HalMemory::getPsramHeap().totalBytes > 0;
-      fontUpload.isVector = psramCapable && FontInstaller::isValidVectorFontFilename(filename.c_str());
-      if (!fontUpload.isVector && !FontInstaller::isValidCpfontFilename(filename.c_str())) {
-        LOG_ERR("WEB", "Invalid font filename: %s", filename.c_str());
-        break;
-      }
-
-      fontUpload.familyName = family.c_str();
-
-      // Create a temporary FontInstaller for directory creation
-      FontInstaller installer(sdFontSystem.registry());
-      if (!installer.ensureFamilyDir(family.c_str())) {
-        LOG_ERR("WEB", "Failed to create font family dir");
-        break;
-      }
-
-      fontUpload.buffer = makeUniqueNoThrow<uint8_t[]>(FontUploadState::BUFFER_SIZE);
-      if (!fontUpload.buffer) {
-        LOG_ERR("WEB", "OOM: font upload buffer");
-        break;
-      }
-
-      char path[128];
-      FontInstaller::buildFontPath(family.c_str(), filename.c_str(), path, sizeof(path));
-      fontUpload.filePath = path;
-
-      if (!Storage.openFileForWrite("WEB", path, fontUpload.file)) {
-        LOG_ERR("WEB", "Failed to open font file for write: %s", path);
-        fontUpload.buffer.reset();
-        break;
-      }
-
-      fontUpload.valid = true;
-      LOG_DBG("WEB", "Font upload started: %s -> %s", filename.c_str(), path);
-      break;
-    }
-
-    case UPLOAD_FILE_WRITE: {
-      if (dropUploadIfCancelled() || !fontUpload.valid) break;
-      resetTaskWatchdogIfSubscribed();
-
-      // Validate magic bytes on first chunk only
-      if (!fontUpload.magicChecked && upload.currentSize >= 8) {
-        bool magicOk;
-        if (fontUpload.isVector) {
-          // sfnt versions: 0x00010000 (TrueType), "OTTO" (CFF), "true" (Apple)
-          static constexpr uint8_t kTtfMagic[4] = {0x00, 0x01, 0x00, 0x00};
-          magicOk = memcmp(upload.buf, kTtfMagic, 4) == 0 || memcmp(upload.buf, "OTTO", 4) == 0 ||
-                    memcmp(upload.buf, "true", 4) == 0;
-        } else {
-          magicOk = memcmp(upload.buf, "CPFONT\0\0", 8) == 0;
-        }
-        if (!magicOk) {
-          LOG_ERR("WEB", "Invalid font magic bytes");
-          fontUpload.valid = false;
-          break;
-        }
-        fontUpload.magicChecked = true;
-      }
-
-      // Buffer writes for efficiency
-      size_t remaining = upload.currentSize;
-      const uint8_t* src = upload.buf;
-      while (remaining > 0) {
-        size_t space = FontUploadState::BUFFER_SIZE - fontUpload.bufferPos;
-        size_t chunk = (remaining < space) ? remaining : space;
-        memcpy(fontUpload.buffer.get() + fontUpload.bufferPos, src, chunk);
-        fontUpload.bufferPos += chunk;
-        src += chunk;
-        remaining -= chunk;
-
-        if (fontUpload.bufferPos >= FontUploadState::BUFFER_SIZE) {
-          if (fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos) != fontUpload.bufferPos) {
-            LOG_ERR("WEB", "Font upload write failed: %s", fontUpload.filePath.c_str());
-            fontUpload.valid = false;
-            break;
-          }
-          fontUpload.bytesWritten += fontUpload.bufferPos;
-          fontUpload.bufferPos = 0;
-          resetTaskWatchdogIfSubscribed();
-        }
-      }
-      break;
-    }
-
-    case UPLOAD_FILE_END: {
-      // Flush remaining buffer
-      if (fontUpload.valid && fontUpload.bufferPos > 0) {
-        if (fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos) != fontUpload.bufferPos) {
-          LOG_ERR("WEB", "Font upload write failed: %s", fontUpload.filePath.c_str());
-          fontUpload.valid = false;
-        }
-        fontUpload.bytesWritten += fontUpload.bufferPos;
-        fontUpload.bufferPos = 0;
-      }
-      if (fontUpload.file.isOpen()) {
-        fontUpload.file.close();
-      }
-      fontUpload.bufferPos = 0;
-      fontUpload.buffer.reset();
-
-      if (!fontUpload.valid && !fontUpload.filePath.empty()) {
-        Storage.remove(fontUpload.filePath.c_str());
-      }
-
-      LOG_DBG("WEB", "Font upload end: valid=%d, %zu bytes", fontUpload.valid, fontUpload.bytesWritten);
-      break;
-    }
-
-    case UPLOAD_FILE_ABORTED: {
-      fontUpload.bufferPos = 0;
-      fontUpload.buffer.reset();
-      if (fontUpload.file) {
-        fontUpload.file.close();
-      }
-      if (!fontUpload.filePath.empty()) {
-        Storage.remove(fontUpload.filePath.c_str());
-      }
-      fontUpload.valid = false;
-      LOG_DBG("WEB", "Font upload aborted");
-      break;
-    }
-  }
-}
-
-void CrossPointWebServer::handleFontUpload() {
-  if (fontUpload.valid) {
-    sdFontSystem.markRegistryDirty();
-    server->send(200, "application/json", "{\"ok\":true}");
-    LOG_DBG("WEB", "Font upload complete: %s", fontUpload.filePath.c_str());
-  } else {
-    server->send(400, "application/json", "{\"error\":\"Invalid font file\"}");
-  }
-}
-
-void CrossPointWebServer::handleFontDelete() {
-  String body = server->arg("plain");
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, body);
-
-  if (err || !doc["family"].is<const char*>()) {
-    server->send(400, "application/json", "{\"error\":\"Invalid request\"}");
-    return;
-  }
-
-  const char* familyName = doc["family"];
-  FontInstaller installer(sdFontSystem.registry());
-  auto result = installer.deleteFamily(familyName);
-
-  if (result == FontInstaller::Error::OK) {
-    sdFontSystem.markRegistryDirty();
-    server->send(200, "application/json", "{\"ok\":true}");
-    LOG_DBG("WEB", "Deleted font family: %s", familyName);
-  } else {
-    server->send(500, "application/json", "{\"error\":\"Delete failed\"}");
-    LOG_ERR("WEB", "Failed to delete font family: %s", familyName);
   }
 }

@@ -68,12 +68,6 @@ void FrontlightPanelActivity::onEnter() {
   lightOn = Frontlight.isOn();
   lightOnChanged = false;
 
-  // Seed the touch tile's restore mode from the live setting, so toggling off
-  // and back on within this session returns to the mode the user had.
-  if (SETTINGS.touchReaderControls != CrossPointSettings::TOUCH_READER_OFF) {
-    touchModeRestore = SETTINGS.touchReaderControls;
-  }
-
   resetUi();
   app.on(ACTION_BRIGHTNESS, &FrontlightPanelActivity::onBrightnessEvent, this);
   app.on(ACTION_WARMTH, &FrontlightPanelActivity::onWarmthEvent, this);
@@ -157,28 +151,6 @@ void FrontlightPanelActivity::runTile(const int idx) {
       // the screen underneath carry the clean waveform instead.
       renderer.promoteNextRefresh(HalDisplay::FULL_REFRESH);
       close();
-      break;
-    case 2:  // Cycle the reading orientation
-      SETTINGS.orientation = static_cast<uint8_t>((SETTINGS.orientation + 1) % 4);
-      SETTINGS.saveToFile();
-      // Only the setting changes: turning the renderer cropped the portrait-only
-      // screens the panel opens over. The reader reflows on its next loop().
-      requestUpdate();
-      break;
-    case 3:  // Touch reader controls (for reading with the palm on the glass)
-      // Toggles the existing Settings -> Controls option, nothing lower-level:
-      // that setting only governs the reader's tap/swipe handling, so the
-      // panel's own gestures (including the swipe that reopens it) keep
-      // working while it is off. Off remembers the mode (Tap/Swipe/Inverted
-      // Tap) so toggling back does not stomp the user's choice.
-      if (SETTINGS.touchReaderControls != CrossPointSettings::TOUCH_READER_OFF) {
-        touchModeRestore = SETTINGS.touchReaderControls;
-        SETTINGS.touchReaderControls = CrossPointSettings::TOUCH_READER_OFF;
-      } else {
-        SETTINGS.touchReaderControls = touchModeRestore;
-      }
-      SETTINGS.saveToFile();
-      requestUpdate();
       break;
     default:
       break;
@@ -380,24 +352,9 @@ void FrontlightPanelActivity::buildPanelScreen(UiScreen& screen) {
   // setting is currently on draws filled (StateChecked -> selected style).
   // Touch boards only — the tiles are touch targets.
   if (mappedInput.hasTouch()) {
-    static constexpr StrId kOrientNames[4] = {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW,
-                                              StrId::STR_ORIENTATION_INVERTED, StrId::STR_LANDSCAPE_CCW};
-    // The orientation tile is labelled with just the current mode ("Portrait"):
-    // the mode names say what the tile is about on their own.
-    const char* orientLabel = I18N.get(kOrientNames[SETTINGS.orientation % 4]);
-    // "Touch On" / "Touch Off", from the existing state strings: the label
-    // names the current state of the touch-reader-controls setting.
-    const bool touchOn = SETTINGS.touchReaderControls != CrossPointSettings::TOUCH_READER_OFF;
-    char touchLabel[48];
-    snprintf(touchLabel, sizeof(touchLabel), "%s %s", tr(STR_TOUCH_TOGGLE),
-             I18N.get(touchOn ? StrId::STR_STATE_ON : StrId::STR_STATE_OFF));
-
-    const char* labels[kTileCount] = {tr(STR_NIGHT_MODE), tr(STR_FORCE_REFRESH), orientLabel, touchLabel};
+    const char* labels[kTileCount] = {tr(STR_NIGHT_MODE), tr(STR_FORCE_REFRESH)};
     const fui::State states[kTileCount] = {SETTINGS.screenInverted ? fui::StateChecked : fui::StateNormal,
-                                           fui::StateNormal, fui::StateNormal,
-                                           // Filled when touch reader controls are OFF — the non-default,
-                                           // attention-worthy state.
-                                           touchOn ? fui::StateNormal : fui::StateChecked};
+                                           fui::StateNormal};
 
     for (int id = 0; id < kTileCount; ++id) {
       gridItems[id].label = labels[id];

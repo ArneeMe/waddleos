@@ -15,7 +15,6 @@
       <a href="/">Home</a>
       <a href="/files">File Manager</a>
       <a href="/settings">Settings</a>
-      <a href="/fonts">Fonts</a>
     </nav>
   </div>
   <details class="mobile-nav">
@@ -30,7 +29,6 @@
       <a href="/">Home</a>
       <a href="/files">File Manager</a>
       <a href="/settings">Settings</a>
-      <a href="/fonts">Fonts</a>
     </nav>
   </details>
 </header>

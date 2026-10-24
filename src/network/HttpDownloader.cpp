@@ -9,9 +9,7 @@
 #include <string>
 
 #include "WifiPowerSaveGuard.h"
-#if WADDLE_PRIVATE  // WADDLE: privacy build
 #include "waddle/WaddlePrivacy.h"
-#endif
 
 extern "C" void wolfSSL_Arduino_Serial_Print(const char* const msg) { LOG_DBG("WOLFSSL", "%s", msg); }
 
@@ -33,11 +31,7 @@ void applyCommonClientSetup(freeink::SecureHttpClient& http) {
   // setUserAgent replaces SecureHttpClient's built-in UA; addHeader would
   // append a second User-Agent header, which strict servers reject (aiohttp
   // answers 400 "Duplicate 'User-Agent' header found").
-#if WADDLE_PRIVATE  // WADDLE: neutral user agent
   http.setUserAgent(waddle::privacy::USER_AGENT);
-#else
-  http.setUserAgent("CrossPoint-ESP32-" CROSSPOINT_VERSION);
-#endif
 }
 
 // Written after every request, and read by the UI right after a failure.

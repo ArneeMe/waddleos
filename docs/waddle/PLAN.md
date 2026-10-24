@@ -59,20 +59,10 @@ Goal: run one script on Arch, and the reader installs the new firmware.
 
 Detailed draft: [phase2-privacy.md](phase2-privacy.md).
 
-Short version: hide features that talk to outside servers behind `WADDLE_PRIVATE`,
-and add a host allowlist where all outbound HTTP goes through.
+Done: features that talked to outside servers are deleted. The reader only
+talks to arnee.me (news, weather, started by Arne) and the local network.
 
 ## Step 4: fun stuff
-
-### arnee.me app (SD card plugin)
-
-Plugins are folders on the SD card, no firmware build needed (`docs/sd-plugins.md`).
-Enable them in **Settings → Connectivity → Plugins**.
-
-- [ ] Catalog plugin (`device.json`) that reads a static `books.json` on arnee.me.
-      Pick a book on the reader, it downloads to the SD card over Wi-Fi.
-- [ ] The same catalog can list firmware `.bin` files.
-- Simpler alternative: an OPDS feed on arnee.me. The reader supports OPDS already.
 
 ### Bluesound Node remote
 
@@ -107,13 +97,6 @@ Enable them in **Settings → Connectivity → Plugins**.
 - Skip an article: **Kontroller → Atferd ved langt trykk → Kapittelhopp**.
 - Later: long reads and blogs, the same way.
 
-### Other ideas
-
-- Ideas from `docs/sd-plugins.md`: dictionary store, font or theme store,
-  free-books catalog (Standard Ebooks, Gutenberg), read-later services.
-- Updates from GitHub releases: point `src/network/OtaUpdater.cpp:22` at
-  `ArneeMe/waddleos` and trim `.github/workflows/release.yml` to the X4 Pro.
-
 ## Notes for Arch Linux
 
 - `sudo pacman -S esptool`. For building: `sudo pacman -S platformio-core`.
@@ -128,3 +111,9 @@ Enable them in **Settings → Connectivity → Plugins**.
   `curl -F file=@book.epub "http://<ip>/upload?path=/"`
 - If the reader is "unreachable": the screen is closed or asleep, or the router
   blocks Wi-Fi to wired traffic ("AP Isolated" on ASUS).
+
+## Removed from CrossPoint
+
+Plugins, the OPDS book catalog, KOReader sync, OTA updates, LCP DRM, mDNS,
+font download and web font upload, Calibre wireless, the theme setting and
+other themes, and code for other devices. Lyra is the only theme.

@@ -30,13 +30,11 @@ class SdFirmwareUpdateActivity : public Activity {
 
   explicit SdFirmwareUpdateActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool recoveryMode = false)
       : Activity("SdFirmwareUpdate", renderer, mappedInput), recoveryMode(recoveryMode) {}
-#if WADDLE  // WADDLE: start with a known file instead of the picker
   SdFirmwareUpdateActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool recoveryMode,
                            std::string presetPath)
       : Activity("SdFirmwareUpdate", renderer, mappedInput),
         recoveryMode(recoveryMode),
         presetPath(std::move(presetPath)) {}
-#endif
 
   void onEnter() override;
   void loop() override;
@@ -53,9 +51,7 @@ class SdFirmwareUpdateActivity : public Activity {
   size_t writtenBytes = 0;
   unsigned int lastRenderedPercent = 101;
   std::string errorMessage;
-#if WADDLE
   std::string presetPath;
-#endif
 
   void launchPicker();
   void onPickerResult(const ActivityResult& result);

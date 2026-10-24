@@ -455,25 +455,22 @@ void WaddleHomeActivity::render(RenderLock&&) {
   renderer.fillRect(side, y, pageWidth - 2 * side, 2);
   const int newsBottom = y + 2;
 
-  // Buttons.
-  constexpr int buttonH = 84;
+  // Buttons, icons only: Bibliotek, Filer, Overføring, Bluesound, Innstillinger.
+  constexpr int buttonH = 64;
   constexpr int gap = 8;
   const int buttonsY = pageHeight - buttonH - 36;
   const int buttonW = (pageWidth - 2 * side - 4 * gap) / 5;
-  const char* labels[] = {"Bibliotek", "Filer", "Overføring", "Bluesound", "Innstillinger"};
   const uint8_t* icons[] = {LibraryIcon, FolderIcon, TransferIcon, nullptr, Settings2Icon};
   for (int i = 0; i < 5; i++) {
     const int x = side + i * (buttonW + gap);
     renderer.drawRoundedRect(x, buttonsY, buttonW, buttonH, 2, 12, true);
     const int iconX = x + (buttonW - 32) / 2;
+    const int iconY = buttonsY + (buttonH - 32) / 2;
     if (icons[i]) {
-      renderer.drawIcon(icons[i], iconX, buttonsY + 12, 32);
+      renderer.drawIcon(icons[i], iconX, iconY, 32);
     } else {
-      waddle::drawSpeakerIcon(renderer, iconX, buttonsY + 12);
+      waddle::drawSpeakerIcon(renderer, iconX, iconY);
     }
-    const std::string label = renderer.truncatedText(SMALL_FONT_ID, labels[i], buttonW - 6);
-    const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label.c_str());
-    renderer.drawText(SMALL_FONT_ID, x + (buttonW - labelW) / 2, buttonsY + 52, label.c_str());
     boxes[T_LIBRARY + i] = {x, buttonsY, buttonW, buttonH};
   }
 

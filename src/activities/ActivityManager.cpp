@@ -15,20 +15,16 @@
 #include "Activity.h"
 #include "CrossPointSettings.h"
 #include "HapticFeedback.h"
-#include "OpdsServerStore.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
-#include "browser/OpdsBookBrowserActivity.h"
 #include "components/HeaderBackTapTarget.h"
 #include "home/CrashActivity.h"
 #include "home/FileBrowserActivity.h"
 #include "library/LibraryListActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "network/UsbDriveActivity.h"
-#include "plugins/PluginCatalogActivity.h"
 #include "reader/ReaderActivity.h"
 #include "reader/RemoteTurnGate.h"
-#include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsListActivity.h"
 #include "util/BmpViewerActivity.h"
 #include "util/FrontlightPanelActivity.h"
@@ -313,20 +309,6 @@ void ActivityManager::goToLibrary() {
   replaceActivity(std::move(activity));
 }
 
-void ActivityManager::goToBrowser() {
-  const auto& servers = OPDS_STORE.getServers();
-  // Skip the server picker when there's only one server configured
-  if (servers.size() == 1) {
-    replaceActivity(std::make_unique<OpdsBookBrowserActivity>(renderer, mappedInput, servers[0]));
-  } else {
-    replaceActivity(std::make_unique<OpdsServerListActivity>(renderer, mappedInput, true));
-  }
-}
-
-void ActivityManager::goToPlugins(bool showOpds) {
-  replaceActivity(std::make_unique<PluginCatalogActivity>(renderer, mappedInput, showOpds, /*rootMode=*/true));
-}
-
 void ActivityManager::goToReader(std::string path, const bool allowFastInitialRefresh) {
   if (path.empty()) {
     goToFileBrowser("/");
@@ -361,9 +343,9 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
   replaceActivity(std::make_unique<FullScreenMessageActivity>(renderer, mappedInput, std::move(message), style));
 }
 
-void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefresh) {
+void ActivityManager::goHome(bool cleanInitialRefresh) {
   // WADDLE: leaving the news paper goes back to the headline list.
-  if (initialMenuItem == HomeMenuItem::NONE && currentActivity && currentActivity->name == "EpubReader" &&
+  if (currentActivity && currentActivity->name == "EpubReader" &&
       static_cast<ReaderActivity*>(currentActivity.get())->bookPath == waddle::news::EPUB_PATH) {
     replaceActivity(std::make_unique<NewsActivity>(renderer, mappedInput, /*fetch=*/false));
     return;

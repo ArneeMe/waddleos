@@ -14,23 +14,16 @@
 #include "NetworkModeSelectionActivity.h"
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
-#include "activities/network/CalibreConnectActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/QrUtils.h"
 #include "util/TaskWatchdog.h"
-#if WADDLE_PRIVATE  // WADDLE: privacy build
 #include "waddle/WaddlePrivacy.h"
-#endif
-#if WADDLE  // WADDLE: firmware apply endpoint
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "waddle/WaddleFirmwareApi.h"
-#endif
 
 namespace {
 // AP Mode configuration
-constexpr const char* AP_SSID = "CrossPoint-Reader";
-constexpr const char* AP_PASSWORD = nullptr;  // Open network for ease of use
 constexpr const char* AP_HOSTNAME = "crosspoint";
 constexpr uint8_t AP_CHANNEL = 1;
 constexpr uint8_t AP_MAX_CONNECTIONS = 4;
@@ -145,9 +138,7 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
   }
 
   const char* modeName = "Join Network";
-  if (mode == NetworkMode::CONNECT_CALIBRE) {
-    modeName = "Connect to Calibre";
-  } else if (mode == NetworkMode::CREATE_HOTSPOT) {
+  if (mode == NetworkMode::CREATE_HOTSPOT) {
     modeName = "Create Hotspot";
 #if FREEINK_CAP_USB_MSC
   } else if (mode == NetworkMode::USB_DRIVE) {
@@ -165,23 +156,6 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
 
   networkMode = mode;
   isApMode = (mode == NetworkMode::CREATE_HOTSPOT);
-
-  if (mode == NetworkMode::CONNECT_CALIBRE) {
-    startActivityForResult(
-        std::make_unique<CalibreConnectActivity>(renderer, mappedInput), [this](const ActivityResult& result) {
-          state = WebServerActivityState::MODE_SELECTION;
-
-          startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
-                                 [this](const ActivityResult& result) {
-                                   if (result.isCancelled) {
-                                     onGoHome();
-                                   } else {
-                                     onNetworkModeSelected(std::get<NetworkModeResult>(result.data).mode);
-                                   }
-                                 });
-        });
-    return;
-  }
 
   if (mode == NetworkMode::JOIN_NETWORK) {
     // STA mode - launch WiFi selection
@@ -244,18 +218,9 @@ void CrossPointWebServerActivity::startAccessPoint() {
 
   // Start soft AP
   bool apStarted;
-#if WADDLE_PRIVATE  // WADDLE: neutral name and a WPA2 password derived from the device
   const std::string hotspotPassword = waddle::privacy::hotspotPassword();
   apStarted = WiFi.softAP(waddle::privacy::HOTSPOT_SSID, hotspotPassword.c_str(), AP_CHANNEL, false,
                           AP_MAX_CONNECTIONS);
-#else
-  if (AP_PASSWORD && strlen(AP_PASSWORD) >= 8) {
-    apStarted = WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, false, AP_MAX_CONNECTIONS);
-  } else {
-    // Open network (no password)
-    apStarted = WiFi.softAP(AP_SSID, nullptr, AP_CHANNEL, false, AP_MAX_CONNECTIONS);
-  }
-#endif
 
   if (!apStarted) {
     LOG_ERR("WEBACT", "ERROR: Failed to start Access Point!");
@@ -270,14 +235,10 @@ void CrossPointWebServerActivity::startAccessPoint() {
   char ipStr[16];
   snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", apIP[0], apIP[1], apIP[2], apIP[3]);
   connectedIP = ipStr;
-#if WADDLE_PRIVATE
   connectedSSID = waddle::privacy::HOTSPOT_SSID;
-#else
-  connectedSSID = AP_SSID;
-#endif
 
   LOG_DBG("WEBACT", "Access Point started!");
-  LOG_DBG("WEBACT", "SSID: %s", AP_SSID);
+  LOG_DBG("WEBACT", "SSID: %s", connectedSSID.c_str());
   LOG_DBG("WEBACT", "IP: %s", connectedIP.c_str());
 
   // Start mDNS for hostname resolution
@@ -433,7 +394,6 @@ void CrossPointWebServerActivity::loop() {
       }
       lastHandleClientTime = millis();
 
-#if WADDLE  // WADDLE: a .bin queued by /api/firmware/apply opens the SD update with it
       std::string firmwarePath;
       if (waddle::firmware::takePending(firmwarePath)) {
         startActivityForResult(
@@ -441,7 +401,6 @@ void CrossPointWebServerActivity::loop() {
             [this](const ActivityResult&) { requestUpdate(); });
         return;
       }
-#endif
     }
 
     // Also check outside the request-processing loop.
@@ -500,23 +459,17 @@ void CrossPointWebServerActivity::renderServerRunning() const {
 
     // Show QR code for Wifi
     // follows spec at https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11
-#if WADDLE_PRIVATE  // WADDLE: hotspot has a password
     const std::string hotspotPassword = waddle::privacy::hotspotPassword();
     const std::string wifiConfig = std::string("WIFI:T:WPA;S:") + connectedSSID + ";P:" + hotspotPassword + ";;";
-#else
-    const std::string wifiConfig = std::string("WIFI:T:nopass;S:") + connectedSSID + ";;";
-#endif
     const Rect qrBoundsWifi(metrics.contentSidePadding, startY, QR_CODE_WIDTH, QR_CODE_HEIGHT);
     QrUtils::drawQrCode(renderer, qrBoundsWifi, wifiConfig);
 
     // Show network name
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding + QR_CODE_WIDTH + metrics.verticalSpacing, startY + 80,
                       connectedSSID.c_str());
-#if WADDLE_PRIVATE  // WADDLE: password under the network name
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding + QR_CODE_WIDTH + metrics.verticalSpacing,
                       startY + 80 + renderer.getLineHeight(UI_10_FONT_ID) + 8, hotspotPassword.c_str(), true,
                       EpdFontFamily::BOLD);
-#endif
 
     startY += QR_CODE_HEIGHT + 2 * metrics.verticalSpacing;
 
