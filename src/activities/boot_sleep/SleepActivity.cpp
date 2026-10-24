@@ -27,7 +27,6 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "waddle/WaddleDraw.h"
-#include "images/MoonIcon.h"
 
 namespace {
 // Metalio: B/W sleep images use the full 0xF7 waveform instead of HALF (two
@@ -579,15 +578,10 @@ void releaseSdFontCachesForDecode(const GfxRenderer& renderer) {
 void SleepActivity::onEnter() {
   Activity::onEnter();
 
-  const bool renderQuickResume =
-      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
-      (fromTimeout &&
-       SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
-
-  if (renderQuickResume) {
-    // Quick Resume keeps the current frame as-is, so the driver's inversion
-    // state stays too: a night-mode page sleeps in night polarity, and the
-    // moon icon inverts with it at transfer like any other draw.
+  // WaddleOS: a book keeps its page (see enterDeepSleep()). The frame stays
+  // as-is, so the driver's inversion state stays too: a night-mode page sleeps
+  // in night polarity, and the penguin inverts with it at transfer.
+  if (APP_STATE.lastSleepFromReader) {
     return renderLastScreenSleepScreen();
   }
 
@@ -974,9 +968,18 @@ void SleepActivity::renderCoverSleepScreen() const {
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {
-  const auto pageHeight = renderer.getScreenHeight();
-  renderer.drawImage(MoonIcon, 0, pageHeight - MOONICON_HEIGHT, MOONICON_WIDTH, MOONICON_HEIGHT);
-  // Only the moon differs from the displayed frame, so a differential FAST
+  // A sleeping penguin in the bottom-right corner, on a white card so it reads over text.
+  constexpr int scale = 2;
+  constexpr int cardW = 30 * scale + 44;
+  constexpr int cardH = 30 * scale + 12;
+  const int cardX = renderer.getScreenWidth() - cardW - 8;
+  const int cardY = renderer.getScreenHeight() - cardH - 8;
+  renderer.fillRoundedRect(cardX, cardY, cardW, cardH, 10, Color::White);
+  renderer.drawRoundedRect(cardX, cardY, cardW, cardH, 2, 10, true);
+  waddle::drawPenguin(renderer, cardX + 6, cardY + 4, scale);
+  renderer.drawText(SMALL_FONT_ID, cardX + cardW - 36, cardY + 26, "z", true, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, cardX + cardW - 24, cardY + 6, "Z", true, EpdFontFamily::BOLD);
+  // Only the penguin differs from the displayed frame, so a differential FAST
   // update adds it without the flashing clean pass (which sweeps the panel
   // through the inverse — a full white flash on a night-mode page).
   if (gpio.deviceIsX3()) {
