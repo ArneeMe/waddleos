@@ -17,6 +17,7 @@
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "XtcReaderActivity.h"
+#include "waddle/NewsActivity.h"
 
 ReaderActivity::ReaderActivity(const char* name, GfxRenderer& renderer, MappedInputManager& mappedInput,
                                std::string bookPath, const bool allowFastInitialRefresh)
@@ -87,6 +88,8 @@ void ReaderActivity::rememberBookOnceRendered() {
   bookRemembered = true;
   APP_STATE.openEpubPath = bookPath;
   APP_STATE.saveToFile();
+  // WADDLE: the news paper is not a book to continue, keep it off the home screen.
+  if (bookPath == waddle::news::EPUB_PATH) return;
   RECENT_BOOKS.addBook(bookPath, getBookTitle(), getBookAuthor(), getBookThumbBmpPath());
 }
 

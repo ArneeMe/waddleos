@@ -25,7 +25,8 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#if WADDLE  // WADDLE: Bluesound remote
+#if WADDLE  // WADDLE: Nyheter and the Bluesound remote
+#include "waddle/NewsActivity.h"
 #include "waddle/NodeActivity.h"
 #endif
 
@@ -37,8 +38,8 @@ int HomeActivity::getMenuItemCount() const {
   if (hasLibrarySlot()) {
     count++;
   }
-#if WADDLE  // WADDLE: "Bluesound" row
-  count++;
+#if WADDLE  // WADDLE: "Nyheter" and "Bluesound" rows
+  count += 2;
 #endif
   return count;
 }
@@ -317,13 +318,18 @@ void HomeActivity::loop() {
       return;
     }
     const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-#if WADDLE  // WADDLE: "Bluesound" sits just above Settings, which stays last
+#if WADDLE  // WADDLE: "Nyheter" and "Bluesound" sit just above Settings, which stays last
     const int bluesoundIndex = getMenuItemCount() - static_cast<int>(recentBooks.size()) - 2;
+    const int newsIndex = bluesoundIndex - 1;
+    if (menuIndex == newsIndex) {
+      activityManager.replaceActivity(std::make_unique<NewsActivity>(renderer, mappedInput));
+      return;
+    }
     if (menuIndex == bluesoundIndex) {
       activityManager.replaceActivity(std::make_unique<NodeActivity>(renderer, mappedInput));
       return;
     }
-    switch (indexToMenuItem(menuIndex > bluesoundIndex ? menuIndex - 1 : menuIndex, hasLibrarySlot())) {
+    switch (indexToMenuItem(menuIndex > bluesoundIndex ? menuIndex - 2 : menuIndex, hasLibrarySlot())) {
 #else
     switch (indexToMenuItem(menuIndex, hasLibrarySlot())) {
 #endif
@@ -548,7 +554,9 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin() + 2, Plugins);
   }
 
-#if WADDLE  // WADDLE: Bluesound remote, above Settings (WaddleTheme draws its speaker icon)
+#if WADDLE  // WADDLE: Nyheter and Bluesound, above Settings (WaddleTheme draws their icons)
+  menuItems.insert(menuItems.end() - 1, "Nyheter");
+  menuIcons.insert(menuIcons.end() - 1, Wifi);
   menuItems.insert(menuItems.end() - 1, "Bluesound");
   menuIcons.insert(menuIcons.end() - 1, Wifi);
 #endif

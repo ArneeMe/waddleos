@@ -59,16 +59,21 @@ void WaddleTheme::drawButtonMenu(GfxRenderer& renderer, const Rect rect, const i
                                  const std::function<UIIcon(int index)>& rowIcon) const {
   LyraTheme::drawButtonMenu(renderer, rect, buttonCount, selectedIndex, buttonLabel, rowIcon);
 
-  // The Bluesound row gets a placeholder icon from Lyra (so its text lines up);
-  // paint over it with the speaker, using the same position as Lyra.
+  // Our rows get a placeholder icon from Lyra (so their text lines up);
+  // paint over it with our own icon, using the same position as Lyra.
   const auto& lyra = LyraMetrics::values;
   for (int i = 0; i < buttonCount; i++) {
-    if (buttonLabel(i) != "Bluesound") continue;
+    const std::string label = buttonLabel(i);
+    if (label != "Bluesound" && label != "Nyheter") continue;
     const int rowY = rect.y + i * (lyra.menuRowHeight + lyra.menuSpacing);
     const int iconX = rect.x + lyra.contentSidePadding + 16;
     const int iconY = rowY + (lyra.menuRowHeight - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
     renderer.fillRoundedRect(iconX, iconY, 32, 32, 0, i == selectedIndex ? Color::LightGray : Color::White);
-    waddle::drawSpeakerIcon(renderer, iconX, iconY);
+    if (label == "Nyheter") {
+      waddle::drawNewsIcon(renderer, iconX, iconY);
+    } else {
+      waddle::drawSpeakerIcon(renderer, iconX, iconY);
+    }
   }
 
   // Penguin family on an ice floe at the bottom of the screen, below the menu rows.
