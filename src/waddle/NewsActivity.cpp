@@ -1,11 +1,6 @@
 #include "NewsActivity.h"
 
-#include <ArduinoJson.h>
-#include <Epub.h>
 #include <GfxRenderer.h>
-#include <HalStorage.h>
-#include <Logging.h>
-#include <PersistableStore.h>
 #include <WiFi.h>
 
 #include <algorithm>
@@ -14,28 +9,13 @@
 #include "WaddleDraw.h"
 #include "WaddleWifi.h"
 #include "activities/ActivityManager.h"
-#include "activities/reader/EpubReaderUtils.h"
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "network/HttpDownloader.h"
 
 namespace {
 
-constexpr const char* DIR = "/Nyheter";
-constexpr const char* LIST_PATH = "/Nyheter/nrk.json";
-constexpr const char* NEW_LIST_PATH = "/Nyheter/nrk.new.json";
-constexpr const char* READ_PATH = "/Nyheter/lest.txt";
-constexpr const char* LIST_URL = "https://arnee.me/api/nrk.json";
-constexpr const char* EPUB_URL = "https://arnee.me/api/nrk.epub";
 constexpr unsigned long WIFI_TIMEOUT_MS = 15000;
-
-// Reads the "bygd" (build time) field of a downloaded list.
-std::string builtOf(const char* path) {
-  JsonDocument doc;
-  if (!PersistableStoreBase::readDocFromFile(path, doc)) return "";
-  return doc["bygd"] | "";
-}
 
 }  // namespace
 
@@ -45,11 +25,6 @@ NewsActivity::NewsActivity(GfxRenderer& renderer, MappedInputManager& mappedInpu
 void NewsActivity::onEnter() {
   Activity::onEnter();
   loadList();
-  loadRead();
-  {
-    RenderLock lock(*this);
-    buildRows();
-  }
   moveTo(0);  // the first unread story
   if (fetchOnEnter) {
     startFetch();
@@ -72,40 +47,11 @@ void NewsActivity::startFetch() {
   if (WiFi.status() != WL_CONNECTED && !waddle::wifi::joinSaved(*this)) finishFetch(false);
 }
 
-// Downloads the list, and the book only when the paper is new. The old files
-// stay until the new ones are complete.
-bool NewsActivity::download() {
-  if (ESP.getFreeHeap() < HttpDownloader::MIN_TLS_FREE_HEAP ||
-      ESP.getMaxAllocHeap() < HttpDownloader::MIN_TLS_MAX_ALLOC) {
-    LOG_ERR("NEWS", "low heap for download (%u free)", ESP.getFreeHeap());
-    return false;
-  }
-  Storage.mkdir(DIR);
-  if (HttpDownloader::downloadToFile(LIST_URL, NEW_LIST_PATH) != HttpDownloader::OK) return false;
-  const std::string newBuilt = builtOf(NEW_LIST_PATH);
-  if (newBuilt.empty()) {
-    Storage.remove(NEW_LIST_PATH);
-    return false;
-  }
-  if (newBuilt == built && Storage.exists(waddle::news::EPUB_PATH)) {
-    Storage.remove(NEW_LIST_PATH);
-    return true;
-  }
-  if (HttpDownloader::downloadToFile(EPUB_URL, waddle::news::EPUB_PATH) != HttpDownloader::OK) {
-    Storage.remove(NEW_LIST_PATH);
-    return false;
-  }
-  // Same file name as the old paper, so drop the old paper's layout cache.
-  Epub(waddle::news::EPUB_PATH, "/.crosspoint").clearCache();
-  return Storage.replaceFile(NEW_LIST_PATH, LIST_PATH);
-}
-
 void NewsActivity::finishFetch(const bool ok) {
   waddle::wifi::off();
   if (ok) loadList();
   {
     RenderLock lock(*this);
-    if (ok) buildRows();
     stale = !ok;
     state = State::LIST;
   }
@@ -113,81 +59,39 @@ void NewsActivity::finishFetch(const bool ok) {
   requestUpdate();
 }
 
-bool NewsActivity::loadList() {
-  JsonDocument doc;
-  if (!PersistableStoreBase::readDocFromFile(LIST_PATH, doc)) return false;
+void NewsActivity::loadList() {
+  waddle::news::Paper loaded;
+  waddle::news::load(loaded);
+  auto ids = waddle::news::loadReadIds();
   RenderLock lock(*this);
-  edition = doc["tittel"] | "NRK";
-  built = doc["bygd"] | "";
-  items.clear();
-  JsonArray list = doc["liste"].as<JsonArray>();
-  items.reserve(list.size());
-  for (JsonObject obj : list) {
-    items.push_back({obj["id"] | "", obj["t"] | "", obj["kl"] | ""});
-  }
-  return true;
-}
-
-// lest.txt: one article id per line.
-void NewsActivity::loadRead() {
-  readIds.clear();
-  if (!Storage.exists(READ_PATH)) return;
-  const String text = Storage.readFile(READ_PATH);
-  int start = 0;
-  while (start < static_cast<int>(text.length())) {
-    int end = text.indexOf('\n', start);
-    if (end < 0) end = text.length();
-    if (end > start) readIds.emplace_back(text.substring(start, end).c_str());
-    start = end + 1;
-  }
-}
-
-bool NewsActivity::isRead(const std::string& id) const {
-  return std::find(readIds.begin(), readIds.end(), id) != readIds.end();
+  paper = std::move(loaded);
+  readIds = std::move(ids);
+  buildRows();
 }
 
 // Unread stories first, in NRK's order, then a "Lest" heading and the read ones.
 void NewsActivity::buildRows() {
   rows.clear();
-  rows.reserve(items.size() + 1);
+  rows.reserve(paper.stories.size() + 1);
   int readCount = 0;
-  for (size_t i = 0; i < items.size(); i++) {
-    if (isRead(items[i].id)) {
+  for (size_t i = 0; i < paper.stories.size(); i++) {
+    if (isRead(paper.stories[i].id)) {
       readCount++;
     } else {
       rows.push_back(static_cast<int>(i));
     }
   }
-  unread = static_cast<int>(items.size()) - readCount;
+  unread = static_cast<int>(paper.stories.size()) - readCount;
   if (readCount == 0) return;
   rows.push_back(READ_HEADING);
-  for (size_t i = 0; i < items.size(); i++) {
-    if (isRead(items[i].id)) rows.push_back(static_cast<int>(i));
+  for (size_t i = 0; i < paper.stories.size(); i++) {
+    if (isRead(paper.stories[i].id)) rows.push_back(static_cast<int>(i));
   }
 }
 
 void NewsActivity::open(const int row) {
-  if (row < 0 || row >= static_cast<int>(rows.size()) || !Storage.exists(waddle::news::EPUB_PATH)) return;
-  const int index = rows[row];
-  if (index == READ_HEADING) return;
-
-  // Remember it as read. Only ids in today's paper are kept, so the file stays small.
-  if (!isRead(items[index].id)) readIds.push_back(items[index].id);
-  String text;
-  for (const auto& item : items) {
-    if (isRead(item.id)) {
-      text += item.id.c_str();
-      text += '\n';
-    }
-  }
-  Storage.writeFile(READ_PATH, text);
-
-  // Chapter 0 is the front page, so story i is chapter i + 1. Saving it as the
-  // reading position makes the reader open there.
-  Epub epub(waddle::news::EPUB_PATH, "/.crosspoint");
-  epub.setupCacheDir();
-  EpubReaderUtils::saveProgress(epub, index + 1, 0, 0);
-  activityManager.goToReader(waddle::news::EPUB_PATH);
+  if (row < 0 || row >= static_cast<int>(rows.size()) || rows[row] == READ_HEADING) return;
+  waddle::news::openStory(paper, readIds, rows[row]);
 }
 
 // Selects a row, stepping over the "Lest" heading in the direction of travel.
@@ -213,7 +117,7 @@ void NewsActivity::loop() {
 
   if (state == State::CONNECTING) {
     if (WiFi.status() == WL_CONNECTED) {
-      finishFetch(download());
+      finishFetch(waddle::news::sync());
     } else if (millis() - connectStartedAt > WIFI_TIMEOUT_MS) {
       finishFetch(false);
     }
@@ -291,7 +195,7 @@ void NewsActivity::render(RenderLock&&) {
     return;
   }
 
-  if (items.empty()) {
+  if (paper.stories.empty()) {
     GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Nyheter");
     waddle::drawPenguin(renderer, (pageWidth - 90) / 2, pageHeight / 2 - 140, 3);
     renderer.drawCenteredText(UI_12_FONT_ID, pageHeight / 2, "Fikk ikke hentet nyheter", true, EpdFontFamily::BOLD);
@@ -301,7 +205,7 @@ void NewsActivity::render(RenderLock&&) {
   }
 
   char subtitle[96];
-  snprintf(subtitle, sizeof(subtitle), "%s  ·  %d uleste%s", edition.c_str(), unread,
+  snprintf(subtitle, sizeof(subtitle), "%s  ·  %d uleste%s", paper.edition.c_str(), unread,
            stale ? "  ·  ikke oppdatert" : "");
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Nyheter", subtitle);
 
@@ -326,7 +230,7 @@ void NewsActivity::render(RenderLock&&) {
     const int y = listTop + row * rowHeight;
     if (rows[i] == READ_HEADING) {
       char heading[24];
-      snprintf(heading, sizeof(heading), "LEST (%d)", static_cast<int>(items.size()) - unread);
+      snprintf(heading, sizeof(heading), "LEST (%d)", static_cast<int>(paper.stories.size()) - unread);
       const int textY = y + rowHeight - renderer.getLineHeight(SMALL_FONT_ID) - 12;
       renderer.drawText(SMALL_FONT_ID, side, textY, heading, true, EpdFontFamily::BOLD);
       const int lineX = side + renderer.getTextWidth(SMALL_FONT_ID, heading, EpdFontFamily::BOLD) + 12;
@@ -334,7 +238,7 @@ void NewsActivity::render(RenderLock&&) {
       renderer.drawLine(lineX, lineY, pageWidth - side, lineY);
       continue;
     }
-    const auto& item = items[rows[i]];
+    const auto& item = paper.stories[rows[i]];
     const bool sel = i == selected;
     const bool read = isRead(item.id);
     const bool ink = !sel;  // white text on the black selection

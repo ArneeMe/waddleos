@@ -82,12 +82,24 @@ Enable them in **Settings → Connectivity → Plugins**.
 - Node IP: `192.168.50.239` (build flag `WADDLE_NODE_IP`), or put another IP in
   `/.waddle/node-ip.txt` on the SD card.
 
+### Hjem (home screen)
+
+- [x] `src/waddle/WaddleHomeActivity.*` replaces CrossPoint's home screen and
+      the old Waddle theme: big pixel clock and date, today's weather from yr.no,
+      the book being read, the top 3 unread NRK headlines, the penguins, and
+      buttons for Bibliotek, Filer, Overføring, Bluesound and Innstillinger.
+- Shows the saved data at once. When it is older than 30 minutes, it joins
+  Wi-Fi after 2 s on the screen, fetches `arnee.me/api/hjem.json` (weather,
+  `/.waddle/hjem.json`) and the NRK paper, redraws once and turns Wi-Fi off.
+  A failed fetch waits 10 minutes before the next try. Never while asleep.
+- Weather place: `nyheter/vaer.mjs` in `ArneeMe/arneeme` (Oslo).
+
 ### Nyheter (NRK)
 
 - [x] arnee.me builds an EPUB of all NRK top stories every hour
       (`ArneeMe/arneeme`: `nyheter/build.mjs`, `.github/workflows/nyheter.yml`)
       and serves it at `arnee.me/api/nrk.epub`, with the headlines in `/api/nrk.json`.
-- [x] "Nyheter" on the home screen (`src/waddle/NewsActivity.*`): joins Wi-Fi,
+- [x] "Nyheter" from Hjem (`src/waddle/NewsActivity.*`, `NewsPaper.*`): joins Wi-Fi,
       fetches the paper to `/Nyheter/`, turns Wi-Fi off and lists the headlines.
       A headline opens the reader at that article; Back returns to the list.
       Read stories are kept in `/Nyheter/lest.txt`. The paper is not added to

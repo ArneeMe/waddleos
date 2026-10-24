@@ -3,12 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "NewsPaper.h"
 #include "activities/Activity.h"
-
-namespace waddle::news {
-// The latest NRK paper. Leaving the reader from this book returns to the list.
-constexpr const char* EPUB_PATH = "/Nyheter/NRK.epub";
-}  // namespace waddle::news
 
 // WaddleOS: "Nyheter". Fetches the latest NRK paper from arnee.me (built every
 // hour, see ArneeMe/arneeme nyheter/), then turns Wi-Fi off and lists the
@@ -28,22 +24,14 @@ class NewsActivity final : public Activity {
  private:
   enum class State { CONNECTING, LIST };
 
-  struct Item {
-    std::string id;
-    std::string title;
-    std::string time;
-  };
-
   State state = State::CONNECTING;
   bool fetchOnEnter;
   bool stale = false;  // the fetch failed, so the list is an older paper
   unsigned long connectStartedAt = 0;
 
-  std::string edition;  // "NRK lør. 24. okt. kl 08"
-  std::string built;    // build time, to skip downloading the same paper twice
-  std::vector<Item> items;
+  waddle::news::Paper paper;
   std::vector<std::string> readIds;
-  // What the list shows, row by row: an index into items, or READ_HEADING.
+  // What the list shows, row by row: an index into paper.stories, or READ_HEADING.
   static constexpr int READ_HEADING = -1;
   std::vector<int> rows;
   int unread = 0;
@@ -54,11 +42,9 @@ class NewsActivity final : public Activity {
   int footerTop = 0;
 
   void startFetch();
-  bool download();
   void finishFetch(bool ok);
-  bool loadList();
-  void loadRead();
-  bool isRead(const std::string& id) const;
+  void loadList();
+  bool isRead(const std::string& id) const { return waddle::news::isRead(readIds, id); }
   void buildRows();
   void open(int row);
   void moveTo(int row, int direction = 1);

@@ -2,6 +2,8 @@
 
 #include <GfxRenderer.h>
 
+#include <cstring>
+
 #include "WaddlePenguin.h"
 #include "fontIds.h"
 
@@ -31,39 +33,33 @@ constexpr const char* NOTE_SINGLE[] = {"   #   ", "   ##  ", "   # # ", "   #  #
 constexpr const char* NOTE_DOUBLE[] = {"  #####", "  #   #", "  #   #", "  #   #", "  #   #",
                                        " ##  ##", "### ###", "### ###", " #   # "};
 
-constexpr const char* NEWS_ICON[32] = {
-    "                                ",
-    "                                ",
-    "                                ",
-    "                                ",
-    "                                ",
-    "    ########################    ",
-    "    ########################    ",
-    "    ##                    ##    ",
-    "    ##                    ##    ",
-    "    ##  ################  ##    ",
-    "    ##  ################  ##    ",
-    "    ##  ################  ##    ",
-    "    ##                    ##    ",
-    "    ##                    ##    ",
-    "    ##  #######  #######  ##    ",
-    "    ##  #######           ##    ",
-    "    ##  #######           ##    ",
-    "    ##  #######  #######  ##    ",
-    "    ##  #######           ##    ",
-    "    ##  #######           ##    ",
-    "    ##           #######  ##    ",
-    "    ##                    ##    ",
-    "    ##  ################  ##    ",
-    "    ##                    ##    ",
-    "    ##                    ##    ",
-    "    ########################    ",
-    "    ########################    ",
-    "                                ",
-    "                                ",
-    "                                ",
-    "                                ",
-    "                                "};
+// 5x7 pixel glyphs for the big clock and temperature. 'd' is the degree sign.
+struct PixelGlyph {
+  char c;
+  const char* rows[7];
+};
+constexpr PixelGlyph PIXEL_GLYPHS[] = {
+    {'0', {" ### ", "#   #", "#  ##", "# # #", "##  #", "#   #", " ### "}},
+    {'1', {"  #  ", " ##  ", "# #  ", "  #  ", "  #  ", "  #  ", "#####"}},
+    {'2', {" ### ", "#   #", "    #", "  ## ", " #   ", "#    ", "#####"}},
+    {'3', {" ### ", "#   #", "    #", "  ## ", "    #", "#   #", " ### "}},
+    {'4', {"   # ", "  ## ", " # # ", "#  # ", "#####", "   # ", "   # "}},
+    {'5', {"#####", "#    ", "#### ", "    #", "    #", "#   #", " ### "}},
+    {'6', {"  ## ", " #   ", "#    ", "#### ", "#   #", "#   #", " ### "}},
+    {'7', {"#####", "    #", "   # ", "  #  ", " #   ", " #   ", " #   "}},
+    {'8', {" ### ", "#   #", "#   #", " ### ", "#   #", "#   #", " ### "}},
+    {'9', {" ### ", "#   #", "#   #", " ####", "    #", "   # ", " ##  "}},
+    {':', {"  ", "##", "##", "  ", "##", "##", "  "}},
+    {'-', {"    ", "    ", "    ", "####", "    ", "    ", "    "}},
+    {'d', {" ## ", "#  #", "#  #", " ## ", "    ", "    ", "    "}},
+};
+
+const PixelGlyph* pixelGlyph(const char c) {
+  for (const auto& glyph : PIXEL_GLYPHS) {
+    if (glyph.c == c) return &glyph;
+  }
+  return nullptr;
+}
 }  // namespace
 
 void drawNote(const GfxRenderer& renderer, const int x, const int y, const int scale, const int kind) {
@@ -121,11 +117,25 @@ void drawSpeakerIcon(const GfxRenderer& renderer, const int x, const int y) {
   }
 }
 
-void drawNewsIcon(const GfxRenderer& renderer, const int x, const int y) {
-  for (int row = 0; row < 32; row++) {
-    for (int col = 0; col < 32; col++) {
-      if (NEWS_ICON[row][col] == '#') renderer.drawPixel(x + col, y + row, true);
+int pixelTextWidth(const char* text, const int scale) {
+  int width = 0;
+  for (const char* p = text; *p; p++) {
+    if (const PixelGlyph* glyph = pixelGlyph(*p)) width += (static_cast<int>(strlen(glyph->rows[0])) + 1) * scale;
+  }
+  return width > 0 ? width - scale : 0;
+}
+
+void drawPixelText(const GfxRenderer& renderer, int x, const int y, const char* text, const int scale) {
+  for (const char* p = text; *p; p++) {
+    const PixelGlyph* glyph = pixelGlyph(*p);
+    if (!glyph) continue;
+    const int glyphW = static_cast<int>(strlen(glyph->rows[0]));
+    for (int row = 0; row < 7; row++) {
+      for (int col = 0; col < glyphW; col++) {
+        if (glyph->rows[row][col] == '#') renderer.fillRect(x + col * scale, y + row * scale, scale, scale);
+      }
     }
+    x += (glyphW + 1) * scale;
   }
 }
 
