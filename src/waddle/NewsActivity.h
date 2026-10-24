@@ -43,7 +43,11 @@ class NewsActivity final : public Activity {
   std::string built;    // build time, to skip downloading the same paper twice
   std::vector<Item> items;
   std::vector<std::string> readIds;
-  int selected = 0;
+  // What the list shows, row by row: an index into items, or READ_HEADING.
+  static constexpr int READ_HEADING = -1;
+  std::vector<int> rows;
+  int unread = 0;
+  int selected = 0;  // index into rows
   int rowsPerPage = 1;  // set by render()
   int listTop = 0;
   int rowHeight = 1;
@@ -55,6 +59,7 @@ class NewsActivity final : public Activity {
   bool loadList();
   void loadRead();
   bool isRead(const std::string& id) const;
-  void open(int index);
-  void moveTo(int index);
+  void buildRows();
+  void open(int row);
+  void moveTo(int row, int direction = 1);
 };

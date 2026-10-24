@@ -46,17 +46,15 @@ void NewsActivity::onEnter() {
   Activity::onEnter();
   loadList();
   loadRead();
+  {
+    RenderLock lock(*this);
+    buildRows();
+  }
+  moveTo(0);  // the first unread story
   if (fetchOnEnter) {
     startFetch();
   } else {
     state = State::LIST;
-    // Select the first unread story.
-    for (size_t i = 0; i < items.size(); i++) {
-      if (!isRead(items[i].id)) {
-        selected = static_cast<int>(i);
-        break;
-      }
-    }
   }
   requestUpdate();
 }
@@ -107,10 +105,11 @@ void NewsActivity::finishFetch(const bool ok) {
   if (ok) loadList();
   {
     RenderLock lock(*this);
-    if (ok) selected = 0;
+    if (ok) buildRows();
     stale = !ok;
     state = State::LIST;
   }
+  if (ok) moveTo(0);
   requestUpdate();
 }
 
@@ -147,8 +146,30 @@ bool NewsActivity::isRead(const std::string& id) const {
   return std::find(readIds.begin(), readIds.end(), id) != readIds.end();
 }
 
-void NewsActivity::open(const int index) {
-  if (index < 0 || index >= static_cast<int>(items.size()) || !Storage.exists(waddle::news::EPUB_PATH)) return;
+// Unread stories first, in NRK's order, then a "Lest" heading and the read ones.
+void NewsActivity::buildRows() {
+  rows.clear();
+  rows.reserve(items.size() + 1);
+  int readCount = 0;
+  for (size_t i = 0; i < items.size(); i++) {
+    if (isRead(items[i].id)) {
+      readCount++;
+    } else {
+      rows.push_back(static_cast<int>(i));
+    }
+  }
+  unread = static_cast<int>(items.size()) - readCount;
+  if (readCount == 0) return;
+  rows.push_back(READ_HEADING);
+  for (size_t i = 0; i < items.size(); i++) {
+    if (isRead(items[i].id)) rows.push_back(static_cast<int>(i));
+  }
+}
+
+void NewsActivity::open(const int row) {
+  if (row < 0 || row >= static_cast<int>(rows.size()) || !Storage.exists(waddle::news::EPUB_PATH)) return;
+  const int index = rows[row];
+  if (index == READ_HEADING) return;
 
   // Remember it as read. Only ids in today's paper are kept, so the file stays small.
   if (!isRead(items[index].id)) readIds.push_back(items[index].id);
@@ -169,10 +190,17 @@ void NewsActivity::open(const int index) {
   activityManager.goToReader(waddle::news::EPUB_PATH);
 }
 
-void NewsActivity::moveTo(const int index) {
-  const int count = static_cast<int>(items.size());
+// Selects a row, stepping over the "Lest" heading in the direction of travel.
+void NewsActivity::moveTo(const int row, const int direction) {
+  const int count = static_cast<int>(rows.size());
   if (count == 0) return;
-  selected = std::clamp(index, 0, count - 1);
+  int next = std::clamp(row, 0, count - 1);
+  if (rows[next] == READ_HEADING) {
+    next += direction;
+    if (next < 0 || next >= count) next -= 2 * direction;
+    next = std::clamp(next, 0, count - 1);
+  }
+  selected = next;
   requestUpdate();
 }
 
@@ -204,7 +232,7 @@ void NewsActivity::loop() {
   } else if (mappedInput.wasReleased(Button::Down)) {
     moveTo(selected + 1);
   } else if (mappedInput.wasReleased(Button::Up)) {
-    moveTo(selected - 1);
+    moveTo(selected - 1, -1);
   } else if (mappedInput.wasReleased(Button::PageForward) || mappedInput.wasReleased(Button::Right)) {
     moveTo((selected / perPage + 1) * perPage);
   } else if (mappedInput.wasReleased(Button::PageBack) || mappedInput.wasReleased(Button::Left)) {
@@ -273,7 +301,7 @@ void NewsActivity::render(RenderLock&&) {
   }
 
   char subtitle[96];
-  snprintf(subtitle, sizeof(subtitle), "%s  ·  %d saker%s", edition.c_str(), static_cast<int>(items.size()),
+  snprintf(subtitle, sizeof(subtitle), "%s  ·  %d uleste%s", edition.c_str(), unread,
            stale ? "  ·  ikke oppdatert" : "");
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Nyheter", subtitle);
 
@@ -285,7 +313,7 @@ void NewsActivity::render(RenderLock&&) {
   rowHeight = 2 * lineH + 16;
   rowsPerPage = std::max(1, (pageHeight - listTop - footerH) / rowHeight);
 
-  const int count = static_cast<int>(items.size());
+  const int count = static_cast<int>(rows.size());
   const int page = selected / rowsPerPage;
   const int pages = (count + rowsPerPage - 1) / rowsPerPage;
   const int timeX = side + 2;
@@ -295,8 +323,18 @@ void NewsActivity::render(RenderLock&&) {
   for (int row = 0; row < rowsPerPage; row++) {
     const int i = page * rowsPerPage + row;
     if (i >= count) break;
-    const auto& item = items[i];
     const int y = listTop + row * rowHeight;
+    if (rows[i] == READ_HEADING) {
+      char heading[24];
+      snprintf(heading, sizeof(heading), "LEST (%d)", static_cast<int>(items.size()) - unread);
+      const int textY = y + rowHeight - renderer.getLineHeight(SMALL_FONT_ID) - 12;
+      renderer.drawText(SMALL_FONT_ID, side, textY, heading, true, EpdFontFamily::BOLD);
+      const int lineX = side + renderer.getTextWidth(SMALL_FONT_ID, heading, EpdFontFamily::BOLD) + 12;
+      const int lineY = textY + renderer.getLineHeight(SMALL_FONT_ID) / 2;
+      renderer.drawLine(lineX, lineY, pageWidth - side, lineY);
+      continue;
+    }
+    const auto& item = items[rows[i]];
     const bool sel = i == selected;
     const bool read = isRead(item.id);
     const bool ink = !sel;  // white text on the black selection
@@ -311,7 +349,8 @@ void NewsActivity::render(RenderLock&&) {
       renderer.drawText(UI_12_FONT_ID, titleX, y + 6 + static_cast<int>(k) * lineH, lines[k].c_str(), ink, style);
     }
     const bool nextSelected = i + 1 == selected;
-    if (!sel && !nextSelected) renderer.drawLine(titleX, y + rowHeight - 2, pageWidth - side, y + rowHeight - 2);
+    const bool nextHeading = i + 1 < count && rows[i + 1] == READ_HEADING;
+    if (!sel && !nextSelected && !nextHeading) renderer.drawLine(titleX, y + rowHeight - 2, pageWidth - side, y + rowHeight - 2);
   }
 
   // Footer: Forrige and Neste buttons, the page number between them.
