@@ -47,6 +47,7 @@ class NewsActivity final : public Activity {
   int rowsPerPage = 1;  // set by render()
   int listTop = 0;
   int rowHeight = 1;
+  int footerTop = 0;
 
   void startFetch();
   bool download();

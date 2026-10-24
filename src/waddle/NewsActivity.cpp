@@ -216,7 +216,14 @@ void NewsActivity::loop() {
       moveTo((selected / perPage + 1) * perPage);
     } else if (swipe == MappedInputManager::SwipeDir::Down || swipe == MappedInputManager::SwipeDir::Right) {
       moveTo((selected / perPage - 1) * perPage);
-    } else if (mappedInput.wasScreenTapped(x, y) && y >= listTop) {
+    } else if (!mappedInput.wasScreenTapped(x, y)) {
+      return;
+    } else if (y >= footerTop) {
+      // The left and right thirds of the footer are the Forrige and Neste buttons.
+      const int third = renderer.getScreenWidth() / 3;
+      if (x < third) moveTo((selected / perPage - 1) * perPage);
+      if (x >= 2 * third) moveTo((selected / perPage + 1) * perPage);
+    } else if (y >= listTop) {
       const int row = (y - listTop) / rowHeight;
       if (row < perPage) open((selected / perPage) * perPage + row);
     }
@@ -229,6 +236,13 @@ namespace {
 void drawCheck(const GfxRenderer& renderer, const int x, const int y, const bool black) {
   renderer.drawLine(x, y + 5, x + 4, y + 9, 2, black);
   renderer.drawLine(x + 4, y + 9, x + 13, y, 2, black);
+}
+
+void drawButton(const GfxRenderer& renderer, const int x, const int y, const int w, const int h, const char* label) {
+  renderer.drawRoundedRect(x, y, w, h, 2, 10, true);
+  const int textW = renderer.getTextWidth(UI_12_FONT_ID, label, EpdFontFamily::BOLD);
+  const int textY = y + (h - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
+  renderer.drawText(UI_12_FONT_ID, x + (w - textW) / 2, textY, label, true, EpdFontFamily::BOLD);
 }
 
 }  // namespace
@@ -265,7 +279,8 @@ void NewsActivity::render(RenderLock&&) {
 
   // Each row has room for a two-line headline, so every page has the same rows.
   const int lineH = renderer.getLineHeight(UI_12_FONT_ID);
-  const int footerH = 36;
+  const int footerH = 64;
+  footerTop = pageHeight - footerH;
   listTop = metrics.topPadding + metrics.headerHeight + 8;
   rowHeight = 2 * lineH + 16;
   rowsPerPage = std::max(1, (pageHeight - listTop - footerH) / rowHeight);
@@ -299,12 +314,18 @@ void NewsActivity::render(RenderLock&&) {
     if (!sel && !nextSelected) renderer.drawLine(titleX, y + rowHeight - 2, pageWidth - side, y + rowHeight - 2);
   }
 
+  // Footer: Forrige and Neste buttons, the page number between them.
+  const int buttonW = 130;
+  const int buttonH = 44;
+  const int buttonY = footerTop + 8;
+  if (page > 0) drawButton(renderer, 12, buttonY, buttonW, buttonH, "< Forrige");
+  if (page + 1 < pages) drawButton(renderer, pageWidth - 12 - buttonW, buttonY, buttonW, buttonH, "Neste >");
   char footer[32];
   snprintf(footer, sizeof(footer), "Side %d av %d", page + 1, pages);
-  const int footerY = pageHeight - footerH + 6;
-  renderer.drawText(SMALL_FONT_ID, side, footerY, footer);
-  const char* hint = "Hold OK: hent nå";
-  renderer.drawText(SMALL_FONT_ID, pageWidth - side - renderer.getTextWidth(SMALL_FONT_ID, hint), footerY, hint);
+  const int smallH = renderer.getLineHeight(SMALL_FONT_ID);
+  const int textTop = buttonY + (buttonH - 2 * smallH) / 2;
+  renderer.drawCenteredText(SMALL_FONT_ID, textTop, footer);
+  renderer.drawCenteredText(SMALL_FONT_ID, textTop + smallH, "Hold OK: hent nå");
 
   renderer.displayBuffer();
 }
