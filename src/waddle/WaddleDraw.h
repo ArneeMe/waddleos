@@ -14,8 +14,11 @@ void drawNote(const GfxRenderer& renderer, int x, int y, int scale, int kind);
 // 32x32 speaker icon in the style of the menu icons, top-left at (x, y).
 void drawSpeakerIcon(const GfxRenderer& renderer, int x, int y);
 
-// 32x32 newspaper icon, same style.
-void drawNewsIcon(const GfxRenderer& renderer, int x, int y);
+// Big pixel text for the clock and temperature: digits, ':', '-' and 'd' (the
+// degree sign). Each glyph is 5x7 pixels (':' is 2 wide), drawn scale x scale.
+// Other characters are skipped. y is the top of the glyphs.
+void drawPixelText(const GfxRenderer& renderer, int x, int y, const char* text, int scale);
+int pixelTextWidth(const char* text, int scale);
 
 // Boot and default sleep screen: big penguin centered on the screen, then
 // "WaddleOS" and `subtitle` below it.
