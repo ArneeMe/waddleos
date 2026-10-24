@@ -118,29 +118,6 @@ class CrossPointWebServer {
   void handleGetSettings() const;
   void handlePostSettings();
 
-  // Font management handlers
-  void handleFontsPage() const;
-  void handleFontList() const;
-  void handleFontUpload();
-  void handleFontUploadData();
-  void handleFontDelete();
-
-  // Font upload state
-  struct FontUploadState {
-    HalFile file;
-    std::string familyName;
-    std::string filePath;
-    bool valid = false;
-    bool magicChecked = false;
-    bool isVector = false;  // .ttf/.otf upload (PSRAM boards only) vs .cpfont
-    size_t bytesWritten = 0;
-    static constexpr size_t BUFFER_SIZE = 4096;
-    std::unique_ptr<uint8_t[]> buffer;
-    size_t bufferPos = 0;
-  } fontUpload;
-
-  // OPDS server handlers
-
   // Wi-Fi credential handlers
   void handleGetWifiNetworks() const;
   void handlePostWifiNetwork();
