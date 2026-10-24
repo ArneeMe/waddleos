@@ -182,9 +182,6 @@ class SettingsActivity final : public UiListActivity {
   const SettingsSection section;
   std::vector<SettingInfo> settings;
 
-  bool preserveQuickResumeTimeoutOn = false;
-  bool quickResumeTimeoutAutoEnabled = false;
-
   OptionPopup optionPopup;
 
   // Row structure (label/actionValue), rebuilt only when the setting list
@@ -197,7 +194,6 @@ class SettingsActivity final : public UiListActivity {
   void rebuildRowItems();
   void toggleSelectedSetting();
   void openSleepTimeoutPicker();
-  void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
   static std::string settingValueText(const SettingInfo& setting);
 
   int listCount() const override { return static_cast<int>(settings.size()); }

@@ -142,11 +142,6 @@ SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& ma
 void SettingsActivity::onEnter() {
   UiListActivity::onEnter();
 
-  preserveQuickResumeTimeoutOn =
-      SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
-  quickResumeTimeoutAutoEnabled = false;
-  syncQuickResumeTimeoutForSleepScreen(/*sleepScreenChanged=*/true, /*quickResumeTimeoutChanged=*/false);
-
   rebuildSettings();
 }
 
@@ -192,8 +187,6 @@ void SettingsActivity::toggleSelectedSetting() {
   }
 
   const auto& setting = settings[selectedSetting];
-  const bool sleepScreenChanged = setting.valuePtr == &CrossPointSettings::sleepScreen;
-  const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
 
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     openSleepTimeoutPicker();
@@ -210,9 +203,8 @@ void SettingsActivity::toggleSelectedSetting() {
     if (enumLabels.size() > 2) {
       const auto valuePtr = setting.valuePtr;
       optionPopup.show(setting.nameId, enumLabels.data(), static_cast<int>(enumLabels.size()), currentValue,
-                       [this, valuePtr, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
+                       [this, valuePtr](int idx) {
                          SETTINGS.*valuePtr = idx;
-                         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
                          SETTINGS.saveToFile();
                          rebuildSettings();
                        });
@@ -227,9 +219,8 @@ void SettingsActivity::toggleSelectedSetting() {
     const uint8_t cur = setting.valueGetter();
     if (totalValues > 2) {
       const auto valueSetter = setting.valueSetter;
-      auto onSelect = [this, valueSetter, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
+      auto onSelect = [this, valueSetter](int idx) {
         valueSetter(idx);
-        syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
         SETTINGS.saveToFile();
         rebuildSettings();
       };
@@ -356,34 +347,10 @@ void SettingsActivity::toggleSelectedSetting() {
     return;
   }
 
-  syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
   SETTINGS.saveToFile();
   rebuildSettings();
   // Rows can appear/disappear with a change (e.g. the footnote-back toggle).
   nav.selected = std::min(selectedSetting, static_cast<int>(settings.size()) - 1);
-}
-
-void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged) {
-  if (quickResumeTimeoutChanged) {
-    preserveQuickResumeTimeoutOn =
-        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
-    quickResumeTimeoutAutoEnabled = false;
-  }
-
-  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME) {
-    if (SETTINGS.quickResumeSleepScreen != CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT) {
-      SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
-      quickResumeTimeoutAutoEnabled = !preserveQuickResumeTimeoutOn;
-    } else if (sleepScreenChanged && !preserveQuickResumeTimeoutOn) {
-      quickResumeTimeoutAutoEnabled = true;
-    }
-    return;
-  }
-
-  if (sleepScreenChanged && quickResumeTimeoutAutoEnabled && !preserveQuickResumeTimeoutOn) {
-    SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_NEVER;
-    quickResumeTimeoutAutoEnabled = false;
-  }
 }
 
 void SettingsActivity::openSleepTimeoutPicker() {
