@@ -358,41 +358,6 @@ static bool loadSleepFrameBuffer() {
   return true;
 }
 
-#if FREEINK_DEVICE_PICCO
-// Charge strip along the bottom of the retained sleep screen.
-static void drawSleepChargeStrip(const bool charging, const uint16_t percent) {
-  RenderLock lock;
-  const int h = renderer.getLineHeight(SMALL_FONT_ID) + 12;
-  const int y = renderer.getScreenHeight() - h;
-  renderer.fillRect(0, y, renderer.getScreenWidth(), h, false);
-  char text[48];
-  snprintf(text, sizeof(text), "%s  %u%%", charging ? tr(STR_CHARGING) : tr(STR_CHARGED), percent);
-  renderer.drawCenteredText(SMALL_FONT_ID, y + 6, text);
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-}
-
-// Shows the charge strip while the power HAL holds sleep on USB power, and
-// removes it again if USB goes away. Returns true when the power button ended
-// the hold.
-static bool holdSleepWhileUsbPowered() {
-  if (!gpio.isUsbConnected()) return false;
-  // Keep the sleep frame so unplugging can remove the strip. 48 KB of PSRAM,
-  // freed when the hold ends.
-  const size_t frameSize = renderer.getBufferSize();
-  auto* const sleepFrame = static_cast<uint8_t*>(heap_caps_malloc(frameSize, MALLOC_CAP_SPIRAM));
-  if (sleepFrame) memcpy(sleepFrame, renderer.getFrameBuffer(), frameSize);
-  const bool buttonPressed = powerManager.holdWhileUsbPowered(gpio, drawSleepChargeStrip);
-  if (sleepFrame) {
-    if (!buttonPressed) {
-      RenderLock lock;
-      memcpy(renderer.getFrameBuffer(), sleepFrame, frameSize);
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-    }
-    heap_caps_free(sleepFrame);
-  }
-  return buttonPressed;
-}
-#endif
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
@@ -436,14 +401,7 @@ void enterDeepSleep(bool fromTimeout = false) {
     WiFi.mode(WIFI_OFF);
   }
 
-#if FREEINK_DEVICE_PICCO
-  // The I2C LED driver keeps its state through deep sleep; switch it off here
-  // (SETTINGS.frontlightOn keeps the preference for restore-on-wake).
-  Frontlight.setOn(false);
-  const bool wakeOnHeldButton = holdSleepWhileUsbPowered();
-#else
   const bool wakeOnHeldButton = false;
-#endif
 
   halTiltSensor.deepSleep();
   display.deepSleep();
@@ -558,11 +516,7 @@ void setup() {
   halTiltSensor.begin();
   halClock.begin();
 
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
-  LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
-#else
   LOG_INF("MAIN", "Device: %s", BoardConfig::ACTIVE.name);
-#endif
 
   // SD Card Initialization
   // We need 6 open files concurrently when parsing a new chapter
@@ -627,9 +581,7 @@ void setup() {
     case HalGPIO::WakeupReason::PowerButton:
       // With Short Power Button Press = Sleep, a single click wakes on any
       // device; otherwise the button must still be held (ghost-wake debounce).
-      // Picco: plugging in USB pulses the wake line; power on, as stock does.
-      if (!wakeHoldVerified && SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::SLEEP &&
-          !(FREEINK_DEVICE_PICCO && gpio.isUsbConnected())) {
+      if (!wakeHoldVerified && SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::SLEEP) {
         LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
         Storage.prepareForDeepSleep();
         powerManager.startDeepSleep(gpio);
@@ -639,8 +591,6 @@ void setup() {
     case HalGPIO::WakeupReason::AfterUSBPower:
       // Most devices return to sleep after a USB-powered cold boot.
       LOG_DBG("MAIN", "Wakeup reason: After USB Power");
-#if FREEINK_DEVICE_X4PRO || FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_EEGO_A4 || \
-    FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_PICCO
       // X4 Pro must stay awake so USB Serial/JTAG remains available after leaving
       // USB Drive and reconnecting the cable. Paper Mono has no armable GPIO wake
       // (its button is behind the PMIC). Metalio also needs native USB available
@@ -649,11 +599,6 @@ void setup() {
       // USB-power cold boot and sleep. Sleeping any of these here would strand
       // the device in a USB-replug boot loop (or sleep right after a flash).
       break;
-#else
-      Storage.prepareForDeepSleep();
-      powerManager.startDeepSleep(gpio);
-      break;
-#endif
     case HalGPIO::WakeupReason::AfterFlash:
       // After flashing, just proceed to boot
     case HalGPIO::WakeupReason::Other:
@@ -958,17 +903,6 @@ void loop() {
     return;
   }
 
-#if FREEINK_DEVICE_PAPERMONO
-  // Paper Mono reports the PMIC power button as a one-tick click, so the held
-  // path above cannot fire. With the default Ignore action, retain the normal
-  // power-button meaning and shut down; explicit alternate bindings still win.
-  if ((SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP ||
-       SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::IGNORE) &&
-      millis() >= allowSleepAt && mappedInputManager.wasReleased(MappedInputManager::Button::Power)) {
-    enterDeepSleep();
-    return;
-  }
-#endif
 
   // Refresh screen when power button is short-pressed with FORCE_REFRESH setting.
   if (mappedInputManager.homeButtonAction() == HomeButtonAction::ToggleFrontlight) {

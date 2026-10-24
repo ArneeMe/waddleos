@@ -26,29 +26,18 @@
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "images/Logo120.h"
-#if WADDLE  // WADDLE: penguin splash
 #include "waddle/WaddleDraw.h"
-#endif
 #include "images/MoonIcon.h"
 
 namespace {
 // Metalio: B/W sleep images use the full 0xF7 waveform instead of HALF (two
 // 0xFC partials), matching the clean pass before absolute gray below.
-#if FREEINK_DEVICE_METALIO_EINK4
-constexpr auto kSleepClean = HalDisplay::FULL_REFRESH;
-#else
 constexpr auto kSleepClean = HalDisplay::HALF_REFRESH;
-#endif
 
 // The absolute gray paint has no base pass. On Metalio the prior screen shows
 // through it after the panel sits unpowered, so clean with 0xF7 first.
 void cleanBeforeAbsoluteGray(GfxRenderer& renderer) {
-#if FREEINK_DEVICE_METALIO_EINK4
-  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
-#else
   (void)renderer;
-#endif
 }
 
 HalDisplay::GrayscaleMode sleepGrayscaleMode(const GfxRenderer& renderer) {
@@ -710,20 +699,9 @@ void SleepActivity::renderDefaultSleepScreen() const {
   const auto pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
-#if WADDLE  // WADDLE: penguin splash, never inverted (an inverted penguin looks wrong)
   (void)pageWidth;
   (void)pageHeight;
   waddle::drawSplash(renderer, tr(STR_SLEEPING));
-#else
-  renderer.drawImage(Logo120, (pageWidth - 120) / 2, (pageHeight - 120) / 2, 120, 120);
-  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 70, tr(STR_CROSSPOINT), true, EpdFontFamily::BOLD);
-  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 95, tr(STR_SLEEPING));
-
-  // Make sleep screen dark unless light is selected in settings
-  if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT) {
-    renderer.invertScreen();
-  }
-#endif
 
   renderer.displayBuffer(kSleepClean);
 }

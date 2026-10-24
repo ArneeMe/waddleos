@@ -50,9 +50,7 @@
 #include "util/DictionaryRegistry.h"
 #include "util/FirmwareIdentity.h"
 #include "util/TaskWatchdog.h"
-#if WADDLE  // WADDLE: firmware apply endpoint
 #include "waddle/WaddleFirmwareApi.h"
-#endif
 
 static void sendStaticContent(WebServer* server, const char* data, size_t len, const char* etag,
                               const char* contentType);
@@ -191,12 +189,7 @@ void CrossPointWebServer::begin() {
     return;
   }
 
-  // Add Access-Control-Allow-* headers to every response so web-based clients
-  // and PWAs on other origins can use the HTTP API. Preflight OPTIONS requests
-  // are answered in handleNotFound().
-#if !WADDLE_PRIVATE  // WADDLE: other web pages in the browser may not call the reader
-  server->enableCORS(true);
-#endif
+  // No CORS headers: other web pages in the browser may not call the reader.
 
   // Setup routes
   LOG_DBG("WEB", "Setting up routes...");
@@ -245,9 +238,7 @@ void CrossPointWebServer::begin() {
   server->on("/api/wifi", HTTP_POST, [this] { handlePostWifiNetwork(); });
   server->on("/api/wifi/delete", HTTP_POST, [this] { handleDeleteWifiNetwork(); });
 
-#if WADDLE  // WADDLE: install an uploaded .bin over Wi-Fi
   waddle::firmware::registerRoutes(*server);
-#endif
 
   server->onNotFound([this] { handleNotFound(); });
   LOG_DBG("WEB", "[MEM] Free heap after route setup: %d bytes", ESP.getFreeHeap());
@@ -520,11 +511,7 @@ void CrossPointWebServer::handleStatus() const {
   doc["rssi"] = apMode ? 0 : WiFi.RSSI();
   doc["freeHeap"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
-  doc["device"] = gpio.deviceIsX3() ? "X3" : "X4";
-#else
   doc["device"] = BoardConfig::ACTIVE.name;
-#endif
 
   String response;
   serializeJson(doc, response);
