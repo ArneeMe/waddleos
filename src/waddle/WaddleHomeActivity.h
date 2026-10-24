@@ -37,7 +37,19 @@ class WaddleHomeActivity final : public Activity {
   };
 
   // Things that can be selected, in Up/Down order.
-  enum Target { BOOK, STORY_1, STORY_2, STORY_3, NEWS_LIST, LIBRARY, FILES, TRANSFER, BLUESOUND, SETTINGS, COUNT };
+  enum Target {
+    T_BOOK,
+    T_STORY_1,
+    T_STORY_2,
+    T_STORY_3,
+    T_NEWS_LIST,
+    T_LIBRARY,
+    T_FILES,
+    T_TRANSFER,
+    T_BLUESOUND,
+    T_SETTINGS,
+    T_COUNT
+  };
   static constexpr int TOP_STORIES = 3;
 
   bool cleanInitialRefresh;
@@ -61,8 +73,8 @@ class WaddleHomeActivity final : public Activity {
   std::vector<int> topStories;  // indices into paper.stories
   int unread = 0;
 
-  int focus = BOOK;
-  Box boxes[COUNT];  // filled by render() for touch input
+  int focus = T_BOOK;
+  Box boxes[T_COUNT];  // filled by render() for touch input
 
   void loadData();
   bool isStale() const;

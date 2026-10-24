@@ -184,7 +184,7 @@ void WaddleHomeActivity::loadData() {
   readIds = std::move(ids);
   topStories = std::move(top);
   unread = unreadCount;
-  if (!available(focus)) focus = BOOK;
+  if (!available(focus)) focus = T_BOOK;
 }
 
 bool WaddleHomeActivity::isStale() const {
@@ -230,14 +230,14 @@ void WaddleHomeActivity::ensureCover() {
 }
 
 bool WaddleHomeActivity::available(const int target) const {
-  if (target >= STORY_1 && target <= STORY_3) return target - STORY_1 < static_cast<int>(topStories.size());
-  return target >= 0 && target < COUNT;
+  if (target >= T_STORY_1 && target <= T_STORY_3) return target - T_STORY_1 < static_cast<int>(topStories.size());
+  return target >= 0 && target < T_COUNT;
 }
 
 void WaddleHomeActivity::moveFocus(const int step) {
   int next = focus;
   do {
-    next = (next + step + COUNT) % COUNT;
+    next = (next + step + T_COUNT) % T_COUNT;
   } while (!available(next));
   focus = next;
   requestUpdate();
@@ -245,36 +245,36 @@ void WaddleHomeActivity::moveFocus(const int step) {
 
 void WaddleHomeActivity::activate(const int target) {
   switch (target) {
-    case BOOK:
+    case T_BOOK:
       if (hasBook) {
         activityManager.goToReader(book.path);
       } else {
         activityManager.goToLibrary();
       }
       return;
-    case STORY_1:
-    case STORY_2:
-    case STORY_3:
-      if (target - STORY_1 < static_cast<int>(topStories.size())) {
-        waddle::news::openStory(paper, readIds, topStories[target - STORY_1]);
+    case T_STORY_1:
+    case T_STORY_2:
+    case T_STORY_3:
+      if (target - T_STORY_1 < static_cast<int>(topStories.size())) {
+        waddle::news::openStory(paper, readIds, topStories[target - T_STORY_1]);
       }
       return;
-    case NEWS_LIST:
+    case T_NEWS_LIST:
       activityManager.replaceActivity(std::make_unique<NewsActivity>(renderer, mappedInput, isStale()));
       return;
-    case LIBRARY:
+    case T_LIBRARY:
       activityManager.goToLibrary();
       return;
-    case FILES:
+    case T_FILES:
       activityManager.goToFileBrowser();
       return;
-    case TRANSFER:
+    case T_TRANSFER:
       activityManager.goToFileTransfer();
       return;
-    case BLUESOUND:
+    case T_BLUESOUND:
       activityManager.replaceActivity(std::make_unique<NodeActivity>(renderer, mappedInput));
       return;
-    case SETTINGS:
+    case T_SETTINGS:
       activityManager.goToSettings();
       return;
     default:
@@ -305,7 +305,7 @@ void WaddleHomeActivity::loop() {
   } else {
     int x = 0, y = 0;
     if (mappedInput.wasScreenTapped(x, y)) {
-      for (int target = 0; target < COUNT; target++) {
+      for (int target = 0; target < T_COUNT; target++) {
         if (available(target) && boxes[target].contains(x, y)) {
           activate(target);
           return;
@@ -378,7 +378,7 @@ void WaddleHomeActivity::render(RenderLock&&) {
 
   // Book being read.
   const int bookY = dividerY + 16;
-  boxes[BOOK] = {side - 6, bookY - 6, pageWidth - 2 * (side - 6), COVER_H + 12};
+  boxes[T_BOOK] = {side - 6, bookY - 6, pageWidth - 2 * (side - 6), COVER_H + 12};
   if (hasBook) {
     bool coverDrawn = false;
     if (!book.coverBmpPath.empty()) {
@@ -433,7 +433,7 @@ void WaddleHomeActivity::render(RenderLock&&) {
     const int countW = renderer.getTextWidth(SMALL_FONT_ID, count);
     renderer.drawText(SMALL_FONT_ID, pageWidth - side - countW, y, count);
   }
-  boxes[NEWS_LIST] = {side - 6, y - 6, pageWidth - 2 * (side - 6), smallH + 12};
+  boxes[T_NEWS_LIST] = {side - 6, y - 6, pageWidth - 2 * (side - 6), smallH + 12};
   y += smallH + 12;
   if (topStories.empty()) {
     renderer.drawText(SMALL_FONT_ID, side, y, paper.stories.empty() ? "Ingen nyheter ennå" : "Alt er lest!");
@@ -449,7 +449,7 @@ void WaddleHomeActivity::render(RenderLock&&) {
                         EpdFontFamily::BOLD);
     }
     const int storyH = static_cast<int>(lines.size()) * lineH + 12;
-    boxes[STORY_1 + k] = {side - 6, y - 6, pageWidth - 2 * (side - 6), storyH};
+    boxes[T_STORY_1 + k] = {side - 6, y - 6, pageWidth - 2 * (side - 6), storyH};
     y += storyH;
   }
   renderer.fillRect(side, y, pageWidth - 2 * side, 2);
@@ -474,7 +474,7 @@ void WaddleHomeActivity::render(RenderLock&&) {
     const std::string label = renderer.truncatedText(SMALL_FONT_ID, labels[i], buttonW - 6);
     const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label.c_str());
     renderer.drawText(SMALL_FONT_ID, x + (buttonW - labelW) / 2, buttonsY + 52, label.c_str());
-    boxes[LIBRARY + i] = {x, buttonsY, buttonW, buttonH};
+    boxes[T_LIBRARY + i] = {x, buttonsY, buttonW, buttonH};
   }
 
   // Penguin family and greeting in the space between the news and the buttons.
