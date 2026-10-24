@@ -3,7 +3,6 @@
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
-#include <HalMemory.h>
 #include <Logging.h>
 #include <Memory.h>
 
@@ -12,63 +11,18 @@
 
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
-#include "components/CoverGridHomeUi.h"
 #include "components/themes/BaseTheme.h"
-#include "components/themes/lyra/Lyra3CoversTheme.h"
 #include "components/themes/lyra/LyraTheme.h"
-#include "components/themes/roundedraff/RoundedRaffTheme.h"
 UITheme UITheme::instance;
 
 UITheme::UITheme() {
-  auto themeType = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
-  setTheme(themeType);
-}
-
-void UITheme::reload() {
-  auto themeType = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
-  setTheme(themeType);
-}
-
-bool UITheme::supportsCoverGrid() { return HalMemory::getPsramHeap().totalBytes > 0; }
-
-bool UITheme::hasCoverGridHome() { return SETTINGS.uiTheme == CrossPointSettings::COVER_GRID && supportsCoverGrid(); }
-
-void UITheme::drawCoverGridHome(CoverGridHomeUi& home) { home.renderUi(); }
-
-void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
-  if (type == CrossPointSettings::COVER_GRID && !supportsCoverGrid()) type = CrossPointSettings::LYRA;
-
-  switch (type) {
-    case CrossPointSettings::UI_THEME::CLASSIC:
-      LOG_DBG("UI", "Using Classic theme");
-      currentTheme = std::make_unique<BaseTheme>();
-      currentMetrics = &BaseMetrics::values;
-      break;
-    case CrossPointSettings::UI_THEME::COVER_GRID:
-    case CrossPointSettings::UI_THEME::LYRA: {
-      // The cover home owns its screen-lifetime UI state; other screens retain Lyra styling.
-      auto theme = makeUniqueNoThrow<LyraTheme>();
-      if (!theme) {
-        LOG_ERR("UI", "OOM: Lyra theme");
-        return;
-      }
-      currentTheme = std::move(theme);
-      currentMetrics = &LyraMetrics::values;
-      LOG_DBG("UI", "Using Lyra theme");
-      break;
-    }
-    case CrossPointSettings::UI_THEME::ROUNDEDRAFF:
-      LOG_DBG("UI", "Using RoundedRaff theme");
-      currentTheme = std::make_unique<RoundedRaffTheme>();
-      currentMetrics = &RoundedRaffMetrics::values;
-      break;
-    case CrossPointSettings::UI_THEME::LYRA_3_COVERS:
-      LOG_DBG("UI", "Using Lyra 3 Covers theme");
-      currentTheme = std::make_unique<Lyra3CoversTheme>();
-      currentMetrics = &Lyra3CoversMetrics::values;
-      break;
+  // WaddleOS uses only Lyra. Without it (out of memory) getTheme() falls back to BaseTheme.
+  currentTheme = makeUniqueNoThrow<LyraTheme>();
+  if (currentTheme) {
+    currentMetrics = &LyraMetrics::values;
+  } else {
+    LOG_ERR("UI", "OOM: Lyra theme");
   }
-  metricsValid = false;
 }
 
 const ThemeMetrics& UITheme::getMetrics() const {

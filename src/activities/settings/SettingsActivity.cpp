@@ -180,18 +180,6 @@ void SettingsActivity::activateIndex(const int index) {
   requestUpdate();
 }
 
-void SettingsActivity::applyUiSettingChange(uint8_t CrossPointSettings::* valuePtr) {
-  // Theme changes take effect immediately, on this screen — reload the theme
-  // and re-derive the app's tokens so the very next repaint is in the new look.
-  if (valuePtr != &CrossPointSettings::uiTheme) {
-    return;
-  }
-  UITheme::getInstance().reload();
-  // Re-derive the shared tokens for the new look; the gate stays closed until
-  // the repaint that rebuilds the interaction table in the new layout.
-  resetUi();
-}
-
 bool SettingsActivity::handleCustomInput() {
   return optionPopup.handleInput(mappedInput, [this] { requestUpdate(); });
 }
@@ -227,7 +215,6 @@ void SettingsActivity::toggleSelectedSetting() {
                          syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
                          SETTINGS.saveToFile();
                          rebuildSettings();
-                         applyUiSettingChange(valuePtr);
                        });
       requestUpdate();
       return;
@@ -371,9 +358,7 @@ void SettingsActivity::toggleSelectedSetting() {
 
   syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
   SETTINGS.saveToFile();
-  const auto valuePtr = setting.valuePtr;  // rebuildSettings() replaces `setting`
   rebuildSettings();
-  applyUiSettingChange(valuePtr);
   // Rows can appear/disappear with a change (e.g. the footnote-back toggle).
   nav.selected = std::min(selectedSetting, static_cast<int>(settings.size()) - 1);
 }

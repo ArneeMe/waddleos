@@ -597,7 +597,6 @@ void setup() {
   timezones::applyToClock();
   RECENT_BOOKS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
-  UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
   // Seed the system clock from the battery-backed RTC: on RTC boards it is the
   // only real clock across power-off, and time() is what plugin event
@@ -735,7 +734,7 @@ void setup() {
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
     // crashed (indicated by readerActivityLoadCount > 0)
-    activityManager.goHome(HomeMenuItem::NONE, needsWakeRefresh);
+    activityManager.goHome(needsWakeRefresh);
   } else {
     // Clear app state to avoid getting into a boot loop if the epub doesn't load
     const auto path = APP_STATE.openEpubPath;

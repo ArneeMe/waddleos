@@ -343,9 +343,9 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
   replaceActivity(std::make_unique<FullScreenMessageActivity>(renderer, mappedInput, std::move(message), style));
 }
 
-void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefresh) {
+void ActivityManager::goHome(bool cleanInitialRefresh) {
   // WADDLE: leaving the news paper goes back to the headline list.
-  if (initialMenuItem == HomeMenuItem::NONE && currentActivity && currentActivity->name == "EpubReader" &&
+  if (currentActivity && currentActivity->name == "EpubReader" &&
       static_cast<ReaderActivity*>(currentActivity.get())->bookPath == waddle::news::EPUB_PATH) {
     replaceActivity(std::make_unique<NewsActivity>(renderer, mappedInput, /*fetch=*/false));
     return;
