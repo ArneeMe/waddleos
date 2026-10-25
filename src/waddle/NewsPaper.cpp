@@ -91,11 +91,8 @@ bool sync() {
   return Storage.replaceFile(NEW_LIST_PATH, LIST_PATH);
 }
 
-void openStory(const Paper& paper, std::vector<std::string>& readIds, const int index) {
-  if (index < 0 || index >= static_cast<int>(paper.stories.size()) || !Storage.exists(EPUB_PATH)) return;
-
-  // Remember it as read. Only ids in today's paper are kept, so the file stays small.
-  if (!isRead(readIds, paper.stories[index].id)) readIds.push_back(paper.stories[index].id);
+// Only ids in today's paper are written, so the file stays small.
+void saveReadIds(const Paper& paper, const std::vector<std::string>& readIds) {
   String text;
   for (const auto& story : paper.stories) {
     if (isRead(readIds, story.id)) {
@@ -104,6 +101,36 @@ void openStory(const Paper& paper, std::vector<std::string>& readIds, const int 
     }
   }
   Storage.writeFile(READ_PATH, text);
+}
+
+void setRead(const Paper& paper, std::vector<std::string>& readIds, const int index, const bool read) {
+  if (index < 0 || index >= static_cast<int>(paper.stories.size())) return;
+  const std::string& id = paper.stories[index].id;
+  if (read == isRead(readIds, id)) return;
+  if (read) {
+    readIds.push_back(id);
+  } else {
+    readIds.erase(std::find(readIds.begin(), readIds.end(), id));
+  }
+  saveReadIds(paper, readIds);
+}
+
+int enterChapter(int spine, const bool skipRead, const int spineCount) {
+  Paper paper;
+  if (!load(paper)) return spine;
+  auto readIds = loadReadIds();
+  const int stories = static_cast<int>(paper.stories.size());
+  if (skipRead) {
+    while (spine >= 1 && spine <= stories && isRead(readIds, paper.stories[spine - 1].id)) spine++;
+    if (spine > stories) return spineCount;  // nothing unread after this: end of the paper
+  }
+  if (spine >= 1 && spine <= stories) setRead(paper, readIds, spine - 1, true);
+  return spine;
+}
+
+void openStory(const Paper& paper, std::vector<std::string>& readIds, const int index) {
+  if (index < 0 || index >= static_cast<int>(paper.stories.size()) || !Storage.exists(EPUB_PATH)) return;
+  setRead(paper, readIds, index, true);
 
   // Chapter 0 is the front page, so story i is chapter i + 1. Saving it as the
   // reading position makes the reader open there.

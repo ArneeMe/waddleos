@@ -33,6 +33,15 @@ bool isRead(const std::vector<std::string>& readIds, const std::string& id);
 // Wi-Fi. The old files stay until the new ones are complete.
 bool sync();
 
+// Marks story `index` read or unread and saves the list.
+void setRead(const Paper& paper, std::vector<std::string>& readIds, int index, bool read);
+
+// Called by the reader when the paper opens chapter `spine` (chapter 0 is the
+// front page, chapter i + 1 is story i). Marks that story read. With skipRead
+// (turning forward), stories already read are skipped; returns the chapter to
+// show, or spineCount when no unread story is left after it.
+int enterChapter(int spine, bool skipRead, int spineCount);
+
 // Marks a story read and opens the reader at it.
 void openStory(const Paper& paper, std::vector<std::string>& readIds, int index);
 

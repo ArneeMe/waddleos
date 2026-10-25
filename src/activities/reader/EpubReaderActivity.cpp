@@ -57,6 +57,7 @@
 #include "util/BookmarkUtil.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
+#include "waddle/NewsPaper.h"
 
 namespace {
 // The X4 Pro and X4 Classic carry the X4's panel but sit outside isXteinkDevice()
@@ -1596,6 +1597,15 @@ void EpubReaderActivity::renderBook() {
   buildViewportHeight = viewportHeight;
 
   const ReaderRenderSpec renderSpec = SETTINGS.readerRenderSpec(viewportWidth, viewportHeight);
+
+  // WADDLE: the news paper marks each story read as it opens, and turning
+  // forward skips stories already read.
+  if (!section && bookPath == waddle::news::EPUB_PATH && currentSpineIndex != newsLastSpine) {
+    const bool forward = newsLastSpine >= 0 && currentSpineIndex > newsLastSpine;
+    currentSpineIndex = waddle::news::enterChapter(currentSpineIndex, forward, epub->getSpineItemsCount());
+    newsLastSpine = currentSpineIndex;
+    if (currentSpineIndex == epub->getSpineItemsCount()) return;
+  }
 
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;

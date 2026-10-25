@@ -44,6 +44,7 @@ class NewsActivity final : public Activity {
   void startFetch();
   void finishFetch(bool ok);
   void loadList();
+  void toggleRead(int row);
   bool isRead(const std::string& id) const { return waddle::news::isRead(readIds, id); }
   void buildRows();
   void open(int row);
