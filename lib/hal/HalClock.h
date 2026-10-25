@@ -43,6 +43,9 @@ class HalClock {
   // Returns false if RTC is not available.
   bool formatTime(char* buf, size_t bufSize, bool use12Hour = false) const;
 
+  // Set the RTC (and the system clock) to `epoch`, seconds since 1970 UTC.
+  bool setUtc(time_t epoch);
+
   // Sync the RTC from an NTP server. Requires WiFi to be connected.
   // Blocks for up to ~5s while waiting for SNTP response.
   // Returns true if the RTC was successfully updated.

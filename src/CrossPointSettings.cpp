@@ -112,11 +112,6 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
 
-  // A uint16_t mask, so it does not fit the uint8_t generic loop. Omitted while
-  // unconfigured, so the default keeps following the UI language.
-  if (keyboardLayouts != 0) {
-    doc["keyboardLayouts"] = keyboardLayouts;
-  }
 
   bleturner::writeJson(ble, doc);
 }
@@ -279,10 +274,6 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
   }
 
-  // Absent means unconfigured, which is the default.
-  if (doc["keyboardLayouts"].is<uint16_t>()) {
-    keyboardLayouts = doc["keyboardLayouts"].as<uint16_t>();
-  }
 
   if (!bleturner::readJson(ble, doc)) {
     needsResave = true;

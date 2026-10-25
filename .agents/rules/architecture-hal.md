@@ -86,7 +86,6 @@ Consult the contract being changed:
   paths, per-book keys, and isolation.
 - [plugin-events.md](../../docs/plugin-events.md): event whitelist, deferred outboxes,
   sleep delivery, sessions, and metadata sidecars; preserve delivery/compatibility.
-- [webserver-endpoints.md](../../docs/webserver-endpoints.md): request/response contracts;
   normalize user paths and escape filenames through existing helpers.
 - Protected reads: inspect `Epub` and pinned SDK `ContentProtection` before changing
   decrypt-on-read/key handling. Keep service activation policy in plugins.
