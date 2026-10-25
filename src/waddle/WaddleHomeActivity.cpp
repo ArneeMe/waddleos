@@ -40,6 +40,9 @@ namespace {
 
 constexpr const char* WEATHER_URL = "https://arnee.me/api/hjem.json";
 constexpr const char* WEATHER_PATH = "/.waddle/hjem.json";
+// Current time, seconds since 1970 UTC, as plain text. The reader has no
+// automatic NTP, so this keeps the clock right without another server.
+constexpr const char* TIME_URL = "https://arnee.me/api/tid";
 constexpr const char* FETCHED_PATH = "/.waddle/hjem-hentet.txt";
 constexpr long STALE_MINUTES = 30;
 // Fetch only after the screen has been up this long, so passing through Hjem
@@ -86,6 +89,18 @@ bool syncWeather() {
   }
   Storage.mkdir("/.waddle");
   return HttpDownloader::downloadToFile(WEATHER_URL, WEATHER_PATH) == HttpDownloader::OK;
+}
+
+void syncClock() {
+  std::string body;
+  const bool ok = HttpDownloader::fetchUrl(TIME_URL, [&body](const uint8_t* data, const size_t len) {
+    if (body.size() + len > 32) return false;
+    body.append(reinterpret_cast<const char*>(data), len);
+    return true;
+  });
+  const long long epoch = ok ? atoll(body.c_str()) : 0;
+  // Anything before 2025 is not a real answer.
+  if (epoch > 1735689600LL) halClock.setUtc(static_cast<time_t>(epoch));
 }
 
 void loadWeather(WaddleHomeActivity::Weather& weather) {
@@ -203,6 +218,7 @@ void WaddleHomeActivity::startFetch() {
 void WaddleHomeActivity::finishFetch() {
   bool ok = false;
   if (WiFi.status() == WL_CONNECTED) {
+    syncClock();
     const bool weatherOk = syncWeather();
     const bool newsOk = waddle::news::sync();
     ok = weatherOk || newsOk;
