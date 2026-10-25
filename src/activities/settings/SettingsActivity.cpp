@@ -20,7 +20,6 @@
 #include "ClockSettingsActivity.h"
 #include "CrossPointSettings.h"
 #include "HomeButtonSettingsActivity.h"
-#include "KeyboardLayoutsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
@@ -103,7 +102,6 @@ void SettingsActivity::rebuildSettings() {
 
   // Language leads so a user stuck in an unfamiliar language finds it first.
   addAction(SettingsSection::General, StrId::STR_LANGUAGE, SettingAction::Language);
-  addAction(SettingsSection::General, StrId::STR_KEYBOARD_LAYOUTS, SettingAction::KeyboardLayouts);
   addAction(SettingsSection::Reader, StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings);
   if (BoardConfig::hasHomeKey()) {
     addAction(SettingsSection::Controls, StrId::STR_HOME_BUTTON, SettingAction::HomeButton);
@@ -323,13 +321,6 @@ void SettingsActivity::toggleSelectedSetting() {
                                  SETTINGS.saveToFile();
                                  rebuildSettings();
                                });
-        break;
-      case SettingAction::KeyboardLayouts:
-        if (auto activity = makeUniqueNoThrow<KeyboardLayoutsActivity>(renderer, mappedInput)) {
-          startActivityForResult(std::move(activity), nullptr);
-        } else {
-          LOG_ERR("SETTINGS", "OOM: KeyboardLayoutsActivity");
-        }
         break;
       case SettingAction::About:
         if (auto activity = makeUniqueNoThrow<AboutActivity>(renderer, mappedInput)) {

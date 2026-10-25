@@ -377,12 +377,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Language setting (Language enum index, default 0 = EN)
   // WaddleOS default: Norsk bokmål.
   uint8_t language = static_cast<uint8_t>(Language::NB);
-  // Keyboard layouts the user can reach, using keyboard_layouts::ALL table bits.
-  // 0 means "not configured", resolved to the UI language's layout plus English.
-  // Any other value is an explicit choice and is used as-is: the language of the
-  // books someone reads is not necessarily the language of their UI.
-  // See keyboard_layouts:: for the bit assignment and the defaulting rules.
-  uint16_t keyboardLayouts = 0;
   // Bluetooth page turner, saved under the keys lib/BlePageTurner reads and writes (BlePageTurnerJson.h).
   bleturner::Config ble;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
