@@ -9,7 +9,6 @@
 #include "WaddleDraw.h"
 #include "WaddleWifi.h"
 #include "activities/ActivityManager.h"
-#include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -135,9 +134,10 @@ void NewsActivity::loop() {
     return;
   }
 
-  // Hold OK to fetch again. wasLongPressed() swallows the release that follows.
-  if (mappedInput.wasLongPressed(Button::Confirm, ReaderUtils::SKIP_HOLD_MS)) {
-    startFetch();
+  // No paper: OK or a tap tries again.
+  if (paper.stories.empty()) {
+    int x = 0, y = 0;
+    if (mappedInput.wasReleased(Button::Confirm) || mappedInput.wasScreenTapped(x, y)) startFetch();
     return;
   }
 
@@ -167,10 +167,15 @@ void NewsActivity::loop() {
     } else if (!mappedInput.wasScreenTapped(x, y)) {
       return;
     } else if (y >= footerTop) {
-      // The left and right thirds of the footer are the Forrige and Neste buttons.
+      // The footer thirds are the Forrige, Hent nå and Neste buttons.
       const int third = renderer.getScreenWidth() / 3;
-      if (x < third) moveTo((selected / perPage - 1) * perPage);
-      if (x >= 2 * third) moveTo((selected / perPage + 1) * perPage);
+      if (x < third) {
+        moveTo((selected / perPage - 1) * perPage);
+      } else if (x < 2 * third) {
+        startFetch();
+      } else {
+        moveTo((selected / perPage + 1) * perPage);
+      }
     } else if (y >= listTop) {
       const int row = (y - listTop) / rowHeight;
       if (row < perPage) open((selected / perPage) * perPage + row);
@@ -215,7 +220,7 @@ void NewsActivity::render(RenderLock&&) {
     GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Nyheter");
     waddle::drawPenguin(renderer, (pageWidth - 90) / 2, pageHeight / 2 - 140, 3);
     renderer.drawCenteredText(UI_12_FONT_ID, pageHeight / 2, "Fikk ikke hentet nyheter", true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 36, "Hold OK for å prøve igjen");
+    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 36, "Trykk for å prøve igjen");
     renderer.displayBuffer();
     return;
   }
@@ -227,7 +232,7 @@ void NewsActivity::render(RenderLock&&) {
 
   // Each row has room for a two-line headline, so every page has the same rows.
   const int lineH = renderer.getLineHeight(UI_12_FONT_ID);
-  const int footerH = 64;
+  const int footerH = 76;
   footerTop = pageHeight - footerH;
   listTop = metrics.topPadding + metrics.headerHeight + 8;
   rowHeight = 2 * lineH + 16;
@@ -273,18 +278,16 @@ void NewsActivity::render(RenderLock&&) {
     if (!sel && !nextSelected && !nextHeading) renderer.drawLine(titleX, y + rowHeight - 2, pageWidth - side, y + rowHeight - 2);
   }
 
-  // Footer: Forrige and Neste buttons, the page number between them.
-  const int buttonW = 130;
-  const int buttonH = 44;
-  const int buttonY = footerTop + 8;
-  if (page > 0) drawButton(renderer, 12, buttonY, buttonW, buttonH, "< Forrige");
-  if (page + 1 < pages) drawButton(renderer, pageWidth - 12 - buttonW, buttonY, buttonW, buttonH, "Neste >");
+  // Footer: the page number, then Forrige, Hent nå and Neste.
   char footer[32];
   snprintf(footer, sizeof(footer), "Side %d av %d", page + 1, pages);
-  const int smallH = renderer.getLineHeight(SMALL_FONT_ID);
-  const int textTop = buttonY + (buttonH - 2 * smallH) / 2;
-  renderer.drawCenteredText(SMALL_FONT_ID, textTop, footer);
-  renderer.drawCenteredText(SMALL_FONT_ID, textTop + smallH, "Hold OK: hent nå");
+  renderer.drawCenteredText(SMALL_FONT_ID, footerTop + 2, footer);
+  const int buttonW = 130;
+  const int buttonH = 44;
+  const int buttonY = pageHeight - buttonH - 8;
+  if (page > 0) drawButton(renderer, 12, buttonY, buttonW, buttonH, "< Forrige");
+  drawButton(renderer, (pageWidth - buttonW) / 2, buttonY, buttonW, buttonH, "Hent nå");
+  if (page + 1 < pages) drawButton(renderer, pageWidth - 12 - buttonW, buttonY, buttonW, buttonH, "Neste >");
 
   renderer.displayBuffer();
 }
