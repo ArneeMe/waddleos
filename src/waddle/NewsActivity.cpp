@@ -94,6 +94,17 @@ void NewsActivity::open(const int row) {
   waddle::news::openStory(paper, readIds, rows[row]);
 }
 
+void NewsActivity::toggleRead(const int row) {
+  if (row < 0 || row >= static_cast<int>(rows.size()) || rows[row] == READ_HEADING) return;
+  const int index = rows[row];
+  waddle::news::setRead(paper, readIds, index, !isRead(paper.stories[index].id));
+  {
+    RenderLock lock(*this);
+    buildRows();
+  }
+  moveTo(selected);
+}
+
 // Selects a row, stepping over the "Lest" heading in the direction of travel.
 void NewsActivity::moveTo(const int row, const int direction) {
   const int count = static_cast<int>(rows.size());
@@ -143,6 +154,11 @@ void NewsActivity::loop() {
     moveTo((selected / perPage - 1) * perPage);
   } else {
     int x = 0, y = 0;
+    // Hold a headline to mark it read or unread.
+    if (mappedInput.wasScreenLongPress(x, y)) {
+      if (y >= listTop && y < footerTop) toggleRead((selected / perPage) * perPage + (y - listTop) / rowHeight);
+      return;
+    }
     const auto swipe = mappedInput.wasSwipe();
     if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Left) {
       moveTo((selected / perPage + 1) * perPage);

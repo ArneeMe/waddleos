@@ -24,6 +24,8 @@ class EpubReaderActivity final : public ReaderActivity {
   std::shared_ptr<Epub> epub;
   std::unique_ptr<Section> section = nullptr;
   int currentSpineIndex = 0;
+  // WADDLE: last chapter shown of the news paper, to tell forward turns apart.
+  int newsLastSpine = -1;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
   std::string pendingAnchor;
