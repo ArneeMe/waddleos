@@ -1,6 +1,7 @@
 #include "DictZip.h"
 
-#include <Arduino.h>  // ESP.getMaxAllocHeap for the pre-reserve heap guard
+#include <Arduino.h>
+#include <HalMemory.h>  // pre-reserve heap guard (default heap includes PSRAM)
 #include <InflateReader.h>
 #include <Memory.h>
 
@@ -9,9 +10,11 @@
 namespace DictZip {
 namespace {
 
-// Caps the chunk table at 32KB of heap (8192 * 4 bytes); at the typical ~58KB
-// chunk length that still allows ~460MB of uncompressed dictionary data.
-constexpr uint16_t MAX_CHUNK_COUNT = 8192;
+// The most chunks one RA subfield can list (its length is a uint16: 6 + 2 per
+// chunk), so any valid dictzip fits. At ~58KB per chunk that is ~1.9GB of
+// dictionary; the English Wiktionary has 17,246 chunks. The table (4 bytes per
+// chunk, up to 128KB) goes to PSRAM: on the S3, allocations over 4KB do.
+constexpr uint16_t MAX_CHUNK_COUNT = 32764;
 
 // Slack required above the chunk table before reserving it, so a table that
 // would only just fit is refused rather than left to abort inside reserve().
@@ -182,9 +185,9 @@ bool parse(HalFile& file, Info* info, ExtractError* outError) {
       // vector reserve() aborts under -fno-exceptions if it can't allocate;
       // refuse up front (like Dictionary::readDefinition's guard) so a fragmented
       // heap surfaces LowMemory instead of crashing. chunkCount <= MAX_CHUNK_COUNT
-      // caps this at ~32KB.
+      // caps this at ~128KB.
       const size_t chunkTableBytes = (static_cast<size_t>(chunkCount) + 1) * sizeof(uint32_t);
-      if (ESP.getMaxAllocHeap() < chunkTableBytes + CHUNK_TABLE_HEAP_HEADROOM_BYTES)
+      if (HalMemory::getDefaultHeap().largestBlockBytes < chunkTableBytes + CHUNK_TABLE_HEAP_HEADROOM_BYTES)
         return fail(ExtractError::LowMemory);
       info->chunkOffsets.reserve(static_cast<size_t>(chunkCount) + 1);
       info->chunkOffsets.push_back(0);
