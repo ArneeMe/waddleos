@@ -12,6 +12,7 @@
 #include <Logging.h>
 #include <PersistableStore.h>
 #include <WiFi.h>
+#include <esp_random.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -27,7 +28,7 @@
 #include "components/icons/folder.h"
 #include "components/icons/library.h"
 #include "components/icons/settings2.h"
-#include "components/icons/transfer.h"
+#include "components/icons/wifi.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 #include "util/BookProgress.h"
@@ -48,8 +49,6 @@ constexpr long STALE_MINUTES = 30;
 // Fetch only after the screen has been up this long, so passing through Hjem
 // on the way somewhere else does not turn on Wi-Fi.
 constexpr unsigned long FETCH_DELAY_MS = 2000;
-// After a failed fetch, wait this long before trying again.
-constexpr unsigned long RETRY_MS = 10 * 60 * 1000;
 constexpr unsigned long WIFI_TIMEOUT_MS = 15000;
 // A half refresh this often clears e-ink ghosting from the clock updates.
 constexpr int CLEAN_EVERY_RENDERS = 30;
@@ -60,9 +59,39 @@ constexpr const char* WEEKDAYS[] = {"Søndag", "Mandag", "Tirsdag", "Onsdag", "T
 constexpr const char* MONTHS[] = {"januar", "februar", "mars",     "april",   "mai",      "juni",
                                   "juli",   "august",  "september", "oktober", "november", "desember"};
 
-// Survives leaving and re-entering Hjem, so a failed fetch is not retried on every visit.
-unsigned long lastAttemptAt = 0;
-bool attempted = false;
+// Under "Hei Arne!" on Hjem, one picked at random each visit.
+constexpr const char* QUOTES[] = {
+    "Pingviner kan ikke fly, men de kan lese.",
+    "Én side til. Det sier alle.",
+    "Bøker: Wi-Fi for hjernen.",
+    "Isflaket er ferdig ryddet. Les i fred.",
+    "Kaffe i koppen, bok i fanget.",
+    "Fisk er bra. Bøker er bedre.",
+    "Du har lest mer enn en sel i dag.",
+    "Pingvinregel nr. 1: alltid ha en bok.",
+    "Telefonen kan vente. Kapittelet kan ikke.",
+    "Godt å se deg igjen!",
+    "Vaggle vaggle, les les.",
+    "Ingen varsler her. Bare ord.",
+    "Snøstorm ute, fortelling inne.",
+    "Bokormer og pingviner er bestevenner.",
+    "Leser du, eller later du som?",
+    "Kald nese, varme sider.",
+    "E-blekk: ingen blått lys, bare blå pingviner.",
+    "Hvem trenger sofa når man har et isflak?",
+    "Les litt. Sov litt. Gjenta.",
+    "Pingvinen har bokmerket klart.",
+    "Det beste med en bok: ingen reklame.",
+    "I dag blir en god lesedag.",
+    "Nyheter er fint. Romaner er finere.",
+    "Kapittel for kapittel, flak for flak.",
+    "Penguins can't fly. You can read. Win.",
+    "Batteriet holder. Holder du?",
+    "Stille og rolig, akkurat som det skal.",
+    "Vi er på isen, og alt er fint.",
+    "Ingen stress, bare tekst.",
+    "Pingvinen nikker godkjennende.",
+};
 
 // Days since 1970-01-01 for a calendar date (Howard Hinnant's days_from_civil).
 long daysFromCivil(int y, const unsigned m, const unsigned d) {
@@ -147,6 +176,7 @@ WaddleHomeActivity::WaddleHomeActivity(GfxRenderer& renderer, MappedInputManager
 
 void WaddleHomeActivity::onEnter() {
   Activity::onEnter();
+  quote = QUOTES[esp_random() % (sizeof(QUOTES) / sizeof(QUOTES[0]))];
   loadData();
   enteredAt = millis();
   requestUpdate();
@@ -208,8 +238,7 @@ bool WaddleHomeActivity::isStale() const {
 }
 
 void WaddleHomeActivity::startFetch() {
-  attempted = true;
-  lastAttemptAt = millis();
+  fetchTried = true;
   fetching = true;
   connectStartedAt = millis();
   if (WiFi.status() != WL_CONNECTED && !waddle::wifi::joinSaved(*this)) finishFetch();
@@ -303,8 +332,8 @@ void WaddleHomeActivity::loop() {
 
   if (fetching) {
     if (WiFi.status() == WL_CONNECTED || millis() - connectStartedAt > WIFI_TIMEOUT_MS) finishFetch();
-  } else if (millis() - enteredAt > FETCH_DELAY_MS && isStale() &&
-             (!attempted || millis() - lastAttemptAt > RETRY_MS)) {
+  } else if (!fetchTried && millis() - enteredAt > FETCH_DELAY_MS && isStale()) {
+    // Once per visit, only when opened: sitting on Hjem never fetches again.
     startFetch();
   }
 
@@ -320,6 +349,18 @@ void WaddleHomeActivity::loop() {
     moveFocus(-1);
   } else {
     int x = 0, y = 0;
+    // Hold a headline to mark it read.
+    if (mappedInput.wasScreenLongPress(x, y)) {
+      for (int k = 0; k < static_cast<int>(topStories.size()); k++) {
+        if (boxes[T_STORY_1 + k].contains(x, y)) {
+          waddle::news::setRead(paper, readIds, topStories[k], true);
+          loadData();
+          requestUpdate();
+          return;
+        }
+      }
+      return;
+    }
     if (mappedInput.wasScreenTapped(x, y)) {
       for (int target = 0; target < T_COUNT; target++) {
         if (available(target) && boxes[target].contains(x, y)) {
@@ -352,6 +393,7 @@ void WaddleHomeActivity::render(RenderLock&&) {
     snprintf(text, sizeof(text), "%u%%", percent);
     const int textW = renderer.getTextWidth(SMALL_FONT_ID, text);
     renderer.drawText(SMALL_FONT_ID, pageWidth - side - textW, 4, text);
+    BaseTheme::drawBatteryOutline(renderer, pageWidth - side - textW - 26, 6, 18, 11);
     GUI.fillBatteryIcon(renderer, Rect{pageWidth - side - textW - 26, 6, 18, 11}, percent);
   }
 
@@ -384,9 +426,12 @@ void WaddleHomeActivity::render(RenderLock&&) {
     drawWeatherIcon(renderer, weather.icon, iconX, 26, iconScale);
     waddle::drawPixelText(renderer, pageWidth - side - tempW, 40, temp, tempScale);
     char range[48];
-    snprintf(range, sizeof(range), "%s · %d° / %d°", weather.place.c_str(), weather.min, weather.max);
-    renderer.drawText(SMALL_FONT_ID, iconX, 96, range);
-    renderer.drawText(SMALL_FONT_ID, iconX, 96 + smallH + 2, weather.text.c_str());
+    snprintf(range, sizeof(range), "%s: %d° til %d° i dag", weather.place.c_str(), weather.min, weather.max);
+    // Right-aligned under the temperature, so longer lines grow to the left.
+    const int rangeW = renderer.getTextWidth(SMALL_FONT_ID, range);
+    renderer.drawText(SMALL_FONT_ID, pageWidth - side - rangeW, 96, range);
+    const int textW = renderer.getTextWidth(SMALL_FONT_ID, weather.text.c_str());
+    renderer.drawText(SMALL_FONT_ID, pageWidth - side - textW, 96 + smallH + 2, weather.text.c_str());
   }
 
   const int dividerY = dateY + lineH + 14;
@@ -476,7 +521,7 @@ void WaddleHomeActivity::render(RenderLock&&) {
   constexpr int gap = 8;
   const int buttonsY = pageHeight - buttonH - 36;
   const int buttonW = (pageWidth - 2 * side - 4 * gap) / 5;
-  const uint8_t* icons[] = {LibraryIcon, FolderIcon, TransferIcon, nullptr, Settings2Icon};
+  const uint8_t* icons[] = {LibraryIcon, FolderIcon, WifiIcon, nullptr, Settings2Icon};
   for (int i = 0; i < 5; i++) {
     const int x = side + i * (buttonW + gap);
     renderer.drawRoundedRect(x, buttonsY, buttonW, buttonH, 2, 12, true);
@@ -490,18 +535,19 @@ void WaddleHomeActivity::render(RenderLock&&) {
     boxes[T_LIBRARY + i] = {x, buttonsY, buttonW, buttonH};
   }
 
-  // Penguin family and greeting in the space between the news and the buttons.
+  // Penguins with "Hei Arne!" and the quote, in the space between the news and the buttons.
   const int space = buttonsY - newsBottom;
-  if (space >= 90) {
-    const int ground = newsBottom + space / 2 + 30;
-    const int groupX = (pageWidth - 200) / 2;
-    for (int x = groupX - 20; x < groupX + 220; x++) {
-      for (int gy = ground; gy < ground + 6; gy++) renderer.drawPixel(x, gy, ((x + gy) & 1) == 0);
+  if (space >= 80) {
+    const int top = newsBottom + (space - 60) / 2;
+    waddle::drawPenguin(renderer, side, top, 2, true);
+    waddle::drawPenguin(renderer, side + 58, top + 28, 1, true);
+    const int textX = side + 100;
+    const int textW = pageWidth - textX - side;
+    renderer.drawText(UI_12_FONT_ID, textX, top + 4, "Hei " WADDLE_OWNER_NAME "!", true, EpdFontFamily::BOLD);
+    const auto lines = renderer.wrappedText(SMALL_FONT_ID, quote, textW, 2);
+    for (size_t n = 0; n < lines.size(); n++) {
+      renderer.drawText(SMALL_FONT_ID, textX, top + 8 + lineH + static_cast<int>(n) * smallH, lines[n].c_str());
     }
-    waddle::drawPenguin(renderer, groupX + 110, ground - 28 * 2, 2, true);
-    waddle::drawPenguin(renderer, groupX + 172, ground - 28, 1, true);
-    renderer.drawText(UI_12_FONT_ID, groupX, ground - 28 * 2 + 4, "Hei " WADDLE_OWNER_NAME "!", true,
-                      EpdFontFamily::BOLD);
   }
 
   // When the weather and news were fetched.

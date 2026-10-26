@@ -65,6 +65,7 @@ class WaddleHomeActivity final : public Activity {
   Weather weather;
   long fetchedAt = -1;  // local minutes since 1970 of the last fetch, -1 = never
   bool fetching = false;
+  bool fetchTried = false;  // fetch at most once per visit
   unsigned long enteredAt = 0;
   unsigned long connectStartedAt = 0;
 
@@ -73,6 +74,7 @@ class WaddleHomeActivity final : public Activity {
   std::vector<int> topStories;  // indices into paper.stories
   int unread = 0;
 
+  const char* quote = "";
   int focus = T_BOOK;
   Box boxes[T_COUNT];  // filled by render() for touch input
 
