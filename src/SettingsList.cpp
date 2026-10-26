@@ -241,10 +241,6 @@ void forEachBaseSetting(SettingVisitor visit, void* context) {
                          StrId::STR_CUSTOMISE_STATUS_BAR));
   emit(SettingInfo::Toggle(StrId::STR_CLOCK_IN_HEADER, &CrossPointSettings::clockShowInHeader, "clockShowHeader",
                            StrId::STR_CUSTOMISE_STATUS_BAR));
-  // Persistence flag for NTP debounce. Resetting from the web UI forces a re-sync
-  // on next WiFi connect, which is useful when crossing time zones.
-  emit(SettingInfo::Toggle(StrId::STR_CLOCK_SYNCED, &CrossPointSettings::clockHasBeenSynced, "clockHasBeenSynced",
-                           StrId::STR_CUSTOMISE_STATUS_BAR));
   if (BoardConfig::hasHomeKey()) {
     for (unsigned i = 0; i < 3; ++i) {
       emit(SettingInfo::StaticEnum(home_button::GESTURE_LABELS[i], home_button::FIELDS[i], home_button::ACTION_LABELS,

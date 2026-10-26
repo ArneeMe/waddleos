@@ -2,7 +2,6 @@
 
 #include <Logging.h>
 #include <WiFi.h>
-#include <esp_sntp.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -100,36 +99,4 @@ bool HalClock::setUtc(const time_t epoch) {
   LOG_INF("CLK", "RTC set to %04u-%02u-%02u %02u:%02u:%02u UTC", dt.year, dt.month, dt.day, dt.hour, dt.minute,
           dt.second);
   return true;
-}
-
-bool HalClock::syncFromNTP() {
-  if (!_available) return false;
-
-  if (WiFi.status() != WL_CONNECTED) {
-    LOG_ERR("CLK", "WiFi not connected, cannot sync NTP");
-    return false;
-  }
-
-  LOG_INF("CLK", "Starting NTP sync...");
-  // configTzTime overwrites the process TZ with UTC0 for the SNTP exchange;
-  // remember the display timezone so it can be restored below.
-  const char* tzBefore = getenv("TZ");
-  char savedTz[64] = {0};
-  if (tzBefore) snprintf(savedTz, sizeof(savedTz), "%s", tzBefore);
-  configTzTime("UTC0", "pool.ntp.org", "time.nist.gov");
-
-  // Wait for SNTP sync to complete (up to 5 seconds)
-  constexpr int maxAttempts = 50;
-  for (int i = 0; i < maxAttempts; i++) {
-    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
-      const bool ok = setUtc(time(nullptr));
-      setTimezone(savedTz);
-      return ok;
-    }
-    delay(100);
-  }
-
-  LOG_ERR("CLK", "NTP sync timed out");
-  setTimezone(savedTz);
-  return false;
 }

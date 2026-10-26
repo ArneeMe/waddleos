@@ -46,11 +46,4 @@ class HalClock {
   // Set the RTC (and the system clock) to `epoch`, seconds since 1970 UTC.
   bool setUtc(time_t epoch);
 
-  // Sync the RTC from an NTP server. Requires WiFi to be connected.
-  // Blocks for up to ~5s while waiting for SNTP response.
-  // Returns true if the RTC was successfully updated.
-  //
-  // Debouncing (skip if already synced once) is enforced by the caller, not here,
-  // so the HAL stays free of any app-layer settings dependency.
-  bool syncFromNTP();
 };
