@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-waddlebook - get an EPUB, make a clean, safe copy, and send it to the reader.
+waddle book - get an EPUB, make a clean, safe copy, and send it to the reader.
 
 Just run it:
-    waddlebook
+    waddle book
 and paste a webpage, a direct .epub link, or a file path.
 
 Or pass one or more sources directly:
-    waddlebook https://www.gutenberg.org/ebooks/1342
-    waddlebook book.epub other.epub
+    waddle book https://www.gutenberg.org/ebooks/1342
+    waddle book book.epub other.epub
 
 Each book is saved in ~/Downloads/books, then uploaded over Wi-Fi to /Books on
 the reader. The reader must be on File Transfer -> Join a Network. If it is not
-reachable, the books stay in ~/Downloads/books; run waddlebook on them later.
+reachable, the books stay in ~/Downloads/books; run waddle book on them later.
 
 Options:
     -o DIR       save somewhere else than ~/Downloads/books
@@ -641,7 +641,7 @@ def send_to_reader(ip, folder, paths):
     if not status:
         say(f"  {R}✗{N} No answer from the reader")
         say(f"    {Y}Open File Transfer → Join a Network on the reader, then run:{N}")
-        say(f"    waddlebook " + " ".join(f'"{p}"' for p in paths))
+        say(f"    waddle book " + " ".join(f'"{p}"' for p in paths))
         return 0
     say(f"  {G}✓{N} {status.get('device', '?')} running {status.get('version', '?')}")
     reader_mkdir(ip, folder)
@@ -687,7 +687,7 @@ def process(src, folder):
 
 def main():
     global INTERACTIVE
-    ap = argparse.ArgumentParser(description="Get an EPUB, clean it, save it, and send it to the reader over Wi-Fi.")
+    ap = argparse.ArgumentParser(prog="waddle book", description="Get an EPUB, clean it, save it, and send it to the reader over Wi-Fi.")
     ap.add_argument("sources", nargs="*", help="webpage, .epub link, or file (asks if none given)")
     ap.add_argument("-o", "--outdir", default=BOOKS_DIR, help=f"save here (default {BOOKS_DIR})")
     ap.add_argument("-d", "--dest", default="/Books", help="folder on the reader (default /Books)")
@@ -709,7 +709,7 @@ def main():
             return 0
 
     os.makedirs(args.outdir, exist_ok=True)
-    say(f"{B}🐧 waddlebook{N}  saving to {args.outdir}")
+    say(f"{B}🐧 waddle book{N}  saving to {args.outdir}")
     saved = []
     for src in sources:
         try:

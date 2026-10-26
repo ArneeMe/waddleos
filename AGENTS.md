@@ -43,8 +43,10 @@ Read [docs/waddle/PLAN.md](docs/waddle/PLAN.md) for what exists and what is next
 
 ## Tools for Arne's computer (`tools/`)
 
-- `waddle-update`: download the latest build and install it over Wi-Fi.
-- `waddlebook`: get an EPUB from a link or file, clean it, send it to the reader.
-- `addwaddle`: upload any file as it is.
+- `waddle`: the one command Arne runs. It dispatches to the files below and
+  does `waddle dict get` itself.
+- `waddle-update` (`waddle update`): download the latest build and install it over Wi-Fi.
+- `waddlebook` (`waddle book`): get an EPUB from a link or file, clean it, send it to the reader.
+- `addwaddle` (`waddle add`): upload any file as it is.
 
 All use only the Python standard library or plain bash and work on Linux and macOS.
