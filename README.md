@@ -10,11 +10,11 @@ WaddleOS is my fork of [CrossPoint Reader](https://github.com/crosspoint-reader/
 open-source firmware for Xteink e-readers. All the reading features come from
 CrossPoint. WaddleOS adds:
 
-- A penguin home screen that says hello in Norwegian ("Hei Arne!").
+- Hjem: clock, weather, the book you are reading and NRK headlines, with penguins.
+- Nyheter: NRK's top stories as a book, fetched from arnee.me.
+- A Bluesound remote.
 - Penguin boot and sleep screens (`src/waddle/`, `assets/waddle/`).
-- Firmware updates over Wi-Fi with one command (`tools/waddle-update`).
-- Get, clean and send books in one command (`tools/waddlebook`).
-- Book upload from the command line (`tools/addwaddle`).
+- One command on the computer, `waddle`, for updates, books and the dictionary.
 - A build for the X4 Pro only.
 
 Privacy: nothing about what or how much you read leaves the reader by itself.
@@ -32,21 +32,24 @@ See [the plan](docs/waddle/PLAN.md) and [privacy notes](docs/waddle/phase2-priva
 Back up the stock firmware first. Only for units that are not USB-locked
 (bought from xteink.com).
 
-## Update over Wi-Fi
+## The `waddle` command
+
+Add it to your shell once (zsh; use `~/.bashrc` for bash):
+
+```sh
+echo 'waddle() { curl -sL https://raw.githubusercontent.com/ArneeMe/waddleos/waddle/tools/waddle | python3 - "$@"; }' >> ~/.zshrc
+```
 
 Open **File Transfer → Join a Network** on the reader, then:
 
 ```sh
-tools/waddle-update              # latest build from GitHub
-tools/waddle-update firmware.bin # or a local build
+waddle update              # install the latest build from GitHub (or: waddle update firmware.bin)
+waddle book <link or file> # get an EPUB, remove scripts and trackers, send it to /Books
+waddle add [-d /folder] f  # upload any file as it is
+waddle dict get            # put the English dictionary from arnee.me on the reader
 ```
 
-Confirm the update on the reader. Set `WADDLE_IP` if the reader's IP is not
-`192.168.50.185`.
-
-Books: `tools/waddlebook <webpage, .epub link or file>` downloads the EPUB, removes
-scripts and trackers, saves it in `~/Downloads/books` and sends it to `/Books`
-on the reader. `tools/addwaddle` uploads any file as it is.
+Set `WADDLE_IP` if the reader's IP is not `192.168.50.185`.
 
 ## Build
 

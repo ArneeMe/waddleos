@@ -6,10 +6,10 @@ By default it downloads the latest WaddleOS build from GitHub (the
 
 The reader must be on File Transfer -> Join a Network.
 
-  waddle-update                      # latest build from GitHub
-  waddle-update firmware.bin         # local file, e.g. .pio/build/x4pro-waddle/firmware.bin
-  waddle-update --ip 192.168.50.185  # reader IP (or set WADDLE_IP)
-  waddle-update --check              # download and check only, do not upload
+  waddle update                      # latest build from GitHub
+  waddle update firmware.bin         # local file, e.g. .pio/build/x4pro-waddle/firmware.bin
+  waddle update --ip 192.168.50.185  # reader IP (or set WADDLE_IP)
+  waddle update --check              # download and check only, do not upload
 
 Only uses the Python standard library.
 """
@@ -208,13 +208,13 @@ def apply(ip, name):
 
 
 def main():
-    p = argparse.ArgumentParser(description="Update the reader's firmware over Wi-Fi.")
+    p = argparse.ArgumentParser(prog="waddle update", description="Update the reader's firmware over Wi-Fi.")
     p.add_argument("file", nargs="?", help="local .bin (default: latest build from GitHub)")
     p.add_argument("--ip", default=os.environ.get("WADDLE_IP", DEFAULT_IP), help="reader IP (env WADDLE_IP)")
     p.add_argument("--check", action="store_true", help="only get and check the firmware, do not upload")
     args = p.parse_args()
 
-    print(f"\n{B}🐧 waddle-update{N}\n")
+    print(f"\n{B}🐧 waddle update{N}\n")
     path = Path(args.file) if args.file else fetch_latest()
     if not path.is_file():
         die(f"{path}: not found")

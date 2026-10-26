@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""waddle: one command for the WaddleOS reader.
+
+  waddle update [--ip IP] [file.bin]   install the latest firmware over Wi-Fi
+  waddle book <url|file>...            get an EPUB, clean it and send it
+  waddle add [-d /folder] <file>...    upload files as they are
+  waddle dict get [--ip IP]            put the English dictionary on the reader
+
+The reader must be on File Transfer -> Join a Network. Its IP is $WADDLE_IP
+(default 192.168.50.185). Uses only the Python standard library (and bash for
+`add`), on Linux and macOS.
+
+Install (zsh; use ~/.bashrc for bash):
+  echo 'waddle() { curl -sL https://raw.githubusercontent.com/ArneeMe/waddleos/waddle/tools/waddle | python3 - "$@"; }' >> ~/.zshrc
+"""
+
+import http.client
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+RAW = "https://raw.githubusercontent.com/ArneeMe/waddleos/waddle/tools/"
+DICT_URL = "https://arnee.me/api/ordbok/"
+DICT_FOLDER = "/dictionaries/english"
+DEFAULT_IP = "192.168.50.185"
+
+TTY = sys.stdout.isatty()
+B, G, R, Y, C, DIM, N = (("\033[1m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m")
+                         if TTY else ("",) * 7)
+
+
+def say(text=""):
+    print(text, flush=True)
+
+
+def human(n):
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}TB"
+
+
+def bar(done, total, start):
+    width = 24
+    filled = int(done * width / total) if total else width
+    rate = done / max(time.time() - start, 0.001)
+    sys.stdout.write(f"\r  {'█' * filled}{'░' * (width - filled)} {done * 100 // max(total, 1):3d}%  {human(rate)}/s ")
+    sys.stdout.flush()
+
+
+# --- The other tools, run as they are ------------------------------------------
+
+def run_tool(name, args, interpreter):
+    """Runs tools/<name> from next to this file, or from GitHub when piped through curl."""
+    here = os.path.dirname(os.path.abspath(sys.argv[0])) if sys.argv[0] not in ("", "-") else ""
+    local = os.path.join(here, name) if here else ""
+    if local and os.path.isfile(local):
+        return subprocess.call([interpreter, local, *args])
+    with urllib.request.urlopen(RAW + name, timeout=20) as r:
+        script = r.read()
+    stdin_args = ["-", *args] if interpreter == "python3" else ["-s", "--", *args]
+    return subprocess.run([interpreter, *stdin_args], input=script).returncode
+
+
+# --- Dictionary -----------------------------------------------------------------
+
+def reader_post(ip, path, fields):
+    body = urllib.parse.urlencode(fields).encode()
+    urllib.request.urlopen(urllib.request.Request(f"http://{ip}{path}", data=body), timeout=10).close()
+
+
+def reader_mkdir(ip, folder):
+    parent = "/"
+    for part in [p for p in folder.split("/") if p]:
+        try:
+            reader_post(ip, "/mkdir", {"name": part, "path": parent})
+        except urllib.error.HTTPError as e:
+            if e.code != 400:  # 400 = already exists
+                raise
+        parent = parent.rstrip("/") + "/" + part
+
+
+def reader_upload(ip, folder, path):
+    name = os.path.basename(path)
+    try:  # the reader refuses to overwrite, so remove an older copy first
+        reader_post(ip, "/delete", {"path": f"{folder}/{name}"})
+    except OSError:
+        pass
+    size = os.path.getsize(path)
+    boundary = "waddle" + str(int(time.time() * 1000))
+    head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n"
+            "Content-Type: application/octet-stream\r\n\r\n").encode()
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    host, _, port = ip.partition(":")
+    conn = http.client.HTTPConnection(host, int(port or 80), timeout=120)
+    conn.putrequest("POST", "/upload?" + urllib.parse.urlencode({"path": folder}))
+    conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+    conn.putheader("Content-Length", str(len(head) + size + len(tail)))
+    conn.endheaders()
+    conn.send(head)
+    start, done = time.time(), 0
+    with open(path, "rb") as f:
+        while chunk := f.read(32 * 1024):
+            conn.send(chunk)
+            done += len(chunk)
+            bar(done, size, start)
+    conn.send(tail)
+    resp = conn.getresponse()
+    text = resp.read().decode("utf-8", "replace").strip()
+    sys.stdout.write("\r" + " " * 60 + "\r")
+    if resp.status != 200:
+        raise RuntimeError(f"upload of {name} failed (HTTP {resp.status}): {text[:200]}")
+
+
+def download(url, path, total):
+    with urllib.request.urlopen(url, timeout=60) as r, open(path, "wb") as out:
+        start, done = time.time(), 0
+        while chunk := r.read(64 * 1024):
+            out.write(chunk)
+            done += len(chunk)
+            bar(done, total, start)
+    sys.stdout.write("\r" + " " * 60 + "\r")
+
+
+def dict_get(args):
+    ip = os.environ.get("WADDLE_IP", DEFAULT_IP)
+    if len(args) >= 2 and args[0] == "--ip":
+        ip = args[1]
+    say(f"\n{B}🐧 waddle dict get{N} → {B}{ip}{N}  {DIM}({DICT_FOLDER}){N}\n")
+
+    say(f"{C}▸{N} Checking the reader")
+    try:
+        with urllib.request.urlopen(f"http://{ip}/api/status", timeout=4) as r:
+            status = json.load(r)
+        say(f"  {G}✓{N} {status.get('device', '?')} running {status.get('version', '?')}")
+    except (OSError, ValueError):
+        say(f"  {R}✗{N} No answer from {ip}")
+        say(f"    {Y}Open File Transfer → Join a Network on the reader and keep the screen on.{N}")
+        return 1
+
+    say(f"{C}▸{N} Getting the dictionary from arnee.me")
+    try:
+        with urllib.request.urlopen(DICT_URL + "ordbok.json", timeout=20) as r:
+            info = json.load(r)
+    except (OSError, ValueError) as e:
+        say(f"  {R}✗{N} arnee.me has no dictionary yet ({e})")
+        return 1
+    files = info["filer"]
+    total = sum(f["bytes"] for f in files)
+    say(f"  {G}✓{N} {info.get('navn')} {DIM}(Wiktionary {info.get('utgave', '')}, {len(files)} files, {human(total)}){N}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for f in files:
+            say(f"  {f['navn']} {DIM}({human(f['bytes'])}){N}")
+            download(DICT_URL + f["navn"], os.path.join(tmp, f["navn"]), f["bytes"])
+
+        say(f"\n{C}▸{N} Sending to the reader {DIM}(large files take a few minutes){N}")
+        reader_mkdir(ip, DICT_FOLDER)
+        for f in files:
+            say(f"  {f['navn']}")
+            reader_upload(ip, DICT_FOLDER, os.path.join(tmp, f["navn"]))
+            say(f"  {G}✓{N} {f['navn']}")
+
+    say(f"\n{G}{B}🐧 Done!{N} On the reader: Innstillinger → Leser → Ordbok → {info.get('navn')}.\n")
+    return 0
+
+
+# --- Main -----------------------------------------------------------------------
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        say(__doc__.split("\nInstall")[0])
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "update":
+        return run_tool("waddle-update", rest, "python3")
+    if cmd == "book":
+        return run_tool("waddlebook", rest, "python3")
+    if cmd == "add":
+        return run_tool("addwaddle", rest, "bash")
+    if cmd == "dict" and rest[:1] == ["get"]:
+        return dict_get(rest[1:])
+    say(f"{R}Unknown command:{N} waddle {' '.join(argv)}  {DIM}(see: waddle help){N}")
+    return 1
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        say("\nStopped.")
+        sys.exit(130)
+    except (OSError, RuntimeError) as e:
+        say(f"\n{R}✗{N} {e}")
+        sys.exit(1)
