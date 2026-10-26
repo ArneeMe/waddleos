@@ -75,6 +75,9 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
+          # Shown on the reader and compared with version.json (Oppdater fastvare).
+          # A header only UpdateActivity includes, so the rest of the cache stays valid.
+          echo "#define WADDLE_BUILD \"$(git rev-parse --short=7 HEAD)\"" > src/waddle/WaddleBuild.h
           pio run -e "$PIO_ENV" -j"$(nproc)" 2>&1 | tee build.log
 
       # Compiler errors as annotations, readable through the checks API.
@@ -99,7 +102,18 @@ jobs:
           else
             gh release create waddle-latest --prerelease --title "WaddleOS latest" --notes "$notes" --target "$GITHUB_SHA"
           fi
-          gh release upload waddle-latest waddleos-x4pro.bin --clobber
+          # The reader's Oppdater fastvare reads this to see if a newer build exists.
+          python3 - "$sha" <<'PY'
+          import json, subprocess, sys
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          months = ["jan", "feb", "mar", "apr", "mai", "jun", "jul", "aug", "sep", "okt", "nov", "des"]
+          now = datetime.now(ZoneInfo("Europe/Oslo"))
+          note = subprocess.check_output(["git", "log", "-1", "--format=%s"], text=True).strip()
+          json.dump({"build": sys.argv[1], "dato": f"{now.day}. {months[now.month - 1]} kl {now:%H:%M}", "melding": note},
+                    open("version.json", "w"), ensure_ascii=False)
+          PY
+          gh release upload waddle-latest waddleos-x4pro.bin version.json --clobber
 
       - name: Copy firmware
         run: cp ".pio/build/$PIO_ENV/firmware.bin" waddleos-x4pro.bin
