@@ -8,22 +8,17 @@
 
 #include "MappedInputManager.h"
 #include "WaddleDraw.h"
+#include "WaddleVersion.h"
 #include "WaddleWifi.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 
-// Written by waddle-build.yml; missing in local builds.
-#if __has_include("WaddleBuild.h")
-#include "WaddleBuild.h"
-#else
-#define WADDLE_BUILD ""
-#endif
-
 namespace {
 
-constexpr const char* RELEASE = "https://github.com/ArneeMe/waddleos/releases/download/waddle-latest/";
+// arnee.me passes on the waddle-latest release, so the reader only talks to arnee.me.
+constexpr const char* RELEASE = "https://arnee.me/api/fastvare/";
 constexpr const char* FIRMWARE_PATH = "/waddleos-x4pro.bin";
 constexpr unsigned long WIFI_TIMEOUT_MS = 15000;
 
@@ -71,7 +66,7 @@ void UpdateActivity::fail(const char* message) {
   requestUpdate();
 }
 
-// version.json: {"build": "abc1234", "dato": "26. okt kl 22:22", "melding": "..."}
+// version.json: {"versjon": "WaddleOS 1.42", "build": "abc1234", "dato": "26. okt kl 22:22", "melding": "..."}
 void UpdateActivity::check() {
   if (lowHeap()) return fail("For lite minne");
   std::string body;
@@ -87,9 +82,10 @@ void UpdateActivity::check() {
   {
     RenderLock lock(*this);
     latestBuild = doc["build"] | "";
+    latestVersion = doc["versjon"] | "";
     latestDate = doc["dato"] | "";
     latestNote = doc["melding"] | "";
-    state = latestBuild == WADDLE_BUILD ? State::LATEST : State::AVAILABLE;
+    state = latestBuild == waddle::build() ? State::LATEST : State::AVAILABLE;
   }
   requestUpdate();
 }
@@ -175,7 +171,7 @@ void UpdateActivity::render(RenderLock&&) {
 
   int y = metrics.topPadding + metrics.headerHeight + 150;
   char line[96];
-  snprintf(line, sizeof(line), "Installert: %s", WADDLE_BUILD[0] ? "bygg " WADDLE_BUILD : CROSSPOINT_VERSION);
+  snprintf(line, sizeof(line), "Installert: %s", waddle::version());
   renderer.drawCenteredText(SMALL_FONT_ID, y, line);
   y += smallH + 24;
 
@@ -210,7 +206,7 @@ void UpdateActivity::render(RenderLock&&) {
   }
 
   if (state == State::AVAILABLE || state == State::LATEST) {
-    snprintf(line, sizeof(line), "Nyeste: bygg %s, %s", latestBuild.c_str(), latestDate.c_str());
+    snprintf(line, sizeof(line), "Nyeste: %s, %s", latestVersion.c_str(), latestDate.c_str());
     renderer.drawCenteredText(SMALL_FONT_ID, y, line);
     y += smallH + 4;
     const auto lines = renderer.wrappedText(SMALL_FONT_ID, latestNote.c_str(), pageWidth - 60, 2);

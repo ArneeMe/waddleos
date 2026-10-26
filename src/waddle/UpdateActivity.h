@@ -26,7 +26,8 @@ class UpdateActivity final : public Activity {
   State state = State::IDLE;
   Action pending = Action::NONE;  // what to do once Wi-Fi is up
   unsigned long connectStartedAt = 0;
-  std::string latestBuild;  // short git hash of the newest build
+  std::string latestBuild;    // short git hash of the newest build
+  std::string latestVersion;  // "WaddleOS 1.42"
   std::string latestDate;   // "26. okt kl 21:22"
   std::string latestNote;   // its commit message
   std::string error;
