@@ -73,6 +73,10 @@ class ActivityManager {
   std::atomic<uint32_t> paintedVisit{0};
 
  public:
+  // For product code that opens a screen by itself (the mesh unit's SOS alert).
+  GfxRenderer& getRenderer() { return renderer; }
+  MappedInputManager& getMappedInput() { return mappedInput; }
+
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput);
   ~ActivityManager();
 

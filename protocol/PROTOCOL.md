@@ -65,7 +65,7 @@ conversation shows a warning: a message is missing or was changed.
 | 8–11 | longitude, degrees × 10⁷ (i32) |
 | 12–13 | altitude, metres (i16) |
 | 14 | battery % |
-| 15 | flags: bit 0 = no fix (position is the last known one) |
+| 15 | flags: bit 0 = no fix (position is the last known one); bit 1 = SOS cancelled |
 
 ### ACK body (6 bytes)
 
@@ -83,6 +83,9 @@ with hops 3 like other packets.
 last MSG counter the sender has from member 1, 2 and 3 (3 × u32), battery %
 (u8), firmware build (first byte of the short git hash). The answer is every
 stored MSG from member *n* with a counter above the given one.
+
+A unit in SOS sends an SOS packet every 60 seconds until the user cancels it;
+cancelling sends one more SOS with the "cancelled" bit set.
 
 ## Encryption (MSG, POS, SOS)
 

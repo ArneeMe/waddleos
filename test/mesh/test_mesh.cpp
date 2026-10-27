@@ -79,12 +79,13 @@ static void testBodies() {
   p.altitude = -12;
   p.battery = 87;
   p.noFix = true;
+  p.cancelled = true;
   uint8_t buf[POS_SIZE];
   writePosition(p, buf);
   Position q;
   CHECK(readPosition(buf, sizeof(buf), q));
   CHECK(q.time == p.time && q.latE7 == p.latE7 && q.lonE7 == p.lonE7 && q.altitude == -12 && q.battery == 87 &&
-        q.noFix);
+        q.noFix && q.cancelled);
 
   Ack a{3, 77, AckState::Stored};
   uint8_t ab[ACK_SIZE];

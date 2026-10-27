@@ -69,6 +69,7 @@ struct Position {
   int16_t altitude = 0;
   uint8_t battery = 0;
   bool noFix = false;
+  bool cancelled = false;  // SOS only: the alarm is over
 };
 void writePosition(const Position& p, uint8_t out[POS_SIZE]);
 bool readPosition(const uint8_t* in, size_t len, Position& p);

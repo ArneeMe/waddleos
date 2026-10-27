@@ -58,7 +58,7 @@ void writePosition(const Position& p, uint8_t out[POS_SIZE]) {
   put32(out + 8, uint32_t(p.lonE7));
   put16(out + 12, uint16_t(p.altitude));
   out[14] = p.battery;
-  out[15] = p.noFix ? 1 : 0;
+  out[15] = uint8_t((p.noFix ? 1 : 0) | (p.cancelled ? 2 : 0));
 }
 
 bool readPosition(const uint8_t* in, size_t len, Position& p) {
@@ -69,6 +69,7 @@ bool readPosition(const uint8_t* in, size_t len, Position& p) {
   p.altitude = int16_t(get16(in + 12));
   p.battery = in[14];
   p.noFix = (in[15] & 1) != 0;
+  p.cancelled = (in[15] & 2) != 0;
   return true;
 }
 

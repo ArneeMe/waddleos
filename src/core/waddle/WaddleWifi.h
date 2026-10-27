@@ -8,6 +8,8 @@ namespace waddle::wifi {
 // same steps as the Wi-Fi screen. Returns false when no network is saved.
 // Poll WiFi.status() for the result.
 bool joinSaved(Activity& activity);
+// The same, for background services that have no screen.
+bool joinSaved();
 
 // Turns Wi-Fi fully off.
 void off();

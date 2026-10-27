@@ -9,10 +9,12 @@
 
 namespace waddle::wifi {
 
-bool joinSaved(Activity& activity) {
+bool joinSaved(Activity&) { return joinSaved(); }
+
+bool joinSaved() {
   // The store is only loaded by the Wi-Fi screens, so load it here too.
   {
-    RenderLock lock(activity);
+    RenderLock lock;
     WIFI_STORE.loadFromFile();
   }
   auto cred = WIFI_STORE.findCredential(WIFI_STORE.getLastConnectedSsid());
