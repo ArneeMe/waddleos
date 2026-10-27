@@ -29,8 +29,7 @@
 #include "core/activities/util/BmpViewerActivity.h"
 #include "core/activities/util/FrontlightPanelActivity.h"
 #include "core/activities/util/FullScreenMessageActivity.h"
-#include "apps/news/NewsActivity.h"
-#include "products/x4pro/WaddleHomeActivity.h"
+#include "core/Product.h"
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -344,13 +343,15 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 }
 
 void ActivityManager::goHome(bool cleanInitialRefresh) {
-  // WADDLE: leaving the news paper goes back to the headline list.
-  if (currentActivity && currentActivity->name == "EpubReader" &&
-      static_cast<ReaderActivity*>(currentActivity.get())->bookPath == waddle::news::EPUB_PATH) {
-    replaceActivity(std::make_unique<NewsActivity>(renderer, mappedInput, /*fetch=*/false));
-    return;
+  // The product may send a finished book somewhere else (the reader: NRK back to Nyheter).
+  if (currentActivity && currentActivity->name == "EpubReader") {
+    auto next = product::afterBook(renderer, mappedInput, static_cast<ReaderActivity*>(currentActivity.get())->bookPath);
+    if (next) {
+      replaceActivity(std::move(next));
+      return;
+    }
   }
-  replaceActivity(std::make_unique<WaddleHomeActivity>(renderer, mappedInput, cleanInitialRefresh));
+  replaceActivity(product::makeHome(renderer, mappedInput, cleanInitialRefresh));
 }
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 

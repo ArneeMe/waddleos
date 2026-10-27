@@ -34,6 +34,7 @@
 #include "apps/reader/ReaderSettings.h"
 #include "core/CrossPointState.h"
 #include "core/MappedInputManager.h"
+#include "core/Product.h"
 #include "apps/reader/RecentBooksStore.h"
 #include "core/SdCardFontSystem.h"
 #include "core/WifiCredentialStore.h"
@@ -64,6 +65,8 @@ FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
 FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts(), renderer.getTtfFonts());
 static unsigned long allowSleepAt = 0;
+// Last user input or background work; auto sleep counts from here.
+static unsigned long lastActivityTime = 0;
 static unsigned long lastX4ProPowerClickAt = 0;
 
 namespace {
@@ -402,6 +405,25 @@ void enterDeepSleep(bool fromTimeout = false) {
     WiFi.mode(WIFI_OFF);
   }
 
+  // A product that sleeps by itself (the mesh unit: light sleep with the radio
+  // listening) comes back here awake, without a reboot.
+  if (product::sleep()) {
+    deepSleepInProgress = false;
+    lastActivityTime = millis();
+    allowSleepAt = millis() + 2000;
+    // The press that woke the unit is not also a click.
+    wakePowerReleasePending = gpio.isPressed(HalGPIO::BTN_POWER);
+    APP_STATE.showBootScreen = true;
+    APP_STATE.saveToFile();
+    const bool toReader = APP_STATE.lastSleepFromReader && !APP_STATE.openEpubPath.empty();
+    if (toReader) {
+      activityManager.goToReader(APP_STATE.openEpubPath);
+    } else {
+      activityManager.goHome(/*cleanInitialRefresh=*/true);
+    }
+    return;
+  }
+
   const bool wakeOnHeldButton = false;
 
   halTiltSensor.deepSleep();
@@ -455,6 +477,7 @@ void setupDisplayAndFonts(bool seamless = false) {
 
 void setup() {
   BoardConfig::holdPowerRails();
+  product::beginBoard();
 
 #ifdef ENABLE_SERIAL_LOG
 #ifdef CROSSPOINT_WAIT_FOR_USB_SERIAL
@@ -654,6 +677,8 @@ void setup() {
   // Output polarity is resolved per render by ActivityManager (night mode
   // inverts only the reading surfaces), so nothing to restore here.
 
+  product::begin();
+
   if (recoveryFirmwareMode) {
     // Skip normal home/reader routing: jump straight into the SD firmware picker.
     activityManager.replaceActivity(
@@ -708,6 +733,7 @@ void setup() {
   }
 
   allowSleepAt = millis() + 2000;
+  lastActivityTime = millis();
 }
 
 void loop() {
@@ -751,6 +777,7 @@ void loop() {
 
   // After the exclusive-storage return: it saves settings to the SD card.
   handleSlideSwitch();
+  product::loop();
   halTiltSensor.update(READER_SETTINGS.tiltPageTurn, READER_SETTINGS.orientation, activityManager.isReaderActivity());
 
   // Under the render lock, so a step never overlaps the themes' gauge reads.
@@ -793,9 +820,8 @@ void loop() {
   }
 
   // Check for any user activity (button press or release) or active background work
-  static unsigned long lastActivityTime = millis();
   if (gpio.wasAnyPressed() || gpio.wasAnyReleased() || gpio.wasTouchActivity() || halTiltSensor.hadActivity() ||
-      remoteActed || activityManager.preventAutoSleep()) {
+      remoteActed || activityManager.preventAutoSleep() || product::preventAutoSleep()) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
   }
