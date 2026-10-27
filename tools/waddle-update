@@ -226,7 +226,8 @@ def main():
     global ASSET, BOARD
     if not args.check:
         # Ask the device first: the reader and the mesh unit need different files.
-        board = reader_status(args.ip).get("board", "x4pro")
+        # Firmware before PR #32 sent "x4pro;" (with the tag's end mark).
+        board = reader_status(args.ip).get("board", "x4pro").rstrip(";")
         if board not in ASSETS:
             die(f"Unknown device '{board}'")
         ASSET, BOARD = ASSETS[board], board.encode()
