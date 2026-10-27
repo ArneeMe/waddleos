@@ -40,6 +40,37 @@ What is done and what is next. How the system fits together:
 - Settings that may be pointless now: sleep screen options, XTC status bar,
   font (one choice). Ask Arne before removing.
 
+## Mesh unit (planned)
+
+WaddleOS grows a second device: a LilyGO T5 E-Paper S3 Pro (868 MHz LoRa,
+GPS) as an off-grid messenger for three people. Full spec: "Off-Grid Mesh
+Messenger – Software Spec" (Claude Docs,
+https://claude.ai/artifact/VugwyP8RmFDMwqKaB2qPCX).
+
+Decided:
+
+- One repo, one system. The reader and the mesh unit are two builds
+  (`x4pro-waddle`, `t5s3-waddle`) of a shared core; a Heltec V4 gateway and a
+  Python server on Arne's Pi live here too.
+- Our own OS, not a Meshtastic fork (Meshtastic is a reference). RadioLib for
+  the SX1262.
+- Privacy as on the reader: nothing leaves by itself. The only servers are
+  the Pi and arnee.me. Arne's router can port forward to the Pi.
+- Updates come from arnee.me when Arne taps the button. Signed builds later.
+
+Phases:
+
+1. Restructure into `core/`, `apps/`, `services/`, `products/` with no
+   change in behavior (one pure-move PR).
+2. T5 bring-up: display, touch, buttons, battery, SD card.
+3. Radio: LoRa send and receive, measure power use.
+4. Messaging: group and direct messages, keys, ACK and sync.
+5. Gateway and server on the Pi.
+6. More apps: map, SOS, position sharing.
+
+Open: which GPS the unit has (MIA-M10Q or L76K), and whether the home
+connection has a public IP (no CGNAT).
+
 ## Decided against
 
 - Audio on the reader (no audio hardware, BLE only, no A2DP).
