@@ -80,7 +80,7 @@ jobs:
           {
             echo "#define WADDLE_VERSION \"WaddleOS 1.${GITHUB_RUN_NUMBER}\""
             echo "#define WADDLE_BUILD \"$(git rev-parse --short=7 HEAD)\""
-          } > src/waddle/WaddleBuild.h
+          } > src/core/waddle/WaddleBuild.h
           pio run -e "$PIO_ENV" -j"$(nproc)" 2>&1 | tee build.log
 
       # Compiler errors as annotations, readable through the checks API.

@@ -40,14 +40,15 @@ Arne opened a screen. Nothing runs in the background or during sleep.
 - **One build target:** `x4pro-waddle` in `platformio.ini`. `WADDLE=1`,
   `WADDLE_PRIVATE=1` and `WADDLE_OWNER_NAME="Arne"` are always set; there are
   no `#if WADDLE` blocks left.
-- **No local toolchain in cloud sessions.** GitHub Actions
-  (`.github/workflows/waddle-build.yml`) is the compiler. On a PR it builds;
+- **Compiling:** in a cloud session run `bash scripts/cloud-setup.sh` once,
+  then `pio run -e x4pro-waddle`. GitHub Actions
+  (`.github/workflows/waddle-build.yml`) also builds every PR;
   compiler errors appear as annotations on the `build` check run (read them
   with `gh api repos/ArneeMe/waddleos/check-runs/<id>/annotations`).
 - **Release:** a push to `waddle` publishes `waddleos-x4pro.bin` and
   `version.json` to the `waddle-latest` pre-release.
 - **Version:** "WaddleOS 1.<GitHub run number>". The build writes
-  `src/waddle/WaddleBuild.h` (git-ignored) with `WADDLE_VERSION` and
+  `src/core/waddle/WaddleBuild.h` (git-ignored) with `WADDLE_VERSION` and
   `WADDLE_BUILD` (short git hash). Only `WaddleVersion.cpp` includes it, so a
   new number recompiles one file. Never put changing values in `-D` flags:
   that recompiles everything and makes CI slow.
@@ -56,13 +57,27 @@ Arne opened a screen. Nothing runs in the background or during sleep.
 
 ## Source layout
 
+`src/` is split so a second device (the T5 S3 Pro mesh unit, see PLAN.md) can
+share the base and pick its own apps. Each build lists what it compiles in
+`build_src_filter` in `platformio.ini`; `x4pro-waddle` takes
+`core/`, `apps/` and `products/x4pro/`. Includes are written from `src/`
+(`"core/activities/Activity.h"`), or as a bare name for a file in the same folder.
+
 ```
-src/main.cpp            boot, wake routing, main loop, auto sleep, deep sleep
-src/activities/         screens (CrossPoint): reader/, settings/, network/, library/, home/ (file browser)
-src/components/         UITheme (Lyra is the only theme), icons, shared UI pieces
-src/network/            web server for file transfer, HttpDownloader (HTTPS via wolfSSL)
-src/util/               dictionary, book progress, helpers
-src/waddle/             everything WaddleOS adds (table below)
+src/core/               shared by every device
+  activities/           Activity, ActivityManager, list screens; boot_sleep/,
+                        network/ (Wi-Fi, file transfer, USB), settings/, util/ (dialogs, keyboard, light panel)
+  components/           UITheme (Lyra is the only theme), icons, shared UI pieces
+  network/              web server for file transfer, HttpDownloader (HTTPS via wolfSSL), firmware flashing
+  util/                 helpers (buttons, strings, QR, time zones, screenshots)
+  waddle/               WaddleOS base: Wi-Fi, version, update screen, privacy, penguin drawing
+  *.h / *.cpp           settings, state, button mapping, Wi-Fi passwords, fonts
+src/apps/               one folder per app
+  reader/               EPUB/XTC reader, dictionary, bookmarks, clippings, recent books, text settings
+  library/              library list and file browser
+  news/                 Nyheter (NRK paper)
+  bluesound/            Bluesound remote
+src/products/x4pro/     the e-reader: main.cpp, Hjem, weather icons, logo
 lib/                    Epub, GfxRenderer, I18n, hal, fonts, zip, ...
 lib/I18n/translations/  norwegian.yaml and english.yaml only
 tools/                  the waddle command
@@ -70,37 +85,67 @@ assets/waddle/          penguin and weather icon generators
 docs/waddle/            this file, PLAN.md, privacy notes
 ```
 
-### `src/waddle/`
+Not yet clean: some core files still know about apps (the settings screen opens
+the reader's text and status bar screens, `ActivityManager` opens the reader and
+Hjem, the web server lists books, the theme draws the reader's status bar, the
+SD card font system lives in core). Untangle those when the second device needs it.
+
+### WaddleOS files
 
 | File | What |
 |---|---|
-| `WaddleHomeActivity.*` | **Hjem**, the home screen: pixel clock, date, weather, the book being read, top 3 unread NRK headlines, penguins with a random quote, 5 icon buttons. Fetches weather, news and time when opened if the data is older than 30 min (once per visit) |
-| `NewsActivity.*` | **Nyheter**: headline list, unread first then "LEST", Forrige / Hent nå / Neste, hold a row to toggle read |
-| `NewsPaper.*` | The NRK paper on the SD card: load the list, read state, `sync()` download, `openStory()`, `enterChapter()` (marks stories read and skips read ones while paging) |
-| `NodeActivity.*`, `BluOsClient.*` | **Bluesound** remote: presets, volume, play/pause, next/previous, a singing penguin |
-| `UpdateActivity.*` | **Oppdater fastvare**: check `version.json`, download, hand the file to `SdFirmwareUpdateActivity` |
-| `WaddleVersion.*` | `waddle::version()` and `waddle::build()` |
-| `WaddleWifi.*` | `joinSaved()` (last used saved network) and `off()`, shared by every Wi-Fi screen |
-| `WaddleFirmwareApi.*` | `POST /api/firmware/apply` on the file transfer web server, used by `waddle update` |
-| `WaddlePrivacy.*` | Neutral hostname and user agent ("reader"), hotspot name and password |
-| `WaddleDraw.*` | Penguin, music notes, speaker icon, pixel font for the clock, boot/sleep splash |
-| `WaddlePenguin.h`, `WaddleWeatherIcons.h` | Generated bitmaps (`assets/waddle/*.py`) |
+| `products/x4pro/WaddleHomeActivity.*` | **Hjem**, the home screen: pixel clock, date, weather, the book being read, top 3 unread NRK headlines, penguins with a random quote, 5 icon buttons. Fetches weather, news and time when opened if the data is older than 30 min (once per visit) |
+| `apps/news/NewsActivity.*` | **Nyheter**: headline list, unread first then "LEST", Forrige / Hent nå / Neste, hold a row to toggle read |
+| `apps/news/NewsPaper.*` | The NRK paper on the SD card: load the list, read state, `sync()` download, `openStory()`, `enterChapter()` (marks stories read and skips read ones while paging) |
+| `apps/bluesound/NodeActivity.*`, `BluOsClient.*` | **Bluesound** remote: presets, volume, play/pause, next/previous, a singing penguin |
+| `core/waddle/UpdateActivity.*` | **Oppdater fastvare**: check `version.json`, download, hand the file to `SdFirmwareUpdateActivity` |
+| `core/waddle/WaddleVersion.*` | `waddle::version()` and `waddle::build()` |
+| `core/waddle/WaddleWifi.*` | `joinSaved()` (last used saved network) and `off()`, shared by every Wi-Fi screen |
+| `core/waddle/WaddleFirmwareApi.*` | `POST /api/firmware/apply` on the file transfer web server, used by `waddle update` |
+| `core/waddle/WaddlePrivacy.*` | Neutral hostname and user agent ("reader"), hotspot name and password |
+| `core/waddle/WaddleDraw.*` | Penguin, music notes, speaker icon, pixel font for the clock, boot/sleep splash |
+| `core/waddle/WaddlePenguin.h`, `products/x4pro/WaddleWeatherIcons.h` | Generated bitmaps (`assets/waddle/*.py`) |
 
 ### Hooks in CrossPoint code
 
-These upstream files call into `src/waddle/`. Upstream is no longer followed,
+These upstream files call into WaddleOS code. Upstream is no longer followed,
 so they may be edited freely.
 
-| File | Hook |
+| File (under `src/`) | Hook |
 |---|---|
-| `src/activities/ActivityManager.cpp` | `goHome()` opens `WaddleHomeActivity`; leaving the NRK book returns to `NewsActivity` |
-| `src/activities/reader/EpubReaderActivity.cpp` | `renderBook()` calls `waddle::news::enterChapter()` for the NRK book |
-| `src/activities/reader/ReaderActivity.cpp` | The NRK book is not added to recent books |
-| `src/activities/boot_sleep/*` | Penguin boot and sleep screens; a book sleeps on its page with a sleeping penguin |
-| `src/main.cpp` | `enterDeepSleep()`: keep the page only when sleeping from the reader |
-| `src/activities/settings/SettingsActivity.cpp` | "Oppdater fastvare" opens `UpdateActivity` |
-| `src/network/CrossPointWebServer.cpp` | Registers `/api/firmware/apply`; reports `waddle::version()` |
+| `core/activities/ActivityManager.cpp` | `goHome()` opens `WaddleHomeActivity`; leaving the NRK book returns to `NewsActivity` |
+| `apps/reader/EpubReaderActivity.cpp` | `renderBook()` calls `waddle::news::enterChapter()` for the NRK book |
+| `apps/reader/ReaderActivity.cpp` | The NRK book is not added to recent books |
+| `core/activities/boot_sleep/*` | Penguin boot and sleep screens; a book sleeps on its page with a sleeping penguin |
+| `products/x4pro/main.cpp` | `enterDeepSleep()`: keep the page only when sleeping from the reader |
+| `core/activities/settings/SettingsActivity.cpp` | "Oppdater fastvare" opens `UpdateActivity` |
+| `core/network/CrossPointWebServer.cpp` | Registers `/api/firmware/apply`; reports `waddle::version()` |
 | `lib/hal/HalClock.*` | `setUtc()`, used by Hjem to set the clock from arnee.me |
+
+## Settings
+
+One settings system in core, and each app brings its own settings.
+
+- **Storage:** everything is in `/.crosspoint/settings.json`, one key per
+  setting. A device reads the keys it knows and ignores the rest, so the same
+  file works on every device. Never rename a key that has shipped; new app keys
+  get a prefix (`mesh.channel`).
+- **Core** (`core/CrossPointSettings.*`, `SETTINGS`): settings every device has
+  (sleep, night mode, language, clock, buttons, frontlight, Bluetooth).
+  `core/SettingsList.cpp` lists their rows. Hardware-only rows are shown only
+  where the board has the hardware (`BoardConfig`, `FREEINK_CAP_*`).
+- **Apps** (`apps/reader/ReaderSettings.*`, `READER_SETTINGS`): an app keeps
+  its own settings and hands core a `SettingsModule` (`core/SettingsModule.h`):
+  its rows, extra keys to save and load, and changes to the rows at runtime
+  (fonts, dictionaries).
+- **Products** pick which apps' settings exist: `settingsModules()` in
+  `products/x4pro/ProductSettings.cpp`. A new device lists its own apps.
+- **Screens:** the Settings screen and the web settings page are built from
+  core's rows followed by each module's rows, grouped by category.
+
+To add a setting: put the field in the struct that owns it (core or the app),
+add a row with a new key to that owner's list, and add the Norwegian text in
+`lib/I18n/translations/norwegian.yaml`.
 
 ## How a screen works
 

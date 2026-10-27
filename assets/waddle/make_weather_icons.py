@@ -66,4 +66,4 @@ for name in NAMES:
     out.append("};")
     out.append("")
 out.append("}  // namespace waddle")
-Path(__file__).resolve().parents[2].joinpath("src/waddle/WaddleWeatherIcons.h").write_text("\n".join(out) + "\n")
+Path(__file__).resolve().parents[2].joinpath("src/products/x4pro/WaddleWeatherIcons.h").write_text("\n".join(out) + "\n")

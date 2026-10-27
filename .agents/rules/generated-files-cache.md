@@ -6,7 +6,7 @@ Edit sources, not generated output. Stage only sources.
 
 | Source | Generator | Ignored output |
 | --- | --- | --- |
-| `data/html/` | `scripts/build_html.py`, run by the PlatformIO pre-build | `src/network/html/*.generated.h` |
+| `data/html/` | `scripts/build_html.py`, run by the PlatformIO pre-build | `src/core/network/html/*.generated.h` |
 | `lib/I18n/translations/*.yaml` | `scripts/gen_i18n.py` | `lib/I18n/I18nKeys.h`, `I18nStrings.h`, `I18nStrings.cpp` |
 
 Other ignored artifacts include `.pio/`, `build/`, and `compile_commands.json`.
@@ -39,7 +39,7 @@ remains included. Consult [i18n.md](../../docs/i18n.md) for metadata/build seman
 
 Built-in source fonts live in ignored `lib/EpdFont/fontsrc/`; conversion is
 documented in `lib/EpdFont/README`. Update the built-in definition, registration
-in `src/main.cpp`, and `src/fontIds.h` when adding one.
+in `src/products/x4pro/main.cpp`, and `src/core/fontIds.h` when adding one.
 
 SD fonts use [sd-card-fonts.md](../../docs/sd-card-fonts.md). Catalog
 `scriptGroups` and family `scripts` belong in `lib/EpdFont/scripts/sd-fonts.yaml`;

@@ -73,9 +73,9 @@ def main():
     img = load_image(input_path, width, height)
     c_array = image_to_c_array(img, array_name)
 
-    # Always save to src/components/icons/[output_name].h relative to project root
+    # Always save to src/core/components/icons/[output_name].h relative to project root
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    output_dir = os.path.join(project_root, 'src', 'components', 'icons')
+    output_dir = os.path.join(project_root, 'src', 'core', 'components', 'icons')
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, f'{output_name}.h')
     with open(output_path, 'w') as f:

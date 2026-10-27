@@ -112,7 +112,7 @@ def fetch_latest():
 
 
 def check_image(data):
-    """Same checks the reader runs before flashing (src/network/FirmwareFlasher.h)."""
+    """Same checks the reader runs before flashing (src/core/network/FirmwareFlasher.h)."""
     step("Checking firmware image")
     if len(data) < 64 or data[0] != ESP_MAGIC:
         die("Not an ESP32 firmware image (bad magic byte)")

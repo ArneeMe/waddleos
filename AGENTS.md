@@ -23,9 +23,10 @@ together (firmware, arnee.me, the `waddle` command) and
   Never open anything in `crosspoint-reader/crosspoint-reader`.
 - Commit and push feature branches without asking. Never force-push `waddle`.
 - Write short, factual PR descriptions with a "test on the reader" list.
-- This cloud session cannot download the ESP32 toolchain. The PR build in
-  GitHub Actions (`.github/workflows/waddle-build.yml`) is the compile check;
-  compiler errors show up as annotations on the `build` check run.
+- Compile before pushing: in a cloud session run `bash scripts/cloud-setup.sh`
+  once (a few minutes), then `pio run -e x4pro-waddle`. The PR build in GitHub
+  Actions (`.github/workflows/waddle-build.yml`) checks again; its compiler
+  errors show up as annotations on the `build` check run.
 - Only Arne can flash and look at the reader. Every firmware change needs a
   short "how to check it on the device" note.
 - Show a preview (image mockup) before changing anything visual.
@@ -33,7 +34,9 @@ together (firmware, arnee.me, the `waddle` command) and
 
 ## Code
 
-- Our own code lives in `src/waddle/`. Upstream code may be edited directly.
+- `src/` is split into `core/` (shared), `apps/` (one folder per app) and
+  `products/` (one folder per device; `x4pro/` is the reader). WaddleOS base code
+  is in `src/core/waddle/`. Upstream code may be edited directly.
 - `WADDLE` and `WADDLE_PRIVATE` are always on in `x4pro-waddle`, the only
   build. Old `#if WADDLE` blocks may be simplified to plain code.
 - User-facing text goes through `tr(STR_*)` with Norwegian in

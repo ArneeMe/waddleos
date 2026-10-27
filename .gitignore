@@ -35,4 +35,4 @@ sdkconfig.x4pro
 flake.*
 
 # Written by waddle-build.yml
-src/waddle/WaddleBuild.h
+src/core/waddle/WaddleBuild.h
