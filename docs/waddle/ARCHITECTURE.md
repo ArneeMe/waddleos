@@ -40,8 +40,9 @@ Arne opened a screen. Nothing runs in the background or during sleep.
 - **One build target:** `x4pro-waddle` in `platformio.ini`. `WADDLE=1`,
   `WADDLE_PRIVATE=1` and `WADDLE_OWNER_NAME="Arne"` are always set; there are
   no `#if WADDLE` blocks left.
-- **No local toolchain in cloud sessions.** GitHub Actions
-  (`.github/workflows/waddle-build.yml`) is the compiler. On a PR it builds;
+- **Compiling:** in a cloud session run `bash scripts/cloud-setup.sh` once,
+  then `pio run -e x4pro-waddle`. GitHub Actions
+  (`.github/workflows/waddle-build.yml`) also builds every PR;
   compiler errors appear as annotations on the `build` check run (read them
   with `gh api repos/ArneeMe/waddleos/check-runs/<id>/annotations`).
 - **Release:** a push to `waddle` publishes `waddleos-x4pro.bin` and
