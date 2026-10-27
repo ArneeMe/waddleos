@@ -23,7 +23,7 @@
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
-#include "SdFirmwareUpdateActivity.h"
+#include "waddle/UpdateActivity.h"
 #include "SettingsList.h"
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
@@ -302,7 +302,7 @@ void SettingsActivity::toggleSelectedSetting() {
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::SdFirmwareUpdate:
-        startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(std::make_unique<UpdateActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::TextSettings:
         startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),

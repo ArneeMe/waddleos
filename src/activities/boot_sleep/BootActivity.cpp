@@ -4,6 +4,7 @@
 #include <I18n.h>
 
 #include "fontIds.h"
+#include "waddle/WaddleVersion.h"
 #include "waddle/WaddleDraw.h"
 
 void BootActivity::onEnter() {
@@ -15,6 +16,6 @@ void BootActivity::onEnter() {
   renderer.clearScreen();
   (void)pageWidth;
   waddle::drawSplash(renderer, tr(STR_BOOTING));
-  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 30, CROSSPOINT_VERSION);
+  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 30, waddle::version());
   renderer.displayBuffer();
 }

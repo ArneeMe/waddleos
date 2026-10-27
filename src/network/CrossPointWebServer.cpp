@@ -32,6 +32,7 @@
 #include <string_view>
 
 #include "ClippingStore.h"
+#include "waddle/WaddleVersion.h"
 #include "CrossPointSettings.h"
 #include "ProtectedPaths.h"
 #include "SdCardFontSystem.h"
@@ -502,7 +503,7 @@ void CrossPointWebServer::handleStatus() const {
   const String ipAddr = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
 
   JsonDocument doc;
-  doc["version"] = CROSSPOINT_VERSION;
+  doc["version"] = waddle::version();
   doc["firmwareFamily"] = firmwareidentity::FAMILY;
   doc["pluginApi"] = firmwareidentity::PLUGIN_API_VERSION;
   doc["pluginCapabilities"] = firmwareidentity::PLUGIN_CAPABILITIES;
