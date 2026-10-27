@@ -72,6 +72,19 @@ Phases:
    notes. What to check on the devices: [TESTING.md](TESTING.md).
 3. After the first tests: fix what the devices show, measure battery days.
 
+Idea: **the phone as a second device for the same person.** An Android app
+that is "Arne" on the mesh too, through the Pi: the phone talks to
+`POST /api/packets` over the internet exactly as a unit does over Wi-Fi, and the
+gateway sends what it writes out over LoRa. The Pi still reads nothing; the app
+does the encryption. What it needs:
+- The phone gets a copy of its unit's keys at setup (`waddle mesh setup`, over
+  the home Wi-Fi), so DMs and group messages for Arne open on both.
+- Its own counter range (top bit set), so the unit and the phone never reuse a
+  message id; the "previous message" chain is kept per device.
+- Its own server token, so a lost phone can be shut out on the Pi alone.
+- The app: write and read the conversations, sync on open and now and then.
+  The server needs almost nothing new.
+
 Later, maybe: a small piezo buzzer on the T5's free QWIIC port for a sound on
 SOS or a new message (the board has no speaker or vibration motor).
 
