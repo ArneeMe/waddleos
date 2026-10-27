@@ -26,4 +26,14 @@ Not arrived yet. Items are added as the code for them is written.
 
 ## Gateway (Heltec V4) and server (Pi)
 
-Items are added as the code for them is written.
+Flash the gateway: plug it into the computer, `pio run -e heltec-gateway -t upload`
+(hold BOOT while plugging in if it is not found). Install the server:
+`sudo bash server/install.sh` on the Pi (see server/README.md).
+
+- [ ] Gateway: `pio device monitor -e heltec-gateway` prints
+      `HELLO waddle-gateway 1 gc1109` (or `kct8103l`). Note which one.
+- [ ] Gateway on the Pi: `journalctl -u waddlemesh -f` says "gateway connected"
+      and the status page `https://<pi>:8443/` says "tilkoblet".
+- [ ] Status page opens from a phone on the home Wi-Fi, and not from mobile data.
+- [ ] After a reboot of the Pi the server starts by itself.
+- [ ] Next morning: a backup file in `/var/backups/waddlemesh/`.
