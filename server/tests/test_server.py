@@ -177,6 +177,15 @@ class ServerTests(unittest.TestCase):
         units = {u["member"]: u for u in self.store.units()}
         self.assertEqual((units[2]["battery"], units[2]["build"], units[2]["via"]), (50, "2a", "wifi"))
 
+    def test_small_group_only_to_its_members(self):
+        small, _ = packets("small group message")  # members 1, 2 and 4
+        for p in small:
+            self.server.handle(p, "lora")
+        empty = {m: 0 for m in P.MEMBERS}
+        for member, gets in ((2, True), (4, True), (3, False)):
+            answer = self.server.handle(sync_req(member, empty), "wifi")
+            self.assertEqual(small[0] in answer, gets, "member %d" % member)
+
     def test_lora_sync_is_limited(self):
         for counter in range(1, 30):
             h = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=counter)
