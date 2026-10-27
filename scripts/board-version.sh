@@ -3,7 +3,7 @@
 #
 # Each device has its own version, made only from the commits that change its
 # firmware, so a change to the mesh unit does not offer the reader an update.
-# The number counts those commits since WaddleOS 2 began; the hash is the newest
+# The number counts those commits (not merges) since WaddleOS 2 began; the hash is the newest
 # of them. Needs the full git history (actions/checkout with fetch-depth: 0).
 #
 #   bash scripts/board-version.sh x4pro|t5s3|gateway
@@ -23,6 +23,6 @@ case "$board" in
   *) echo "unknown board: $board" >&2; exit 1 ;;
 esac
 
-count=$(git rev-list --count "$since..HEAD" -- "${paths[@]}")
-hash=$(git log -1 --format=%h --abbrev=7 -- "${paths[@]}")
+count=$(git rev-list --count --no-merges "$since..HEAD" -- "${paths[@]}")
+hash=$(git log -1 --no-merges --format=%h --abbrev=7 -- "${paths[@]}")
 echo "$count $hash"
