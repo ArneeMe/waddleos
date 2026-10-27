@@ -57,7 +57,7 @@ void SosActivity::render(RenderLock&&) {
   shownChanges = node().changes();
   renderer.clearScreen();
   renderer.fillRect(0, 0, width, height, true);
-  waddle::drawPixelText(renderer, (width - waddle::pixelTextWidth("SOS", 20)) / 2, 160, "SOS", 20);
+  waddle::drawPixelText(renderer, (width - waddle::pixelTextWidth("SOS", 20)) / 2, 160, "SOS", 20, false);
   // Who has it: "Mottatt av Kari og serveren", then "Sett av Kari".
   auto names = [](const uint8_t bits) {
     std::string out;
@@ -119,7 +119,7 @@ void SosAlertActivity::render(RenderLock&&) {
   const char* name = node().group().name(from);
   renderer.clearScreen();
   renderer.fillRect(0, 0, width, height, true);
-  waddle::drawPixelText(renderer, (width - waddle::pixelTextWidth("SOS", 16)) / 2, 120, "SOS", 16);
+  waddle::drawPixelText(renderer, (width - waddle::pixelTextWidth("SOS", 16)) / 2, 120, "SOS", 16, false);
   char title[48];
   snprintf(title, sizeof(title), st.sos ? "fra %s" : "%s har avbrutt SOS", name);
   renderer.drawCenteredText(UI_12_FONT_ID, 270, title, false, EpdFontFamily::BOLD);

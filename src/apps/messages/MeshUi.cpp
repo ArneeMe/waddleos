@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/components/UITheme.h"
+#include "core/fontIds.h"
 #include "services/mesh/MeshGps.h"
 #include "services/mesh/MeshNode.h"
 #include "services/mesh/MeshSettings.h"
@@ -191,6 +192,28 @@ std::string modeText() {
 std::string lastCheckText() {
   const uint32_t at = mesh::Node::get().lastCheckUnix();
   return at ? "sist sjekket " + timeText(at) : std::string();
+}
+
+void drawUnreadLine(const GfxRenderer& renderer, const uint32_t unread) {
+  auto& node = mesh::Node::get();
+  const int width = renderer.getScreenWidth();
+  const int y = renderer.getScreenHeight() - 96;
+  uint8_t from = 0;
+  uint32_t newest = 0;
+  for (uint8_t c = 0; c < mesh::CONVERSATIONS; c++) {
+    const auto& sum = node.store().summary(c);
+    if (sum.unread && sum.lastTime >= newest) {
+      newest = sum.lastTime;
+      from = sum.lastSender;
+    }
+  }
+  char line[64];
+  snprintf(line, sizeof(line), "%lu %s · sist fra %s", static_cast<unsigned long>(unread),
+           unread == 1 ? "ny melding" : "nye meldinger", node.group().name(from));
+  renderer.fillRect(0, y, width, 96, false);
+  renderer.fillRoundedRect(20, y + 16, width - 40, 64, 14, Color::Black);
+  const int w = renderer.getTextWidth(UI_12_FONT_ID, line, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, (width - w) / 2, y + 34, line, false, EpdFontFamily::BOLD);
 }
 
 }  // namespace meshui

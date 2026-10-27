@@ -11,6 +11,7 @@
 #include <algorithm>
 
 #include "T5HomeActivity.h"
+#include "apps/messages/MeshUi.h"
 #include "apps/news/NewsActivity.h"
 #include "apps/news/NewsPaper.h"
 #include "apps/sos/SosAlertActivity.h"
@@ -67,29 +68,11 @@ bool preventAutoSleep() { return mesh::Node::get().busy(); }
 
 namespace {
 
-// A line at the bottom of the sleep screen: "2 nye meldinger · sist fra Kari 14:32".
+// A line at the bottom of the sleep screen (meshui::drawUnreadLine).
 void drawUnreadOnSleepScreen(const uint32_t unread) {
-  auto& node = mesh::Node::get();
   GfxRenderer& renderer = activityManager.getRenderer();
-  const int width = renderer.getScreenWidth();
-  const int y = renderer.getScreenHeight() - 96;
-  uint8_t from = 0;
-  uint32_t newest = 0;
-  for (uint8_t c = 0; c < mesh::CONVERSATIONS; c++) {
-    const auto& sum = node.store().summary(c);
-    if (sum.unread && sum.lastTime >= newest) {
-      newest = sum.lastTime;
-      from = sum.lastSender;
-    }
-  }
-  char line[64];
-  snprintf(line, sizeof(line), "%lu %s · sist fra %s", static_cast<unsigned long>(unread),
-           unread == 1 ? "ny melding" : "nye meldinger", node.group().name(from));
   RenderLock lock;
-  renderer.fillRect(0, y, width, 96, false);
-  renderer.fillRoundedRect(20, y + 16, width - 40, 64, 14, Color::Black);
-  const int w = renderer.getTextWidth(UI_12_FONT_ID, line, EpdFontFamily::BOLD);
-  renderer.drawText(UI_12_FONT_ID, (width - w) / 2, y + 34, line, false, EpdFontFamily::BOLD);
+  meshui::drawUnreadLine(renderer, unread);
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
 

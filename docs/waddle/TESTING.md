@@ -65,7 +65,8 @@ Setup and messages (two units, or one unit and the gateway):
 - [ ] Away from home on a phone hotspot: Synk reaches the Pi through the router.
 
 - [ ] Asleep (BOOT button), then a message from the other unit: the sleep screen
-      gets a line "1 nye meldinger · sist fra …" without waking up.
+      gets a line "1 ny melding · sist fra …" without waking up (its drawing moved
+      to MeshUi so the screen simulator can show it; it should look as before).
 - [ ] Keyboard: æ, ø, å and the "Lang" key, as on the reader.
 
 Modus and checks (PR #33):
