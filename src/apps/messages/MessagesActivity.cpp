@@ -278,7 +278,7 @@ void ChatActivity::render(RenderLock&&) {
 
   // Input bar.
   inputY = height - 82;
-  renderer.drawLine(0, inputY, width, inputY, 2, true);
+  renderer.drawLine(0, inputY, width - 1, inputY, 2, true);
   renderer.drawRoundedRect(SIDE, inputY + 16, width - 2 * SIDE - 116, 54, 2, 14, true);
   renderer.drawText(UI_12_FONT_ID, SIDE + 16, inputY + 30, "Skriv melding …", true);
   renderer.fillRoundedRect(width - SIDE - 104, inputY + 16, 104, 54, 14, Color::Black);
