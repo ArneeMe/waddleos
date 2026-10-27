@@ -43,7 +43,7 @@ What is done and what is next. How the system fits together:
 ## Mesh unit
 
 WaddleOS grows a second device: a LilyGO T5 E-Paper S3 Pro (868 MHz LoRa,
-GPS) as an off-grid messenger for three people. Full spec: "Off-Grid Mesh
+GPS) as an off-grid messenger for up to four people. Full spec: "Off-Grid Mesh
 Messenger – Software Spec" (Claude Docs,
 https://claude.ai/artifact/VugwyP8RmFDMwqKaB2qPCX).
 
@@ -56,7 +56,12 @@ Decided:
   the SX1262.
 - Privacy as on the reader: nothing leaves by itself. The only servers are
   the Pi and arnee.me. Arne's router can port forward to the Pi.
-- Updates come from arnee.me when Arne taps the button. Signed builds later.
+- Updates come from arnee.me when Arne taps the button. No signing: only Arne
+  can publish there. A new build that crashes twice in its first minute goes
+  back to the one before by itself.
+- Mostly a backup for when other ways to talk are gone: "Hjemme" it checks for
+  messages once a day; "På tur" every hour, with GPS and position sharing.
+- Up to four people (Arne and three), plus small groups of three.
 
 Phases:
 
@@ -65,8 +70,10 @@ Phases:
 2. Written, waiting for the hardware: the T5 build, radio, messaging (group,
    DMs, keys, ACK, sync), gateway and Pi server, map, SOS, position sharing,
    notes. What to check on the devices: [TESTING.md](TESTING.md).
-3. After the first tests: fix what the devices show, measure battery days,
-   then signed updates (Ed25519, key kept off GitHub).
+3. After the first tests: fix what the devices show, measure battery days.
+
+Later, maybe: a small piezo buzzer on the T5's free QWIIC port for a sound on
+SOS or a new message (the board has no speaker or vibration motor).
 
 Open: which GPS the unit has (MIA-M10Q or L76K), and whether the home
 connection has a public IP (no CGNAT).

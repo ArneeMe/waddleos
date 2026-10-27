@@ -14,6 +14,7 @@
 
 #include "FirmwareBoardTag.h"
 #include "OtaBootSwitch.h"
+#include "UpdateTrial.h"
 
 namespace firmware_flash {
 
@@ -347,6 +348,8 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
   }
   file.close();
 
+  // On trial until it has run for a minute; repeated crashes come back here.
+  update_trial::start(esp_ota_get_running_partition());
   if (!ota_boot::switchTo(dest)) {
     LOG_ERR("FLASH", "otadata switch failed");
     return Result::OTADATA_FAIL;

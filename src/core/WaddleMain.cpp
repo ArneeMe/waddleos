@@ -43,6 +43,7 @@
 #include "core/activities/settings/SdFirmwareUpdateActivity.h"
 #include "core/components/UITheme.h"
 #include "core/fontIds.h"
+#include "core/network/UpdateTrial.h"
 #include "core/platform/UsbSerialJtagHandoff.h"
 #include "core/util/ButtonNavigator.h"
 #include "core/util/ScreenshotUtil.h"
@@ -491,6 +492,9 @@ void setup() {
 #endif
 #endif
 
+  // A new build that keeps crashing goes back to the one before (UpdateTrial.h).
+  update_trial::onBoot();
+
   HalSystem::begin();
   // checkPanic() clears the watchdog capture marker after a successful SD
   // dump, so retain the boot classification for the later activity route.
@@ -741,6 +745,7 @@ void loop() {
   const unsigned long loopStartTime = millis();
   static unsigned long lastMemPrint = 0;
 
+  update_trial::tick();
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   mappedInputManager.update();
 

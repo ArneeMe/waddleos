@@ -1,10 +1,14 @@
 #include "MeshWebApi.h"
 
 #include <ArduinoJson.h>
+#include <HalPowerManager.h>
 #include <Logging.h>
 
 #include "MeshConfig.h"
+#include "MeshGps.h"
 #include "MeshNode.h"
+#include "MeshRadio.h"
+#include "core/waddle/WaddleVersion.h"
 
 namespace mesh::web {
 
@@ -32,6 +36,11 @@ void registerRoutes(WebServer& server) {
       doc["me"] = group.me;
       doc["name"] = group.name(group.me);
     }
+    // For `waddle mesh new-unit` and `waddle mesh check`: is the hardware alive?
+    doc["radio"] = radio::isUp();
+    doc["gps"] = gps::model();
+    doc["battery"] = powerManager.getBatteryPercentage();
+    doc["version"] = waddle::version();
     String out;
     serializeJson(doc, out);
     server.send(200, "application/json", out);

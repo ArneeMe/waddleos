@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """waddle mesh: set up the mesh units (LilyGO T5) as one group.
 
+  waddle mesh new-unit [gateway] [--pr N] [--port P] [file.bin]
+                         put WaddleOS on a new unit (or the gateway) over USB,
+                         then check that it works
   waddle mesh setup      ask each unit for its keys, give every unit the group,
                          and tell the Pi server about the units
+  waddle mesh check      ask every unit how it is (radio, GPS, battery, version)
 
 Every unit must show File Transfer -> Join a Network (on the same Wi-Fi as this
 computer) while setup runs. Each unit made its own keys on first start; its
@@ -14,12 +18,18 @@ import itertools
 import json
 import os
 import secrets
+import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
 CONFIG = os.path.expanduser("~/.config/waddle/mesh-group.json")
+REPO = "ArneeMe/waddleos"
+CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "waddleos")
+# The whole flash (bootloader, partitions, app) for a device that has never run WaddleOS.
+FULL_IMAGES = {"t5": "waddleos-t5-full.bin", "gateway": "waddle-gateway-full.bin"}
 
 TTY = sys.stdout.isatty()
 B, G, R, Y, C, DIM, N = (("\033[1m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m")
@@ -126,9 +136,156 @@ def setup():
     return 0
 
 
+# --- A new unit ---------------------------------------------------------------
+
+
+def esptool():
+    """The esptool command, as a list, or an error that says how to get it."""
+    for name in ("esptool", "esptool.py"):
+        if shutil.which(name):
+            return [name]
+    if subprocess.run([sys.executable, "-m", "esptool", "version"], capture_output=True).returncode == 0:
+        return [sys.executable, "-m", "esptool"]
+    raise RuntimeError("esptool is missing. Arch: sudo pacman -S esptool · macOS: brew install esptool · "
+                       "anywhere: pipx install esptool")
+
+
+def fetch_image(name, tag):
+    say(f"{C}▸{N} Getting {name} ({tag}) from github.com/{REPO}")
+    try:
+        with urllib.request.urlopen(f"https://api.github.com/repos/{REPO}/releases/tags/{tag}", timeout=15) as r:
+            release = json.load(r)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"no {tag} release on GitHub ({e.code})") from e
+    asset = next((a for a in release.get("assets", []) if a["name"] == name), None)
+    if not asset:
+        raise RuntimeError(f"no {name} in the {tag} release yet (has the build finished?)")
+    os.makedirs(CACHE, exist_ok=True)
+    path = os.path.join(CACHE, f"{tag}-{name}")
+    with urllib.request.urlopen(asset["browser_download_url"], timeout=120) as r, open(path, "wb") as f:
+        shutil.copyfileobj(r, f)
+    say(f"  {G}✓{N} {asset['size'] // 1024} KB")
+    return path
+
+
+def read_serial(port, seconds):
+    """Lines the device prints on USB for a few seconds (Linux and macOS, no pyserial)."""
+    import termios  # not on Windows
+    fd = os.open(port, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        attrs = termios.tcgetattr(fd)
+        attrs[0] = attrs[1] = attrs[3] = 0  # raw: no input, output or local processing
+        attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+        attrs[4] = attrs[5] = termios.B115200
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        data, end = b"", time.time() + seconds
+        while time.time() < end:
+            try:
+                data += os.read(fd, 1024)
+            except BlockingIOError:
+                time.sleep(0.1)
+        return data.decode(errors="replace").splitlines()
+    finally:
+        os.close(fd)
+
+
+def find_port():
+    for pattern in ("/dev/ttyACM", "/dev/ttyUSB", "/dev/cu.usbmodem"):
+        folder, prefix = os.path.split(pattern)
+        try:
+            ports = sorted(f for f in os.listdir(folder) if f.startswith(prefix))
+        except OSError:
+            continue
+        if ports:
+            return os.path.join(folder, ports[0])
+    return None
+
+
+def unit_health(ip):
+    """What a unit says about itself, as (ok, text)."""
+    try:
+        status = unit_get(ip, "/api/status")
+        ident = unit_get(ip, "/api/mesh/identity")
+    except (OSError, ValueError) as e:
+        return False, f"no answer ({e})"
+    problems = []
+    if status.get("board") != "t5s3":
+        problems.append(f"board is {status.get('board')!r}, not t5s3")
+    if not ident.get("radio"):
+        problems.append("radio did not start")
+    if status.get("rolledBack"):
+        problems.append("its last update crashed and was undone")
+    parts = [ident.get("version") or status.get("version", "?"),
+             "radio OK" if ident.get("radio") else "radio FAILED",
+             f"GPS {ident.get('gps', '?')}", f"battery {ident.get('battery', '?')} %",
+             f"member {ident['me']} ({ident.get('name')})" if ident.get("configured") else "not set up"]
+    return not problems, " · ".join(parts) + ("".join(f"\n    {R}✗{N} {p}" for p in problems))
+
+
+def new_unit(args):
+    device = "gateway" if "gateway" in args else "t5"
+    port = args[args.index("--port") + 1] if "--port" in args else None
+    pr = args[args.index("--pr") + 1] if "--pr" in args else None
+    files = [a for a in args if a.endswith(".bin")]
+    say(f"\n{B}🐧 waddle mesh new-unit{N} ({'gateway, Heltec V4' if device == 'gateway' else 'mesh unit, LilyGO T5'})\n")
+    tool = esptool()
+    image = files[0] if files else fetch_image(FULL_IMAGES[device], f"pr-{pr}" if pr else "waddle-latest")
+    port = port or find_port()
+    if not port:
+        raise RuntimeError("no device on USB. Plug it in (hold BOOT while plugging in if it is not found)")
+    say(f"\n{Y}This writes the whole flash of the device on {port}:{N} a unit gets new keys and must")
+    say("be set up again with `waddle mesh setup`. The SD card is not touched.")
+    if ask("Go on? (y/n)", "y").lower() != "y":
+        return 1
+    say(f"{C}▸{N} Flashing (about a minute)")
+    subprocess.run([*tool, "--chip", "esp32s3", "--port", port, "--baud", "921600", "write_flash", "0x0", image],
+                   check=True)
+    say(f"  {G}✓{N} Flashed")
+
+    if device == "gateway":
+        say(f"{C}▸{N} Listening for the gateway")
+        time.sleep(2)
+        hello = [l for l in read_serial(port, 8) if l.startswith("HELLO waddle-gateway")]
+        if not hello:
+            raise RuntimeError("the gateway did not say HELLO (press its RST button and run `waddle mesh check`)")
+        say(f"  {G}✓{N} {hello[0]}")
+        say(f"\n{G}{B}🐧 Done!{N} Plug the gateway into the Pi.\n")
+        return 0
+
+    say(f"\nOn the unit: the penguin, then Hjem. Open {B}Meldinger{N} and tap the text to start")
+    say("File Transfer, join your Wi-Fi, and type the address it shows here.")
+    ip = ask("Address")
+    ok, text = unit_health(ip)
+    say(f"  {G if ok else R}{'✓' if ok else '✗'}{N} {text}")
+    if not ok:
+        return 1
+    say(f"\nNext: {B}waddle mesh setup{N} with all units on File Transfer.\n")
+    return 0
+
+
+def check(args):
+    """Asks every unit from the last setup how it is."""
+    if not os.path.exists(CONFIG):
+        raise RuntimeError("no setup yet: run `waddle mesh setup` first")
+    with open(CONFIG) as f:
+        cfg = json.load(f)
+    say(f"\n{B}🐧 waddle mesh check{N}  {DIM}(each unit on File Transfer → Join a Network){N}\n")
+    bad = 0
+    for m in cfg.get("members", []):
+        ok, text = unit_health(m["ip"])
+        bad += not ok
+        say(f"  {G if ok else R}{'✓' if ok else '✗'}{N} {B}{m['name']}{N} {DIM}{m['ip']}{N}: {text}")
+    say()
+    return 1 if bad else 0
+
+
 def main(argv):
     if argv[:1] == ["setup"]:
         return setup()
+    if argv[:1] == ["new-unit"]:
+        return new_unit(argv[1:])
+    if argv[:1] == ["check"]:
+        return check(argv[1:])
     say(__doc__)
     return 0 if not argv or argv[0] in ("-h", "--help", "help") else 1
 

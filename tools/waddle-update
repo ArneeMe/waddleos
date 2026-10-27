@@ -149,6 +149,8 @@ def reader_status(ip):
     except (urllib.error.URLError, OSError, ValueError):
         die(f"No answer from {ip}", "Open File Transfer → Join a Network on the reader and keep the screen on.")
     ok(f"{s.get('device', '?')} running {B}{s.get('version', '?')}{N}")
+    if s.get("rolledBack"):
+        warn("Its last update crashed twice and was undone, so it runs the build before that.")
     print(f"    {DIM}Wi-Fi {s.get('rssi', '?')} dBm, free memory {human(s.get('freeHeap', 0))}{N}")
     return s
 
