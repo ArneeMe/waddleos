@@ -40,4 +40,8 @@ std::string modeText();
 // "sist sjekket 08:12", or "" before the first check.
 std::string lastCheckText();
 
+// The line at the bottom of the sleep screen: "2 nye meldinger · sist fra Kari".
+// Draws only; the caller refreshes the display.
+void drawUnreadLine(const GfxRenderer& renderer, uint32_t unread);
+
 }  // namespace meshui
