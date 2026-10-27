@@ -107,7 +107,6 @@ bool sleep() {
   const gpio_num_t radioIrq = gpio_num_t(mesh::radio::irqPin());
   const gpio_num_t powerButton = gpio_num_t(T5S3_BOOT_BTN);
   const gpio_num_t expanderIrq = gpio_num_t(T5S3_PCA9535_INT);
-  gpio_wakeup_enable(radioIrq, GPIO_INTR_HIGH_LEVEL);
   gpio_wakeup_enable(powerButton, GPIO_INTR_LOW_LEVEL);
   gpio_wakeup_enable(expanderIrq, GPIO_INTR_LOW_LEVEL);
   esp_sleep_enable_gpio_wakeup();
@@ -116,7 +115,11 @@ bool sleep() {
 
   while (true) {
     uint32_t ms = node.msUntilWork();
-    if (!node.listensAlways()) {
+    if (node.listensAlways()) {
+      gpio_wakeup_enable(radioIrq, GPIO_INTR_HIGH_LEVEL);
+    } else {
+      // A sleeping radio may leave its interrupt pin high: do not wake on it.
+      gpio_wakeup_disable(radioIrq);
       mesh::radio::pause();
       ms = std::min(ms, node.msUntilCheck());
     }
