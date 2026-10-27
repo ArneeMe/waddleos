@@ -1,0 +1,9 @@
+[Unit]
+Description=Waddle mesh database backup
+
+[Service]
+Type=oneshot
+User=waddlemesh
+WorkingDirectory=/opt/waddlemesh
+# One copy per weekday, so a week of history is kept.
+ExecStart=/bin/sh -c '/usr/bin/python3 -m waddlemesh backup /var/backups/waddlemesh/mesh-$(date +%%a).db --config /etc/waddlemesh.json'

@@ -1,0 +1,6 @@
+{
+  "name": "monocypher",
+  "version": "4.0.2",
+  "description": "Monocypher 4.0.2 (https://monocypher.org), copied unchanged from src/ and src/optional/. CC0 or 2-clause BSD.",
+  "build": { "flags": "-O2" }
+}
