@@ -6,6 +6,8 @@
 #include <MeshPacket.h>
 #include <MeshRadioRules.h>
 
+#include "../../src/services/mesh/MeshTime.h"
+
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -183,6 +185,14 @@ static void testPairKey() {
   CHECK(memcmp(ab, ba, KEY_SIZE) == 0);
 }
 
+static void testCivilTime() {
+  CHECK(unixFromCivil(1970, 1, 1, 0, 0, 0) == 0);
+  CHECK(unixFromCivil(2026, 10, 27, 18, 2, 11) == 1793124131);
+  CHECK(unixFromCivil(2024, 2, 29, 23, 59, 59) == 1709251199);  // leap day
+  CHECK(unixFromCivil(2020, 3, 1, 0, 0, 0) == 1583020800);
+  CHECK(unixFromCivil(2025, 1, 1, 12, 0, 0) == 1735732800);
+}
+
 static void testRadioRules() {
   LoraParams p;
   const uint32_t small = airtimeMs(p, 30);
@@ -317,6 +327,7 @@ int main(int argc, char** argv) {
   testSealOpen();
   testPairKey();
   testRadioRules();
+  testCivilTime();
   if (argc > 1) writeVectors(argv[1]);
   std::printf(failures ? "%d FAILED\n" : "all mesh tests passed\n", failures);
   return failures ? 1 : 0;

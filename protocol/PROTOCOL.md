@@ -87,6 +87,11 @@ stored MSG from member *n* with a counter above the given one.
 A unit in SOS sends an SOS packet every 60 seconds until the user cancels it;
 cancelling sends one more SOS with the "cancelled" bit set.
 
+Every SOS is answered: a unit that receives one sends an ACK "delivered" for that
+SOS packet's counter, and "read" when its user taps "Sett" on the alert; the
+server answers "stored". The sender's SOS screen shows who has it and who has
+seen it.
+
 ## Encryption (MSG, POS, SOS)
 
 ChaCha20-Poly1305 (RFC 8439), 256-bit key, 16-byte tag after the ciphertext.

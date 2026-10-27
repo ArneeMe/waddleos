@@ -4,6 +4,8 @@
 #include <HalGPIO.h>
 #include <Logging.h>
 #include <driver/gpio.h>
+#include <GfxRenderer.h>
+#include <HalDisplay.h>
 #include <esp_sleep.h>
 
 #include <algorithm>
@@ -13,6 +15,8 @@
 #include "apps/news/NewsPaper.h"
 #include "apps/sos/SosAlertActivity.h"
 #include "core/activities/ActivityManager.h"
+#include "core/activities/RenderLock.h"
+#include "core/fontIds.h"
 #include "services/mesh/MeshNode.h"
 #include "services/mesh/MeshRadio.h"
 #include "services/mesh/MeshWebApi.h"
@@ -61,6 +65,36 @@ void loop() {
 
 bool preventAutoSleep() { return mesh::Node::get().busy(); }
 
+namespace {
+
+// A line at the bottom of the sleep screen: "2 nye meldinger · sist fra Kari 14:32".
+void drawUnreadOnSleepScreen(const uint32_t unread) {
+  auto& node = mesh::Node::get();
+  GfxRenderer& renderer = activityManager.getRenderer();
+  const int width = renderer.getScreenWidth();
+  const int y = renderer.getScreenHeight() - 96;
+  uint8_t from = 0;
+  uint32_t newest = 0;
+  for (uint8_t c = 0; c < mesh::CONVERSATIONS; c++) {
+    const auto& sum = node.store().summary(c);
+    if (sum.unread && sum.lastTime >= newest) {
+      newest = sum.lastTime;
+      from = sum.lastSender;
+    }
+  }
+  char line[64];
+  snprintf(line, sizeof(line), "%lu %s · sist fra %s", static_cast<unsigned long>(unread),
+           unread == 1 ? "ny melding" : "nye meldinger", node.group().name(from));
+  RenderLock lock;
+  renderer.fillRect(0, y, width, 96, false);
+  renderer.fillRoundedRect(20, y + 16, width - 40, 64, 14, Color::Black);
+  const int w = renderer.getTextWidth(UI_12_FONT_ID, line, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, (width - w) / 2, y + 34, line, false, EpdFontFamily::BOLD);
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+}
+
+}  // namespace
+
 // Light sleep with the radio listening: messages still arrive, are stored,
 // acknowledged and relayed, and positions go out on time. The power button or
 // the user button wakes the screen; so does an SOS from a member.
@@ -76,6 +110,7 @@ bool sleep() {
   gpio_wakeup_enable(expanderIrq, GPIO_INTR_LOW_LEVEL);
   esp_sleep_enable_gpio_wakeup();
   LOG_INF("SLP", "Light sleep, radio listening");
+  uint32_t shownUnread = node.store().totalUnread();
 
   while (true) {
     const uint32_t ms = std::max<uint32_t>(node.msUntilWork(), 1000);
@@ -89,6 +124,10 @@ bool sleep() {
       delay(5);
     } while (node.busy());
     if (node.hasNewSos()) break;
+    // New messages show on the sleep screen without waking the unit.
+    const uint32_t unread = node.store().totalUnread();
+    if (unread > shownUnread) drawUnreadOnSleepScreen(unread);
+    shownUnread = unread;
   }
 
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);

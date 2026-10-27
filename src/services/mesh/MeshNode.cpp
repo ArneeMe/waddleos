@@ -9,12 +9,15 @@
 #include <esp_random.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
 #include "MeshGps.h"
 #include "MeshRadio.h"
 #include "MeshSettings.h"
+#include "MeshTime.h"
 #include "core/network/HttpDownloader.h"
 #include "core/waddle/WaddleVersion.h"
 #include "core/waddle/WaddleWifi.h"
@@ -50,6 +53,18 @@ uint8_t buildByte() {
   return hash && strlen(hash) >= 2 && fromHex(std::string(hash, 2).c_str(), &b, 1) ? b : 0;
 }
 
+// "Tue, 27 Oct 2026 18:02:11 GMT" -> unix seconds, or 0.
+uint32_t httpDate(const std::string& text) {
+  static const char* MONTHS = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  char month[4] = {};
+  int day = 0, year = 0, hh = 0, mm = 0, ss = 0;
+  if (sscanf(text.c_str(), "%*3s, %d %3s %d %d:%d:%d", &day, month, &year, &hh, &mm, &ss) != 6) return 0;
+  const char* found = strstr(MONTHS, month);
+  if (!found || year < 2020) return 0;
+  const int mon = int(found - MONTHS) / 3 + 1;
+  return unixFromCivil(year, mon, day, hh, mm, ss);
+}
+
 // Two packets are the same when type, sender, counter and piece match (hops may differ).
 bool samePacket(const uint8_t* a, const uint8_t* b) {
   return a[1] == b[1] && a[4] == b[4] && memcmp(a + 6, b + 6, 5) == 0;
@@ -68,6 +83,18 @@ void Node::begin() {
   store_.begin(group_.me);
   counters_ = std::make_unique<CounterReserve>(savedCounterLimit());
   loadPositions();
+  pending_.clear();
+  if (group_.configured) {
+    // My messages nobody confirmed before the restart: try them again.
+    for (uint8_t c = 0; c < CONVERSATIONS; c++) {
+      if (c != CONV_GROUP && (!group_.member(c) || !group_.member(c)->present || c == group_.me)) continue;
+      for (const auto& m : store_.load(c, 20)) {
+        if (m.sender != group_.me || m.stored || m.deliveredTo) continue;
+        if (pending_.size() >= MAX_PENDING) pending_.erase(pending_.begin());
+        pending_.push_back(Pending{m.counter, c, 0, millis() + 10000});
+      }
+    }
+  }
   if (!group_.configured) {
     LOG_INF("MESH", "No group yet: run `waddle mesh setup`. Public key %s", toHex(identity().publicKey, 8).c_str());
     return;
@@ -190,7 +217,9 @@ void Node::sendPosition(const Type type, const bool cancelled) {
   p.cancelled = cancelled;
   uint8_t plain[POS_SIZE];
   writePosition(p, plain);
-  sendSealed(header(type, GROUP), identity().senderKey, plain, sizeof(plain), false);
+  const Header h = header(type, GROUP);
+  if (type == Type::Sos) sosCounters_.push_back(h.counter);
+  sendSealed(h, identity().senderKey, plain, sizeof(plain), false);
   if (fix.valid) {
     MemberStatus& self = members_[group_.me - 1];
     self.hasPosition = true;
@@ -203,6 +232,8 @@ void Node::startSos() {
   if (!group_.configured) return;
   sosActive_ = true;
   nextSosMs_ = millis();
+  sosCounters_.clear();
+  sosReceivedBy_ = sosSeenBy_ = 0;
   gps::wake();
   changes_++;
 }
@@ -216,6 +247,11 @@ void Node::cancelSos() {
 }
 
 bool Node::hasNewSos() const { return newSos_ != 0; }
+
+void Node::acknowledgeSos(const uint8_t from) {
+  const MemberStatus& st = member(from);
+  if (isMember(from) && st.sosCounter) sendAck(from, from, st.sosCounter, AckState::Read);
+}
 
 uint8_t Node::takeNewSos() {
   const uint8_t n = newSos_;
@@ -378,6 +414,9 @@ void Node::handlePosition(const Header& h, const uint8_t* cipher, const size_t l
       if (!st.sos) newSos_ = h.sender;
       st.sos = true;
       st.sosPosition = p;
+      st.sosCounter = h.counter;
+      // Every repeat is answered, so a lost answer is made up a minute later.
+      sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
     }
   }
 }
@@ -398,6 +437,13 @@ uint8_t Node::conversationOfMine(const uint32_t counter) {
 void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
   Ack ack;
   if (!readAck(body, len, ack) || ack.sender != group_.me) return;
+  // An answer to my SOS: who has it, and who has seen it.
+  if (std::find(sosCounters_.begin(), sosCounters_.end(), ack.counter) != sosCounters_.end()) {
+    const uint8_t bit = h.sender == SERVER ? SERVER_BIT : uint8_t(1u << (h.sender - 1));
+    sosReceivedBy_ |= bit;
+    if (ack.state == AckState::Read) sosSeenBy_ |= bit;
+    return;
+  }
   const uint8_t conversation = conversationOfMine(ack.counter);
   const Delivery state = ack.state == AckState::Stored ? Delivery::Stored
                          : ack.state == AckState::Read ? Delivery::Read
@@ -522,6 +568,11 @@ void Node::runWifiSync() {
   }
   wifiServerFailed_ = false;
   serverAtMs_ = millis();
+  // The server's clock, for a unit that has none (or one that drifted).
+  const uint32_t serverTime = httpDate(http.getHeader("Date"));
+  if (serverTime && (!unixNow() || std::abs(int64_t(serverTime) - int64_t(unixNow())) > 60)) {
+    halClock.setUtc(serverTime);
+  }
   const std::string& answer = http.getString();
   size_t i = 0, packets = 0;
   while (i < answer.size()) {

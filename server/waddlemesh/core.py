@@ -42,8 +42,11 @@ class Server:
             new = self.store.add_packet(h, raw, via)
             if new and via == "wifi" and self.radio:
                 self.radio.send(raw)
-            if h.type == P.SOS and new:
-                log.warning("SOS from member %d", h.sender)
+            if h.type == P.SOS:
+                if new:
+                    log.warning("SOS from member %d", h.sender)
+                # The sender's SOS screen shows that the server has it.
+                return [self._ack(h.sender, h.counter, P.STORED, h.sender)]
             if h.type == P.MSG and self.store.has_all_pieces(h):
                 return [self._ack(h.sender, h.counter, P.STORED, h.sender)]
             return []
