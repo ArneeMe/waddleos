@@ -15,6 +15,7 @@
 #include "core/activities/ActivityManager.h"
 #include "services/mesh/MeshNode.h"
 #include "services/mesh/MeshRadio.h"
+#include "services/mesh/MeshWebApi.h"
 
 // The mesh unit: LilyGO T5 E-Paper S3 Pro, 868 MHz.
 namespace product {
@@ -22,6 +23,9 @@ namespace product {
 void beginBoard() { BoardT5S3::begin(); }
 
 void begin() { mesh::Node::get().begin(); }
+
+void registerWebRoutes(WebServer& server) { mesh::web::registerRoutes(server); }
+const char* firmwareName() { return "waddleos-t5.bin"; }
 
 namespace {
 // Holding the user button (beside the screen) this long starts an SOS from anywhere.
@@ -32,6 +36,8 @@ bool sosFromButton = false;
 
 void loop() {
   auto& node = mesh::Node::get();
+  // A new group from `waddle mesh setup`: load it without a restart.
+  if (mesh::web::takeGroupChanged()) node.begin();
   node.loop();
 
   if (gpio.isPressed(HalGPIO::BTN_DOWN)) {

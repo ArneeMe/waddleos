@@ -52,6 +52,8 @@
 #include "apps/reader/util/DictionaryRegistry.h"
 #include "core/util/FirmwareIdentity.h"
 #include "core/util/TaskWatchdog.h"
+#include "core/Product.h"
+#include "FirmwareBoardTag.h"
 #include "core/waddle/WaddleFirmwareApi.h"
 
 static void sendStaticContent(WebServer* server, const char* data, size_t len, const char* etag,
@@ -241,6 +243,7 @@ void CrossPointWebServer::begin() {
   server->on("/api/wifi/delete", HTTP_POST, [this] { handleDeleteWifiNetwork(); });
 
   waddle::firmware::registerRoutes(*server);
+  product::registerWebRoutes(*server);
 
   server->onNotFound([this] { handleNotFound(); });
   LOG_DBG("WEB", "[MEM] Free heap after route setup: %d bytes", ESP.getFreeHeap());
@@ -514,6 +517,7 @@ void CrossPointWebServer::handleStatus() const {
   doc["freeHeap"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
   doc["device"] = BoardConfig::ACTIVE.name;
+  doc["board"] = board_tag::boardName();  // which firmware file fits (waddle update)
 
   String response;
   serializeJson(doc, response);

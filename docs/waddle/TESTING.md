@@ -22,7 +22,46 @@ From PR #29 (Oppdater fastvare) and #30 (core/apps/products, settings per app):
 
 ## Mesh unit (T5 S3 Pro)
 
-Not arrived yet. Items are added as the code for them is written.
+Flash the first time over USB: `pio run -e t5s3-waddle -t upload` (hold BOOT
+while plugging in if it is not found). Watch the log with `pio device monitor`.
+After that, `waddle update` and Innstillinger → Oppdater fastvare pick the T5
+file by themselves.
+
+Start-up, screen and buttons:
+- [ ] It boots to the penguin, then Hjem as in `docs/waddle/mockups/t5-screens.png`.
+- [ ] Text is sharp and the right way up; touch hits what you tap.
+- [ ] The BOOT button sleeps and wakes; the user button moves down in lists.
+- [ ] Battery % on Hjem looks right; it goes up while charging.
+- [ ] The clock keeps time after a restart (RTC).
+- [ ] Bøker opens the library; a book reads like on the reader.
+- [ ] Innstillinger shows Offline-modus and Del posisjon under Generelt.
+
+Radio and GPS (look in the log):
+- [ ] `RADIO Listening on 869.525 MHz` (not `SX1262 start failed`).
+- [ ] `GPS GPS talks at ... baud` with Offline-modus on. **Write down the baud and
+      the GPS lines with TXT in them**: that answers which GPS this unit has.
+- [ ] Outside with Offline-modus on: Kart shows "Du: 59,9… N …" within a few minutes.
+
+Setup and messages (two units, or one unit and the gateway):
+- [ ] Meldinger on a new unit says "ikke satt opp"; tapping it opens File Transfer.
+- [ ] `waddle mesh setup` finds every unit and finishes; Hjem then greets each by name.
+- [ ] A group message arrives on the other unit within seconds; it shows
+      "levert til alle", and "lest" after the other opens the chat.
+- [ ] A DM reaches only that person.
+- [ ] Out of range of each other but both near the gateway: messages still arrive
+      (through the server) and show "lagret på server".
+- [ ] One unit off, a message sent, then switched on: the message arrives soon after.
+- [ ] Synk in Meldinger with the Pi reachable: "Server: tilkoblet".
+- [ ] Away from home on a phone hotspot: Synk reaches the Pi through the router.
+
+SOS:
+- [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
+      "SOS fra …" with distance. "Avbryt SOS" ends it on both.
+
+Battery (the spec asks for 3 days):
+- [ ] Note the battery % in the morning and the evening of a normal day with the
+      unit asleep in a pocket, Offline-modus off. Tell Claude the numbers.
+- [ ] The same with Offline-modus on (GPS on).
 
 ## Gateway (Heltec V4) and server (Pi)
 

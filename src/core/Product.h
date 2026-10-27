@@ -10,6 +10,7 @@
 class Activity;
 class GfxRenderer;
 class MappedInputManager;
+class WebServer;
 
 namespace product {
 
@@ -26,6 +27,11 @@ bool preventAutoSleep();
 // by itself (light sleep) and the device is now awake again; core then reopens
 // the screen it slept from. Returns false to let core enter deep sleep.
 bool sleep();
+
+// Extra endpoints on the file transfer web server (the mesh unit's setup API).
+void registerWebRoutes(WebServer& server);
+// The firmware file in the waddle-latest release that fits this device.
+const char* firmwareName();
 
 // The home screen.
 std::unique_ptr<Activity> makeHome(GfxRenderer& renderer, MappedInputManager& input, bool cleanInitialRefresh);

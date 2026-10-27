@@ -2,6 +2,7 @@
 
   python3 -m waddlemesh serve [--config FILE]     run the server
   python3 -m waddlemesh add-unit N [--config F]   make a key for member N (1-3)
+  python3 -m waddlemesh set-group ID N:HASH...    group id and unit key hashes (from `waddle mesh setup`)
   python3 -m waddlemesh backup DEST [--config F]  copy the database to DEST
   python3 -m waddlemesh make-cert [--config F]    make the TLS certificate (needs openssl)
 
@@ -87,6 +88,18 @@ def main(argv):
         cfg["tokens"][argv[1]] = token_hash(token)
         save_config(path, cfg)
         print(token)
+    elif cmd == "set-group" and len(argv) >= 3:
+        cfg["group"] = int(argv[1])
+        tokens = {}
+        for item in argv[2:]:
+            member, digest = item.split(":", 1)
+            if member not in ("1", "2", "3") or len(digest) != 64:
+                print("expected N:SHA256HEX, got %s" % item)
+                return 1
+            tokens[member] = digest
+        cfg["tokens"] = tokens
+        save_config(path, cfg)
+        print("Group %d with %d units saved. Restart: sudo systemctl restart waddlemesh" % (cfg["group"], len(tokens)))
     elif cmd == "backup" and len(argv) == 2:
         Store(cfg["db"]).backup(argv[1])
     elif cmd == "make-cert":

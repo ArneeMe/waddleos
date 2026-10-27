@@ -4,8 +4,11 @@
 
 #include <cstring>
 
-// WaddleOS builds only the X4 Pro.
+// The device a firmware image is for. Each build sets its own (platformio.ini),
+// so the reader refuses a mesh-unit image and the other way round.
+#ifndef CROSSPOINT_BOARD_NAME
 #define CROSSPOINT_BOARD_NAME "x4pro"
+#endif
 
 namespace board_tag {
 

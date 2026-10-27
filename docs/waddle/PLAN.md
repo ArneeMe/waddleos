@@ -40,7 +40,7 @@ What is done and what is next. How the system fits together:
 - Settings that may be pointless now: sleep screen options, XTC status bar,
   font (one choice). Ask Arne before removing.
 
-## Mesh unit (planned)
+## Mesh unit
 
 WaddleOS grows a second device: a LilyGO T5 E-Paper S3 Pro (868 MHz LoRa,
 GPS) as an off-grid messenger for three people. Full spec: "Off-Grid Mesh
@@ -62,11 +62,11 @@ Phases:
 
 1. Done: `src/` split into `core/`, `apps/` and `products/x4pro/` with no
    change in behavior. `services/` (radio, mesh, GPS) comes with phase 3.
-2. T5 bring-up: display, touch, buttons, battery, SD card.
-3. Radio: LoRa send and receive, measure power use.
-4. Messaging: group and direct messages, keys, ACK and sync.
-5. Gateway and server on the Pi.
-6. More apps: map, SOS, position sharing.
+2. Written, waiting for the hardware: the T5 build, radio, messaging (group,
+   DMs, keys, ACK, sync), gateway and Pi server, map, SOS, position sharing,
+   notes. What to check on the devices: [TESTING.md](TESTING.md).
+3. After the first tests: fix what the devices show, measure battery days,
+   then signed updates (Ed25519, key kept off GitHub).
 
 Open: which GPS the unit has (MIA-M10Q or L76K), and whether the home
 connection has a public IP (no CGNAT).

@@ -71,7 +71,12 @@ void MessagesActivity::loop() {
     activityManager.goHome();
     return;
   }
-  if (!node().configured()) return;
+  if (!node().configured()) {
+    // Setup happens from the computer while File Transfer is open.
+    int tx = 0, ty = 0;
+    if (mappedInput.wasReleased(Button::Confirm) || mappedInput.wasScreenTapped(tx, ty)) activityManager.goToFileTransfer();
+    return;
+  }
   const int count = static_cast<int>(conversations.size());
   if (mappedInput.wasReleased(Button::Down) || mappedInput.wasReleased(Button::PageForward)) {
     focus = (focus + 1) % count;
@@ -109,8 +114,8 @@ void MessagesActivity::render(RenderLock&&) {
 
   if (!node().configured()) {
     const auto lines = renderer.wrappedText(UI_12_FONT_ID,
-                                            "Enheten er ikke satt opp ennå. Start Filoverføring og kjør "
-                                            "\"waddle mesh setup\" på datamaskinen.",
+                                            "Enheten er ikke satt opp ennå. Trykk her for å starte "
+                                            "Filoverføring, og kjør \"waddle mesh setup\" på datamaskinen.",
                                             width - 2 * SIDE, 6);
     for (const auto& line : lines) {
       renderer.drawText(UI_12_FONT_ID, SIDE, y + 20, line.c_str());

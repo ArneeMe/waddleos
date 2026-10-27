@@ -1,7 +1,9 @@
 # WaddleOS agent guide
 
-WaddleOS is Arne's personal e-reader firmware for the **Xteink X4 Pro**
-(ESP32-S3, 16 MB flash, 8 MB PSRAM, 800x480 e-ink, GT911 touch). It started as
+WaddleOS is Arne's personal firmware for the **Xteink X4 Pro** e-reader
+(ESP32-S3, 16 MB flash, 8 MB PSRAM, 800x480 e-ink, GT911 touch) and for the
+**LilyGO T5 E-Paper S3 Pro** mesh units (960x540 e-ink, 868 MHz LoRa, GPS),
+plus their gateway and Pi server. It started as
 a fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)
 but no longer follows upstream: change, move or delete any code freely.
 
@@ -24,7 +26,8 @@ together (firmware, arnee.me, the `waddle` command) and
 - Commit and push feature branches without asking. Never force-push `waddle`.
 - Write short, factual PR descriptions with a "test on the reader" list.
 - Compile before pushing: in a cloud session run `bash scripts/cloud-setup.sh`
-  once (a few minutes), then `pio run -e x4pro-waddle`. The PR build in GitHub
+  once (a few minutes), then `pio run -e x4pro-waddle -e t5s3-waddle -e heltec-gateway`
+  and, for mesh changes, `bash test/mesh/run.sh` and the server tests. The PR build in GitHub
   Actions (`.github/workflows/waddle-build.yml`) checks again; its compiler
   errors show up as annotations on the `build` check run.
 - Only Arne can flash and look at the devices. Every firmware change adds its
@@ -37,8 +40,8 @@ together (firmware, arnee.me, the `waddle` command) and
 - `src/` is split into `core/` (shared), `apps/` (one folder per app) and
   `products/` (one folder per device; `x4pro/` is the reader). WaddleOS base code
   is in `src/core/waddle/`. Upstream code may be edited directly.
-- `WADDLE` and `WADDLE_PRIVATE` are always on in `x4pro-waddle`, the only
-  build. Old `#if WADDLE` blocks may be simplified to plain code.
+- `WADDLE` and `WADDLE_PRIVATE` are always on. Old `#if WADDLE` blocks may be
+  simplified to plain code. A change in `core/` must build for both devices.
 - User-facing text goes through `tr(STR_*)` with Norwegian in
   `lib/I18n/translations/norwegian.yaml`; WaddleOS-only text may be hardcoded
   in Norwegian.
@@ -53,5 +56,6 @@ together (firmware, arnee.me, the `waddle` command) and
 - `waddle-update` (`waddle update`): download the latest build and install it over Wi-Fi.
 - `waddlebook` (`waddle book`): get an EPUB from a link or file, clean it, send it to the reader.
 - `addwaddle` (`waddle add`): upload any file as it is.
+- `waddle-mesh` (`waddle mesh setup`): set up the mesh units and the Pi server as one group.
 
 All use only the Python standard library or plain bash and work on Linux and macOS.

@@ -12,6 +12,8 @@ void begin() {}
 void loop() {}
 bool preventAutoSleep() { return false; }
 bool sleep() { return false; }
+void registerWebRoutes(WebServer&) {}
+const char* firmwareName() { return "waddleos-x4pro.bin"; }
 
 std::unique_ptr<Activity> makeHome(GfxRenderer& renderer, MappedInputManager& input, const bool cleanInitialRefresh) {
   return std::make_unique<WaddleHomeActivity>(renderer, input, cleanInitialRefresh);
