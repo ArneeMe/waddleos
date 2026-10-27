@@ -10,6 +10,7 @@
 #include "WaddleDraw.h"
 #include "WaddleVersion.h"
 #include "WaddleWifi.h"
+#include "core/Product.h"
 #include "core/activities/settings/SdFirmwareUpdateActivity.h"
 #include "core/components/UITheme.h"
 #include "core/fontIds.h"
@@ -94,7 +95,7 @@ void UpdateActivity::download() {
   if (lowHeap()) return fail("For lite minne");
   int shown = -1;
   const auto result = HttpDownloader::downloadToFile(
-      std::string(RELEASE) + "waddleos-x4pro.bin", FIRMWARE_PATH, [this, &shown](const size_t done, const size_t total) {
+      std::string(RELEASE) + product::firmwareName(), FIRMWARE_PATH, [this, &shown](const size_t done, const size_t total) {
         if (total == 0) return;
         const int now = static_cast<int>(done * 100 / total);
         if (now / 5 == shown / 5) return;  // redraw every 5%

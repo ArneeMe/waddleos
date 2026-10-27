@@ -437,3 +437,6 @@ STR_BT_CONNECTED_TO: "Koblet til %s"
 STR_BT_LOW_MEMORY: "Bluetooth: for lite minne"
 STR_BT_HOLD: "hold"
 STR_BT_MAPPING_CLEARED: "Knappeoppsett fjernet"
+
+STR_OFF_GRID_MODE: "Offline-modus"
+STR_POSITION_MINUTES: "Del posisjon, minutter"

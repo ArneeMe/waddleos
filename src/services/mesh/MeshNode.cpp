@@ -1,0 +1,609 @@
+#include "MeshNode.h"
+
+#include <HalClock.h>
+#include <HalPowerManager.h>
+#include <HalStorage.h>
+#include <Logging.h>
+#include <SecureHttpClient.h>
+#include <WiFi.h>
+#include <esp_random.h>
+
+#include <algorithm>
+#include <cstring>
+#include <ctime>
+
+#include "MeshGps.h"
+#include "MeshRadio.h"
+#include "MeshSettings.h"
+#include "core/network/HttpDownloader.h"
+#include "core/waddle/WaddleVersion.h"
+#include "core/waddle/WaddleWifi.h"
+
+namespace mesh {
+
+namespace {
+
+constexpr const char* POSITIONS_PATH = "/.mesh/positions.bin";
+constexpr size_t MAX_OUTBOX = 40;
+constexpr size_t MAX_PENDING = 20;
+constexpr size_t MAX_SYNC_ANSWER = 8;
+constexpr uint32_t RETRY_MS[] = {30000, 120000, 480000};
+constexpr uint32_t WIFI_JOIN_MS = 20000;
+constexpr uint32_t WIFI_FALLBACK_GAP_MS = 15UL * 60 * 1000;
+constexpr uint32_t SERVER_FRESH_MS = 30UL * 60 * 1000;
+constexpr uint32_t SOS_REPEAT_MS = 60000;
+constexpr uint8_t LOW_BATTERY = 20;
+
+uint32_t randomBetween(const uint32_t lo, const uint32_t hi) { return lo + esp_random() % (hi - lo + 1); }
+
+uint32_t unixNow() {
+  const time_t t = time(nullptr);
+  return t > 1600000000 ? uint32_t(t) : 0;
+}
+
+uint8_t battery() { return uint8_t(std::min<uint16_t>(powerManager.getBatteryPercentage(), 100)); }
+
+// The first byte of the short git hash, for the server's status page.
+uint8_t buildByte() {
+  uint8_t b = 0;
+  const char* hash = waddle::build();
+  return hash && strlen(hash) >= 2 && fromHex(std::string(hash, 2).c_str(), &b, 1) ? b : 0;
+}
+
+// Two packets are the same when type, sender, counter and piece match (hops may differ).
+bool samePacket(const uint8_t* a, const uint8_t* b) {
+  return a[1] == b[1] && a[4] == b[4] && memcmp(a + 6, b + 6, 5) == 0;
+}
+
+}  // namespace
+
+Node& Node::get() {
+  static Node node;
+  return node;
+}
+
+void Node::begin() {
+  identity();
+  loadGroup(group_);
+  store_.begin(group_.me);
+  counters_ = std::make_unique<CounterReserve>(savedCounterLimit());
+  loadPositions();
+  if (!group_.configured) {
+    LOG_INF("MESH", "No group yet: run `waddle mesh setup`. Public key %s", toHex(identity().publicKey, 8).c_str());
+    return;
+  }
+  LOG_INF("MESH", "Member %u of group %u", group_.me, group_.id);
+  if (radio::begin(params_)) {
+    if (MESH_SETTINGS.offGrid) {
+      gps::wake();
+    } else {
+      gps::sleep();
+    }
+    requestSync();
+  }
+  // On power-on, also ask the server over Wi-Fi when a network is saved.
+  if (!group_.serverUrl.empty() && battery() >= LOW_BATTERY) startWifiSync();
+}
+
+uint32_t Node::nextCounter() {
+  uint32_t save = 0;
+  const uint32_t c = counters_->take(&save);
+  if (save) saveCounterLimit(save);
+  return c;
+}
+
+Header Node::header(const Type type, const uint8_t recipient) {
+  Header h;
+  h.type = type;
+  h.group = group_.id;
+  h.sender = group_.me;
+  h.recipient = recipient;
+  h.counter = nextCounter();
+  return h;
+}
+
+void Node::queue(const uint8_t* raw, const size_t len, const uint32_t delayMs, const bool cancelIfHeard) {
+  if (outbox_.size() >= MAX_OUTBOX) {
+    // Drop a relay first; never drop the user's own packets.
+    auto relay = std::find_if(outbox_.begin(), outbox_.end(), [](const Outgoing& o) { return o.cancelIfHeard; });
+    if (relay == outbox_.end()) return;
+    outbox_.erase(relay);
+  }
+  outbox_.push_back(Outgoing{std::vector<uint8_t>(raw, raw + len), millis() + delayMs, cancelIfHeard});
+}
+
+void Node::sendSealed(const Header& h, const uint8_t* key, const uint8_t* plain, const size_t len, const bool store) {
+  auto sealed = std::make_unique<Sealed>();
+  if (!seal(h, key, plain, len, *sealed)) return;
+  for (int i = 0; i < sealed->count; i++) {
+    Header piece;
+    readHeader(sealed->packets[i], sealed->lengths[i], piece);
+    seen_.remember(piece);  // never relay our own packet back
+    if (store) store_.savePacket(group_.me, sealed->packets[i], sealed->lengths[i]);
+    queue(sealed->packets[i], sealed->lengths[i], 0, false);
+  }
+}
+
+void Node::sendAck(const uint8_t toMember, const uint8_t ackedSender, const uint32_t counter, const AckState state) {
+  uint8_t raw[HEADER_SIZE + ACK_SIZE];
+  const Header h = header(Type::Ack, toMember);
+  writeHeader(h, raw);
+  writeAck(Ack{ackedSender, counter, state}, raw + HEADER_SIZE);
+  seen_.remember(h);
+  queue(raw, sizeof(raw), randomBetween(200, 1200), false);
+}
+
+bool Node::sendText(const uint8_t conversation, const std::string& text) {
+  if (!group_.configured || text.empty() || text.size() > MAX_TEXT) return false;
+  const uint8_t* key = identity().senderKey;
+  uint8_t recipient = GROUP;
+  if (conversation != CONV_GROUP) {
+    const Member* m = group_.member(conversation);
+    if (!m || !m->present || conversation == group_.me) return false;
+    key = m->pairKey;
+    recipient = conversation;
+  }
+  ChatMessage msg;
+  msg.sender = group_.me;
+  msg.time = unixNow();
+  store_.lastHash(conversation, group_.me, msg.prevHash);
+  msg.text = text;
+
+  std::string plain(MSG_PREFIX, '\0');
+  put32(reinterpret_cast<uint8_t*>(&plain[0]), msg.time);
+  memcpy(&plain[4], msg.prevHash, 4);
+  plain += text;
+  const Header h = header(Type::Msg, recipient);
+  msg.counter = h.counter;
+  sendSealed(h, key, reinterpret_cast<const uint8_t*>(plain.data()), plain.size(), true);
+  store_.addMessage(conversation, msg);
+  if (pending_.size() >= MAX_PENDING) pending_.erase(pending_.begin());
+  pending_.push_back(Pending{h.counter, conversation, 0, millis() + RETRY_MS[0]});
+  changes_++;
+  return true;
+}
+
+void Node::markRead(const uint8_t conversation) {
+  if (store_.summary(conversation).unread == 0) return;
+  // "Read" for the newest message from each other member covers the earlier ones.
+  const auto recent = store_.load(conversation, 30);
+  bool told[MAX_MEMBERS + 1] = {};
+  for (auto it = recent.rbegin(); it != recent.rend(); ++it) {
+    if (it->sender == group_.me || !isMember(it->sender) || told[it->sender]) continue;
+    told[it->sender] = true;
+    sendAck(it->sender, it->sender, it->counter, AckState::Read);
+  }
+  store_.markRead(conversation);
+  changes_++;
+}
+
+void Node::sendPosition(const Type type, const bool cancelled) {
+  if (!group_.configured) return;
+  const gps::Fix& fix = gps::lastFix();
+  Position p;
+  p.time = fix.valid ? fix.time : unixNow();
+  p.latE7 = fix.latE7;
+  p.lonE7 = fix.lonE7;
+  p.altitude = fix.altitude;
+  p.battery = battery();
+  p.noFix = !fix.valid || millis() - gps::lastFixAtMs() > 5UL * 60 * 1000;
+  p.cancelled = cancelled;
+  uint8_t plain[POS_SIZE];
+  writePosition(p, plain);
+  sendSealed(header(type, GROUP), identity().senderKey, plain, sizeof(plain), false);
+  if (fix.valid) {
+    MemberStatus& self = members_[group_.me - 1];
+    self.hasPosition = true;
+    self.position = p;
+    self.positionAtMs = gps::lastFixAtMs();
+  }
+}
+
+void Node::startSos() {
+  if (!group_.configured) return;
+  sosActive_ = true;
+  nextSosMs_ = millis();
+  gps::wake();
+  changes_++;
+}
+
+void Node::cancelSos() {
+  if (!sosActive_) return;
+  sosActive_ = false;
+  sendPosition(Type::Sos, true);
+  if (!MESH_SETTINGS.offGrid) gps::sleep();
+  changes_++;
+}
+
+bool Node::hasNewSos() const { return newSos_ != 0; }
+
+uint8_t Node::takeNewSos() {
+  const uint8_t n = newSos_;
+  newSos_ = 0;
+  return n;
+}
+
+const MemberStatus& Node::member(const uint8_t number) const {
+  static const MemberStatus none;
+  return isMember(number) ? members_[number - 1] : none;
+}
+
+void Node::requestSync() {
+  if (!group_.configured || !radio::isUp()) return;
+  SyncReq req;
+  for (uint8_t m = 1; m <= MAX_MEMBERS; m++) req.lastCounter[m - 1] = store_.lastCounter(m);
+  req.battery = battery();
+  req.build = buildByte();
+  uint8_t raw[HEADER_SIZE + SYNC_REQ_SIZE];
+  Header h = header(Type::SyncReq, GROUP);
+  h.hops = 0;  // answered by whoever hears it; not relayed
+  writeHeader(h, raw);
+  writeSyncReq(req, raw + HEADER_SIZE);
+  seen_.remember(h);
+  queue(raw, sizeof(raw), 0, false);
+  lastSyncReqMs_ = millis();
+}
+
+ServerState Node::serverState() const {
+  if (serverAtMs_ && millis() - serverAtMs_ < SERVER_FRESH_MS) return ServerState::Online;
+  if (wifiServerFailed_ || serverAtMs_) return ServerState::Offline;
+  return ServerState::Unknown;
+}
+
+bool Node::busy() const { return !outbox_.empty() || wifi_ != WifiStep::Idle; }
+
+uint32_t Node::msUntilWork() const {
+  const uint32_t now = millis();
+  uint32_t next = 10UL * 60 * 1000;
+  auto consider = [&](const uint32_t at) { next = std::min(next, at > now ? at - now : 0); };
+  for (const auto& o : outbox_) consider(o.dueMs);
+  for (const auto& p : pending_) {
+    if (p.tries < 3) consider(p.nextTryMs);
+  }
+  if (MESH_SETTINGS.offGrid) consider(nextPositionMs_);
+  if (sosActive_) consider(nextSosMs_);
+  return next;
+}
+
+// --- Receiving ----------------------------------------------------------------
+
+const uint8_t* Node::keyFor(const Header& h) const {
+  const Member* from = group_.member(h.sender);
+  if (!from || !from->present) return nullptr;
+  if (h.recipient == GROUP) return from->senderKey;
+  if (h.recipient == group_.me) return from->pairKey;
+  return nullptr;  // a DM between two other members
+}
+
+void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bool viaWifi) {
+  Header h;
+  if (!readHeader(raw, len, h) || h.group != group_.id || h.sender == group_.me) return;
+  const uint32_t now = millis();
+  if (h.sender == SERVER) {
+    serverAtMs_ = now;
+  } else {
+    members_[h.sender - 1].heardAtMs = now;
+    if (!viaWifi) members_[h.sender - 1].rssi = rssi;
+  }
+
+  // Someone else already sent a relay or sync answer we had queued: skip ours.
+  outbox_.erase(std::remove_if(outbox_.begin(), outbox_.end(),
+                               [&](const Outgoing& o) { return o.cancelIfHeard && samePacket(o.raw.data(), raw); }),
+                outbox_.end());
+
+  if (!seen_.remember(h)) {
+    // A message we already have came again: the sender missed our ACK.
+    if (h.type == Type::Msg && h.pieceIndex == h.pieceCount - 1 && (h.recipient == group_.me || h.recipient == GROUP) &&
+        isMember(h.sender)) {
+      sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
+    }
+    return;
+  }
+
+  // Pass it on so units out of each other's range still hear it.
+  if (!viaWifi && h.hops > 0 && h.type != Type::SyncReq && h.recipient != group_.me) {
+    std::vector<uint8_t> copy(raw, raw + len);
+    copy[3] = uint8_t((copy[3] & 0xF0) | (h.hops - 1));
+    queue(copy.data(), copy.size(), randomBetween(500, 2500), true);
+  }
+
+  const uint8_t* body = raw + HEADER_SIZE;
+  const size_t bodyLen = len - HEADER_SIZE;
+  switch (h.type) {
+    case Type::Msg: {
+      if (!isMember(h.sender) || store_.hasPacket(h)) return;
+      store_.savePacket(h.sender, raw, len);  // kept to help other units catch up
+      const uint8_t* joined = nullptr;
+      size_t joinedLen = 0;
+      if (pieces_.add(h, raw, len, now, &joined, &joinedLen)) handleMessage(h, joined, joinedLen);
+      break;
+    }
+    case Type::Pos:
+    case Type::Sos:
+      if (h.pieceCount == 1) handlePosition(h, body, bodyLen);
+      break;
+    case Type::Ack:
+      handleAck(h, body, bodyLen);
+      break;
+    case Type::SyncReq:
+      if (!viaWifi) handleSyncReq(h, body, bodyLen);
+      break;
+  }
+  changes_++;
+}
+
+void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t len) {
+  const uint8_t* key = keyFor(h);
+  if (!key || len < TAG_SIZE + MSG_PREFIX) return;
+  std::vector<uint8_t> plain(len - TAG_SIZE);
+  if (!open(h, key, cipher, len, plain.data())) {
+    LOG_ERR("MESH", "Message %u/%lu failed its check (wrong key or changed)", h.sender, (unsigned long)h.counter);
+    return;
+  }
+  const uint8_t conversation = h.recipient == GROUP ? CONV_GROUP : h.sender;
+  ChatMessage m;
+  m.sender = h.sender;
+  m.counter = h.counter;
+  m.time = get32(plain.data());
+  memcpy(m.prevHash, plain.data() + 4, 4);
+  m.text.assign(reinterpret_cast<const char*>(plain.data() + MSG_PREFIX), plain.size() - MSG_PREFIX);
+  uint8_t expected[4];
+  store_.lastHash(conversation, h.sender, expected);
+  const bool haveEarlier = expected[0] | expected[1] | expected[2] | expected[3];
+  m.chainWarning = haveEarlier && memcmp(expected, m.prevHash, 4) != 0;
+  store_.addMessage(conversation, m);
+  sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
+  // The radio's clock source when the unit has none yet.
+  if (!unixNow() && m.time > 1600000000) halClock.setUtc(m.time);
+}
+
+void Node::handlePosition(const Header& h, const uint8_t* cipher, const size_t len) {
+  const Member* from = group_.member(h.sender);
+  if (!from || !from->present || h.recipient != GROUP || len != POS_SIZE + TAG_SIZE) return;
+  uint8_t plain[POS_SIZE];
+  if (!open(h, from->senderKey, cipher, len, plain)) return;
+  Position p;
+  if (!readPosition(plain, sizeof(plain), p)) return;
+  MemberStatus& st = members_[h.sender - 1];
+  if (!p.noFix) {
+    st.hasPosition = true;
+    st.position = p;
+    st.positionAtMs = millis();
+    savePositions();
+  }
+  if (h.type == Type::Sos) {
+    if (p.cancelled) {
+      st.sos = false;
+    } else {
+      if (!st.sos) newSos_ = h.sender;
+      st.sos = true;
+      st.sosPosition = p;
+    }
+  }
+}
+
+uint8_t Node::conversationOfMine(const uint32_t counter) {
+  for (const auto& p : pending_) {
+    if (p.counter == counter) return p.conversation;
+  }
+  // Older messages: look at the stored packet's recipient.
+  const auto raw = store_.packetsAfter(group_.me, counter - 1, group_.me, 1);
+  Header h;
+  if (!raw.empty() && readHeader(raw[0].data(), raw[0].size(), h) && h.counter == counter) {
+    return h.recipient == GROUP ? CONV_GROUP : h.recipient;
+  }
+  return CONV_GROUP;
+}
+
+void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
+  Ack ack;
+  if (!readAck(body, len, ack) || ack.sender != group_.me) return;
+  const uint8_t conversation = conversationOfMine(ack.counter);
+  const Delivery state = ack.state == AckState::Stored ? Delivery::Stored
+                         : ack.state == AckState::Read ? Delivery::Read
+                                                       : Delivery::Delivered;
+  store_.addState(conversation, group_.me, ack.counter, state, h.sender);
+  pending_.erase(std::remove_if(pending_.begin(), pending_.end(),
+                                [&](const Pending& p) { return p.counter == ack.counter; }),
+                 pending_.end());
+}
+
+void Node::handleSyncReq(const Header& h, const uint8_t* body, const size_t len) {
+  SyncReq req;
+  if (!isMember(h.sender) || !readSyncReq(body, len, req)) return;
+  size_t sent = 0;
+  for (uint8_t s = 1; s <= MAX_MEMBERS && sent < MAX_SYNC_ANSWER; s++) {
+    if (s == h.sender) continue;
+    for (const auto& raw : store_.packetsAfter(s, req.lastCounter[s - 1], h.sender, MAX_SYNC_ANSWER - sent)) {
+      // Not relayed further, and skipped if another unit or the server answers first.
+      std::vector<uint8_t> copy = raw;
+      copy[3] &= 0xF0;
+      queue(copy.data(), copy.size(), randomBetween(1500, 4000) + uint32_t(sent) * 300, true);
+      sent++;
+    }
+  }
+}
+
+// --- Sending and timers -------------------------------------------------------
+
+void Node::sendOutbox() {
+  if (!radio::isUp() || outbox_.empty()) return;
+  const uint32_t now = millis();
+  auto next = std::min_element(outbox_.begin(), outbox_.end(),
+                               [](const Outgoing& a, const Outgoing& b) { return a.dueMs < b.dueMs; });
+  if (int32_t(now - next->dueMs) < 0) return;
+  const uint32_t airtime = airtimeMs(params_, next->raw.size());
+  if (!budget_.allows(airtime, now)) return;  // waits until the hour has room
+  budget_.spend(airtime, now);
+  const std::vector<uint8_t> raw = std::move(next->raw);
+  outbox_.erase(next);
+  if (!radio::send(raw.data(), raw.size())) return;
+  // My message has left the unit: show "sendt".
+  Header h;
+  if (readHeader(raw.data(), raw.size(), h) && h.type == Type::Msg && h.sender == group_.me &&
+      h.pieceIndex == h.pieceCount - 1) {
+    store_.addState(conversationOfMine(h.counter), group_.me, h.counter, Delivery::Sent, 0);
+    changes_++;
+  }
+}
+
+void Node::retryPending() {
+  const uint32_t now = millis();
+  bool needWifi = false;
+  for (auto& p : pending_) {
+    if (p.tries >= 3 || int32_t(now - p.nextTryMs) < 0) continue;
+    for (const auto& raw : store_.packetsAfter(group_.me, p.counter - 1, group_.me, MAX_PIECES)) {
+      Header h;
+      if (readHeader(raw.data(), raw.size(), h) && h.counter == p.counter) queue(raw.data(), raw.size(), 0, false);
+    }
+    p.tries++;
+    p.nextTryMs = now + RETRY_MS[std::min<int>(p.tries, 2)];
+    if (p.tries >= 3) needWifi = true;
+  }
+  // Nobody heard it over LoRa: try the server over Wi-Fi (not on low battery).
+  if (needWifi && !group_.serverUrl.empty() && battery() >= LOW_BATTERY &&
+      (!lastWifiSyncMs_ || now - lastWifiSyncMs_ > WIFI_FALLBACK_GAP_MS)) {
+    startWifiSync();
+  }
+}
+
+void Node::startWifiSync() {
+  if (!group_.configured || group_.serverUrl.empty() || wifi_ != WifiStep::Idle) return;
+  if (WiFi.status() != WL_CONNECTED && !waddle::wifi::joinSaved()) return;
+  wifi_ = WifiStep::Joining;
+  wifiStartedMs_ = millis();
+  changes_++;
+}
+
+void Node::runWifiSync() {
+  lastWifiSyncMs_ = millis();
+  if (ESP.getFreeHeap() < HttpDownloader::MIN_TLS_FREE_HEAP || group_.serverCert.empty()) {
+    wifiServerFailed_ = true;
+    return;
+  }
+  // My messages the server has not confirmed, then a sync request.
+  std::string body;
+  auto add = [&](const uint8_t* raw, const size_t len) {
+    body += char(len);
+    body.append(reinterpret_cast<const char*>(raw), len);
+  };
+  for (const auto& p : pending_) {
+    for (const auto& raw : store_.packetsAfter(group_.me, p.counter - 1, group_.me, MAX_PIECES)) {
+      Header h;
+      if (readHeader(raw.data(), raw.size(), h) && h.counter == p.counter) add(raw.data(), raw.size());
+    }
+  }
+  SyncReq req;
+  for (uint8_t m = 1; m <= MAX_MEMBERS; m++) req.lastCounter[m - 1] = store_.lastCounter(m);
+  req.battery = battery();
+  req.build = buildByte();
+  uint8_t sync[HEADER_SIZE + SYNC_REQ_SIZE];
+  Header h = header(Type::SyncReq, SERVER);
+  h.hops = 0;
+  writeHeader(h, sync);
+  writeSyncReq(req, sync + HEADER_SIZE);
+  add(sync, sizeof(sync));
+
+  freeink::SecureHttpClient http;
+  http.setCACert(group_.serverCert.c_str());  // only the Pi's own certificate is trusted
+  http.setTimeout(10000);
+  http.setReuse(false);
+  if (!http.begin(group_.serverUrl + "/api/packets")) {
+    wifiServerFailed_ = true;
+    return;
+  }
+  http.addHeader("Authorization", "Bearer " + group_.serverToken);
+  http.addHeader("Content-Type", "application/octet-stream");
+  const int status = http.POST(body);
+  if (status != 200) {
+    LOG_ERR("MESH", "Server sync failed: %d", status);
+    wifiServerFailed_ = true;
+    return;
+  }
+  wifiServerFailed_ = false;
+  serverAtMs_ = millis();
+  const std::string& answer = http.getString();
+  size_t i = 0, packets = 0;
+  while (i < answer.size()) {
+    const size_t n = uint8_t(answer[i]);
+    if (n == 0 || i + 1 + n > answer.size()) break;
+    handle(reinterpret_cast<const uint8_t*>(answer.data() + i + 1), n, 0, true);
+    i += 1 + n;
+    packets++;
+  }
+  LOG_INF("MESH", "Server sync: %u packets", unsigned(packets));
+}
+
+void Node::loop() {
+  if (!group_.configured) return;
+  const uint32_t now = millis();
+
+  Received rx;
+  while (radio::receive(rx)) handle(rx.data, rx.len, rx.rssi, false);
+
+  if (wifi_ == WifiStep::Joining) {
+    if (WiFi.status() == WL_CONNECTED) {
+      runWifiSync();
+      waddle::wifi::off();
+      wifi_ = WifiStep::Idle;
+      changes_++;
+    } else if (now - wifiStartedMs_ > WIFI_JOIN_MS) {
+      waddle::wifi::off();
+      wifi_ = WifiStep::Idle;
+      wifiServerFailed_ = true;
+      changes_++;
+    }
+  }
+
+  // Off-grid: the GPS runs and the position goes out every few minutes.
+  if (MESH_SETTINGS.offGrid || sosActive_) {
+    gps::wake();
+    gps::poll();
+    const gps::Fix& fix = gps::lastFix();
+    if (fix.valid && !unixNow()) halClock.setUtc(fix.time);
+  } else if (gps::awake()) {
+    gps::sleep();
+  }
+  if (MESH_SETTINGS.offGrid && int32_t(now - nextPositionMs_) >= 0) {
+    sendPosition(Type::Pos, false);
+    uint32_t minutes = std::max<uint8_t>(MESH_SETTINGS.positionMinutes, 5);
+    if (battery() < LOW_BATTERY) minutes *= 2;
+    nextPositionMs_ = now + minutes * 60000UL;
+  }
+  if (sosActive_ && int32_t(now - nextSosMs_) >= 0) {
+    sendPosition(Type::Sos, false);
+    nextSosMs_ = now + SOS_REPEAT_MS;
+  }
+
+  retryPending();
+  sendOutbox();
+}
+
+// --- Positions on the SD card ------------------------------------------------
+
+void Node::savePositions() {
+  uint8_t data[MAX_MEMBERS * (1 + POS_SIZE)] = {};
+  for (int i = 0; i < MAX_MEMBERS; i++) {
+    data[i * (1 + POS_SIZE)] = members_[i].hasPosition ? 1 : 0;
+    writePosition(members_[i].position, data + i * (1 + POS_SIZE) + 1);
+  }
+  HalFile f = Storage.open(POSITIONS_PATH, O_WRONLY | O_CREAT | O_TRUNC);
+  if (!f) return;
+  f.write(data, sizeof(data));
+  f.close();
+}
+
+void Node::loadPositions() {
+  uint8_t data[MAX_MEMBERS * (1 + POS_SIZE)];
+  HalFile f = Storage.open(POSITIONS_PATH, O_RDONLY);
+  if (!f) return;
+  const bool ok = f.read(data, sizeof(data)) == int(sizeof(data));
+  f.close();
+  if (!ok) return;
+  for (int i = 0; i < MAX_MEMBERS; i++) {
+    members_[i].hasPosition = data[i * (1 + POS_SIZE)] != 0;
+    readPosition(data + i * (1 + POS_SIZE) + 1, POS_SIZE, members_[i].position);
+  }
+}
+
+}  // namespace mesh

@@ -72,6 +72,15 @@ jobs:
           pio pkg install -e "$PIO_ENV"
           uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
 
+      # The mesh protocol: C++ library and Pi server, checked against each other.
+      - name: Mesh tests
+        run: |
+          set -euo pipefail
+          bash test/mesh/run.sh
+          git diff --exit-code protocol/vectors.json
+          pip install -q cryptography
+          (cd server && python3 -m unittest discover -s tests)
+
       - name: Build
         run: |
           set -o pipefail
@@ -81,7 +90,8 @@ jobs:
             echo "#define WADDLE_VERSION \"WaddleOS 1.${GITHUB_RUN_NUMBER}\""
             echo "#define WADDLE_BUILD \"$(git rev-parse --short=7 HEAD)\""
           } > src/core/waddle/WaddleBuild.h
-          pio run -e "$PIO_ENV" -j"$(nproc)" 2>&1 | tee build.log
+          # The reader, the mesh unit (T5) and the mesh gateway (Heltec V4).
+          pio run -e "$PIO_ENV" -e t5s3-waddle -e heltec-gateway -j"$(nproc)" 2>&1 | tee build.log
 
       # Compiler errors as annotations, readable through the checks API.
       - name: Report build errors
@@ -98,6 +108,8 @@ jobs:
         run: |
           set -euo pipefail
           cp ".pio/build/$PIO_ENV/firmware.bin" waddleos-x4pro.bin
+          cp .pio/build/t5s3-waddle/firmware.bin waddleos-t5.bin
+          cp .pio/build/heltec-gateway/firmware.bin waddle-gateway.bin
           sha=$(git rev-parse --short=7 HEAD)
           notes="Built from ${sha}: $(git log -1 --format=%s)"
           if gh release view waddle-latest >/dev/null 2>&1; then
@@ -116,7 +128,7 @@ jobs:
           json.dump({"versjon": sys.argv[2], "build": sys.argv[1], "dato": f"{now.day}. {months[now.month - 1]} kl {now:%H:%M}", "melding": note},
                     open("version.json", "w"), ensure_ascii=False)
           PY
-          gh release upload waddle-latest waddleos-x4pro.bin version.json --clobber
+          gh release upload waddle-latest waddleos-x4pro.bin waddleos-t5.bin waddle-gateway.bin version.json --clobber
 
       - name: Copy firmware
         run: cp ".pio/build/$PIO_ENV/firmware.bin" waddleos-x4pro.bin

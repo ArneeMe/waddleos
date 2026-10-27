@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""waddle mesh: set up the mesh units (LilyGO T5) as one group.
+
+  waddle mesh setup      ask each unit for its keys, give every unit the group,
+                         and tell the Pi server about the units
+
+Every unit must show File Transfer -> Join a Network (on the same Wi-Fi as this
+computer) while setup runs. Each unit made its own keys on first start; its
+private DM key never leaves it. Uses only the Python standard library.
+"""
+
+import hashlib
+import json
+import os
+import secrets
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+CONFIG = os.path.expanduser("~/.config/waddle/mesh-group.json")
+
+TTY = sys.stdout.isatty()
+B, G, R, Y, C, DIM, N = (("\033[1m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m")
+                         if TTY else ("",) * 7)
+
+
+def say(text=""):
+    print(text, flush=True)
+
+
+def ask(prompt, default=""):
+    shown = f"{prompt} {DIM}[{default}]{N}: " if default else f"{prompt}: "
+    answer = input(shown).strip()
+    return answer or default
+
+
+def unit_get(ip, path):
+    with urllib.request.urlopen(f"http://{ip}{path}", timeout=8) as r:
+        return json.load(r)
+
+
+def unit_post(ip, path, data):
+    req = urllib.request.Request(f"http://{ip}{path}", data=json.dumps(data).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.read().decode()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"{ip} said: {e.read().decode(errors='replace')}") from e
+
+
+def ssh(host, command):
+    return subprocess.run(["ssh", host, command], check=True, capture_output=True, text=True).stdout
+
+
+def setup():
+    say(f"\n{B}🐧 waddle mesh setup{N}\n")
+    old = {}
+    if os.path.exists(CONFIG):
+        with open(CONFIG) as f:
+            old = json.load(f)
+        say(f"{DIM}Last setup: group {old.get('group')} with "
+            f"{', '.join(m['name'] for m in old.get('members', []))}{N}\n")
+
+    count = int(ask("How many units (2 or 3)", str(len(old.get("members", [])) or 3)))
+    if count not in (2, 3):
+        raise RuntimeError("2 or 3 units")
+    say(f"\nOn every unit: {B}Meldinger{N} (or File Transfer) -> Join a Network. Each shows its address.\n")
+    members = []
+    for n in range(1, count + 1):
+        prev = old.get("members", [])[n - 1] if n <= len(old.get("members", [])) else {}
+        name = ask(f"Unit {n}: name", prev.get("name", ""))
+        ip = ask(f"Unit {n}: address shown on its screen", prev.get("ip", ""))
+        say(f"{C}▸{N} Asking {name} for its keys")
+        ident = unit_get(ip, "/api/mesh/identity")
+        say(f"  {G}✓{N} {name}: key {ident['publicKey'][:16]}…")
+        members.append({"number": n, "name": name, "ip": ip,
+                        "publicKey": ident["publicKey"], "senderKey": ident["senderKey"]})
+
+    group = old.get("group") or (secrets.randbelow(254) + 1)
+
+    say(f"\n{C}▸{N} The Pi server (it stores and passes on messages; it cannot read them)")
+    pi = ask("Pi over SSH, e.g. pi@raspberrypi.local (empty = no server)", old.get("pi", ""))
+    server = {}
+    if pi:
+        url = ask("Address units use, from home and away (router forwards port 8443)",
+                  old.get("url", "https://") )
+        cert = ssh(pi, "sudo cat /var/lib/waddlemesh/cert.pem")
+        if "BEGIN CERTIFICATE" not in cert:
+            raise RuntimeError("no certificate on the Pi: run server/install.sh there first")
+        tokens = {m["number"]: secrets.token_hex(16) for m in members}
+        hashes = " ".join(f"{n}:{hashlib.sha256(t.encode()).hexdigest()}" for n, t in tokens.items())
+        ssh(pi, f"cd /opt/waddlemesh && sudo python3 -m waddlemesh set-group --config /etc/waddlemesh.json "
+                f"{group} {hashes} && sudo systemctl restart waddlemesh")
+        say(f"  {G}✓{N} Server knows group {group} and {count} units")
+        server = {"url": url.rstrip("/"), "cert": cert, "tokens": tokens}
+
+    say(f"\n{C}▸{N} Giving every unit the group")
+    public = [{k: m[k] for k in ("number", "name", "publicKey", "senderKey")} for m in members]
+    for m in members:
+        doc = {"group": group, "me": m["number"], "members": public}
+        if server:
+            doc["server"] = {"url": server["url"], "token": server["tokens"][m["number"]], "cert": server["cert"]}
+        unit_post(m["ip"], "/api/mesh/group", doc)
+        say(f"  {G}✓{N} {m['name']}")
+
+    os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+    with open(CONFIG, "w") as f:
+        json.dump({"group": group, "pi": pi, "url": server.get("url", ""),
+                   "members": [{k: m[k] for k in ("name", "ip")} for m in members]}, f, indent=2)
+    say(f"\n{G}{B}🐧 Done!{N} Close File Transfer on each unit; they find each other over LoRa.\n")
+    return 0
+
+
+def main(argv):
+    if argv[:1] == ["setup"]:
+        return setup()
+    say(__doc__)
+    return 0 if not argv or argv[0] in ("-h", "--help", "help") else 1
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        say("\nStopped.")
+        sys.exit(130)
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as e:
+        say(f"\n{R}✗{N} {e}")
+        sys.exit(1)

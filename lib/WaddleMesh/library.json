@@ -1,0 +1,6 @@
+{
+  "name": "WaddleMesh",
+  "version": "1.0.0",
+  "description": "WaddleOS mesh protocol (protocol/PROTOCOL.md): packets, encryption, airtime rules. No Arduino dependency.",
+  "dependencies": { "monocypher": "*" }
+}

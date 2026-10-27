@@ -10,7 +10,8 @@ WaddleOS is more than the firmware. Three parts work together:
 
 | Part | Where | What it does |
 |---|---|---|
-| Firmware | `ArneeMe/waddleos` (this repo), branch `waddle` | Runs on the Xteink X4 Pro e-reader |
+| Firmware | `ArneeMe/waddleos` (this repo), branch `waddle` | Runs on the Xteink X4 Pro e-reader and the LilyGO T5 mesh units |
+| Mesh server | `server/` in this repo, on Arne's Raspberry Pi | Stores and passes on the mesh units' encrypted messages (see "Mesh") |
 | arnee.me | `ArneeMe/arneeme` (Astro on Cloudflare Workers) | Builds the NRK paper, weather and dictionary; passes on the firmware and the time |
 | `waddle` command | `tools/` in this repo | Runs on Arne's computer (zsh, Linux and macOS): updates, books, dictionary |
 
@@ -37,16 +38,20 @@ Arne opened a screen. Nothing runs in the background or during sleep.
   (two 6.25 MB app slots), 800×480 e-ink (SSD1677, 4 gray levels), GT911
   touch, BM8563 clock, battery gauge, front light with warmth, vibration
   motor absent. Bluetooth Low Energy only: no classic Bluetooth, no audio.
-- **One build target:** `x4pro-waddle` in `platformio.ini`. `WADDLE=1`,
-  `WADDLE_PRIVATE=1` and `WADDLE_OWNER_NAME="Arne"` are always set; there are
-  no `#if WADDLE` blocks left.
+- **Three build targets** in `platformio.ini`: `x4pro-waddle` (the reader),
+  `t5s3-waddle` (the mesh unit, LilyGO T5 E-Paper S3 Pro: 960×540 e-ink,
+  SX1262 868 MHz LoRa, GPS) and `heltec-gateway` (Heltec V4 on the Pi's USB).
+  `WADDLE=1`, `WADDLE_PRIVATE=1` and `WADDLE_OWNER_NAME="Arne"` are always set.
+  `CROSSPOINT_BOARD_NAME` tags each image, so a device refuses the other's firmware.
 - **Compiling:** in a cloud session run `bash scripts/cloud-setup.sh` once,
   then `pio run -e x4pro-waddle`. GitHub Actions
   (`.github/workflows/waddle-build.yml`) also builds every PR;
   compiler errors appear as annotations on the `build` check run (read them
   with `gh api repos/ArneeMe/waddleos/check-runs/<id>/annotations`).
-- **Release:** a push to `waddle` publishes `waddleos-x4pro.bin` and
-  `version.json` to the `waddle-latest` pre-release.
+- **Release:** a push to `waddle` publishes `waddleos-x4pro.bin`,
+  `waddleos-t5.bin`, `waddle-gateway.bin` and `version.json` to the
+  `waddle-latest` pre-release. CI also runs the mesh tests (`test/mesh/run.sh`
+  and `server/tests`).
 - **Version:** "WaddleOS 1.<GitHub run number>". The build writes
   `src/core/waddle/WaddleBuild.h` (git-ignored) with `WADDLE_VERSION` and
   `WADDLE_BUILD` (short git hash). Only `WaddleVersion.cpp` includes it, so a
@@ -59,8 +64,11 @@ Arne opened a screen. Nothing runs in the background or during sleep.
 
 `src/` is split so a second device (the T5 S3 Pro mesh unit, see PLAN.md) can
 share the base and pick its own apps. Each build lists what it compiles in
-`build_src_filter` in `platformio.ini`; `x4pro-waddle` takes
-`core/`, `apps/` and `products/x4pro/`. Includes are written from `src/`
+`build_src_filter` in `platformio.ini`: `x4pro-waddle` takes `core/`, `apps/`
+and `products/x4pro/`; `t5s3-waddle` takes `core/`, `apps/` (not Bluesound),
+`services/` and `products/t5s3/`. `core/WaddleMain.cpp` is the one `setup()` and
+`loop()`; each product fills in the hooks in `core/Product.h` (board start,
+home screen, background loop, sleep, web routes, firmware file name). Includes are written from `src/`
 (`"core/activities/Activity.h"`), or as a bare name for a file in the same folder.
 
 ```
@@ -76,8 +84,16 @@ src/apps/               one folder per app
   reader/               EPUB/XTC reader, dictionary, bookmarks, clippings, recent books, text settings
   library/              library list and file browser
   news/                 Nyheter (NRK paper)
-  bluesound/            Bluesound remote
-src/products/x4pro/     the e-reader: main.cpp, Hjem, weather icons, logo
+  bluesound/            Bluesound remote (reader only)
+  messages/ map/ sos/ notes/   the mesh unit's apps: Meldinger, Kart, SOS, Notater
+src/services/mesh/      the mesh unit's radio, GPS, keys, message store and node
+src/products/x4pro/     the e-reader: Product.cpp, Hjem, weather icons, logo
+src/products/t5s3/      the mesh unit: Product.cpp (light sleep, SOS button), Hjem
+src/products/gateway/   the Heltec V4 gateway firmware (its own small main)
+lib/WaddleMesh/         mesh packets, encryption, airtime rules (no Arduino; host-tested)
+lib/monocypher/         Monocypher 4.0.2, copied unchanged
+protocol/               PROTOCOL.md and vectors.json, shared by firmware and server
+server/                 the Pi server (Python standard library only)
 lib/                    Epub, GfxRenderer, I18n, hal, fonts, zip, ...
 lib/I18n/translations/  norwegian.yaml and english.yaml only
 tools/                  the waddle command
@@ -117,7 +133,7 @@ so they may be edited freely.
 | `apps/reader/EpubReaderActivity.cpp` | `renderBook()` calls `waddle::news::enterChapter()` for the NRK book |
 | `apps/reader/ReaderActivity.cpp` | The NRK book is not added to recent books |
 | `core/activities/boot_sleep/*` | Penguin boot and sleep screens; a book sleeps on its page with a sleeping penguin |
-| `products/x4pro/main.cpp` | `enterDeepSleep()`: keep the page only when sleeping from the reader |
+| `core/WaddleMain.cpp` | `enterDeepSleep()`: keep the page only when sleeping from the reader; `product::sleep()` lets the mesh unit light-sleep instead |
 | `core/activities/settings/SettingsActivity.cpp` | "Oppdater fastvare" opens `UpdateActivity` |
 | `core/network/CrossPointWebServer.cpp` | Registers `/api/firmware/apply`; reports `waddle::version()` |
 | `lib/hal/HalClock.*` | `setUtc()`, used by Hjem to set the clock from arnee.me |
@@ -146,6 +162,38 @@ One settings system in core, and each app brings its own settings.
 To add a setting: put the field in the struct that owns it (core or the app),
 add a row with a new key to that owner's list, and add the Norwegian text in
 `lib/I18n/translations/norwegian.yaml`.
+
+## Mesh
+
+Three mesh units (one per person), a gateway and the Pi. Full spec: "Off-Grid
+Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOCOL.md`.
+
+```
+ T5 unit ◄──LoRa 869.525 MHz──► T5 unit ◄──LoRa──► Heltec V4 ──USB serial──► Pi: waddlemesh
+    │        (relays, 3 hops)                       (gateway)                 SQLite, :8443
+    └───────────── HTTPS (pinned certificate, port forward on the router) ──────────┘
+```
+
+- **Privacy:** messages and positions are encrypted on the unit
+  (ChaCha20-Poly1305; per-member sender keys for the group, X25519 for DMs).
+  The server stores packets as received and has no keys. Units talk only to each
+  other, the Pi and arnee.me (updates).
+- **Keys:** each unit makes its own on first start (NVS flash). `waddle mesh setup`
+  (`tools/waddle-mesh`) collects public keys and sender keys over the file
+  transfer web server (`/api/mesh/identity`, `/api/mesh/group`), writes
+  `/.mesh/group.json` to every unit, and gives the Pi the group id and unit keys
+  over SSH.
+- **Node** (`services/mesh/MeshNode.cpp`): one loop for radio and Wi-Fi alike:
+  decrypt, store (`/.mesh/`), ACK (delivered, read), relay with a random delay,
+  retry after 30 s, 2 min, 8 min, then try the server over Wi-Fi. SYNC_REQ on
+  start and wake; the server and other units answer with what is missing.
+- **Sleep:** the T5 light-sleeps with the radio listening (`product::sleep()` in
+  `products/t5s3/Product.cpp`): packets are handled without waking the screen;
+  a button or an incoming SOS wakes it.
+- **GPS** shares the radio's power switch, so it is told to sleep (u-blox
+  backup mode) instead of switched off. Which GPS ships is not known yet.
+- **Server** (`server/`): `python3 -m waddlemesh serve`, systemd units and
+  `install.sh` in `server/`. Status page from the home network only.
 
 ## How a screen works
 

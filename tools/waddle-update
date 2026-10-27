@@ -30,7 +30,9 @@ from pathlib import Path
 
 REPO = "ArneeMe/waddleos"
 TAG = "waddle-latest"
-ASSET = "waddleos-x4pro.bin"
+# Firmware file per device, by the board name the device reports (/api/status "board").
+ASSETS = {"x4pro": "waddleos-x4pro.bin", "t5s3": "waddleos-t5.bin"}
+ASSET = ASSETS["x4pro"]
 BOARD = b"x4pro"
 DEFAULT_IP = "192.168.50.185"
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "waddleos"
@@ -215,6 +217,13 @@ def main():
     args = p.parse_args()
 
     print(f"\n{B}🐧 waddle update{N}\n")
+    global ASSET, BOARD
+    if not args.check:
+        # Ask the device first: the reader and the mesh unit need different files.
+        board = reader_status(args.ip).get("board", "x4pro")
+        if board not in ASSETS:
+            die(f"Unknown device '{board}'")
+        ASSET, BOARD = ASSETS[board], board.encode()
     path = Path(args.file) if args.file else fetch_latest()
     if not path.is_file():
         die(f"{path}: not found")
@@ -224,7 +233,6 @@ def main():
         print(f"\n{G}{B}🐧 Image OK:{N} {path}\n")
         return
 
-    reader_status(args.ip)
     upload(args.ip, ASSET, data)
     installed = apply(args.ip, ASSET)
     print(f"\n{G}{B}🐧 {'Done! Waddle on.' if installed else 'Uploaded. Finish on the reader.'}{N}\n")

@@ -5,6 +5,7 @@
   waddle book <url|file>...            get an EPUB, clean it and send it
   waddle add [-d /folder] <file>...    upload files as they are
   waddle dict get [--ip IP]            put the English dictionary on the reader
+  waddle mesh setup                    set up the mesh units (T5) as one group
 
 The reader must be on File Transfer -> Join a Network. Its IP is $WADDLE_IP
 (default 192.168.50.185). Uses only the Python standard library (and bash for
@@ -189,6 +190,8 @@ def main(argv):
         return run_tool("waddlebook", rest, "python3")
     if cmd == "add":
         return run_tool("addwaddle", rest, "bash")
+    if cmd == "mesh":
+        return run_tool("waddle-mesh", rest, "python3")
     if cmd == "dict" and rest[:1] == ["get"]:
         return dict_get(rest[1:])
     say(f"{R}Unknown command:{N} waddle {' '.join(argv)}  {DIM}(see: waddle help){N}")

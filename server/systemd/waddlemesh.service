@@ -1,0 +1,21 @@
+[Unit]
+Description=Waddle mesh server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=waddlemesh
+Group=dialout
+WorkingDirectory=/opt/waddlemesh
+ExecStart=/usr/bin/python3 -m waddlemesh serve --config /etc/waddlemesh.json
+Restart=always
+RestartSec=5
+# The server only needs its own files and the gateway's serial port.
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/waddlemesh /var/backups/waddlemesh
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
