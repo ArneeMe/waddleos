@@ -104,6 +104,7 @@ Deploy (PR #34):
 - [ ] `waddle mesh check` lists every unit with version, radio, GPS and battery.
 - [ ] Update a unit with Oppdater fastvare: after a minute the log says
       `UPDATE New build confirmed`.
+- [ ] `waddle mesh server` updates the Pi and prints "Running · gateway tilkoblet".
 
 ## Gateway (Heltec V4) and server (Pi)
 

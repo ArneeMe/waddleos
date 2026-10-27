@@ -7,6 +7,8 @@
   waddle mesh setup      ask each unit for its keys, give every unit the group,
                          and tell the Pi server about the units
   waddle mesh check      ask every unit how it is (radio, GPS, battery, version)
+  waddle mesh server [--pr N]
+                         update the Pi server over SSH and check it came back
 
 Every unit must show File Transfer -> Join a Network (on the same Wi-Fi as this
 computer) while setup runs. Each unit made its own keys on first start; its
@@ -279,7 +281,34 @@ def check(args):
     return 1 if bad else 0
 
 
+def server_update(args):
+    """Puts the newest server code on the Pi (or a PR's), installs and checks it."""
+    pi = None
+    if os.path.exists(CONFIG):
+        with open(CONFIG) as f:
+            pi = json.load(f).get("pi")
+    pr = args[args.index("--pr") + 1] if "--pr" in args else None
+    pi = ask("Pi over SSH", pi or "")
+    if not pi:
+        raise RuntimeError("no Pi given")
+    ref = f"refs/pull/{pr}/head" if pr else "refs/heads/waddle"
+    say(f"\n{B}🐧 waddle mesh server{N} → {pi}  {DIM}({ref}){N}\n")
+    say(f"{C}▸{N} Downloading and installing")
+    ssh(pi, "set -e; d=$(mktemp -d); "
+            f"curl -sfL https://codeload.github.com/{REPO}/tar.gz/{ref} | "
+            "tar xz -C \"$d\" --strip-components=1 --wildcards '*/server'; "
+            "sudo bash \"$d/server/install.sh\" >/dev/null; rm -rf \"$d\"")
+    say(f"  {G}✓{N} Installed")
+    time.sleep(3)
+    status = json.loads(ssh(pi, "curl -sk https://localhost:8443/api/status"))
+    say(f"  {G}✓{N} Running · gateway {status.get('gateway')} · {len(status.get('units', []))} units seen")
+    say()
+    return 0
+
+
 def main(argv):
+    if argv[:1] == ["server"]:
+        return server_update(argv[1:])
     if argv[:1] == ["setup"]:
         return setup()
     if argv[:1] == ["new-unit"]:
