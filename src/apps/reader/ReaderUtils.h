@@ -65,7 +65,7 @@ struct PageTurnResult {
 };
 
 inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
-  const bool usePress = READER_SETTINGS.longPressButtonBehavior == SETTINGS.OFF;
+  const bool usePress = READER_SETTINGS.longPressButtonBehavior == ReaderSettings::OFF;
   const bool tiltNext = READER_SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedForward();
   const bool tiltPrev = READER_SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedBack();
   const bool swapFront = input.isNavDirectionSwapped();

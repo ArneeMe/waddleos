@@ -194,7 +194,7 @@ void ReaderActivity::loop() {
 
   const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
   const bool skip =
-      !fromTilt && READER_SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP && heldMs >= ReaderUtils::SKIP_HOLD_MS;
+      !fromTilt && READER_SETTINGS.longPressButtonBehavior == ReaderSettings::CHAPTER_SKIP && heldMs >= ReaderUtils::SKIP_HOLD_MS;
 
   const bool changed = skip ? skipPages(prevTriggered ? -10 : 10) : pageTurn(!prevTriggered);
   // A skip is navigation, not reading: it never counts toward session dwell.

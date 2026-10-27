@@ -996,7 +996,7 @@ void EpubReaderActivity::loop() {
 
   const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
   const bool longPress = !fromTilt && heldMs >= ReaderUtils::SKIP_HOLD_MS;
-  if (longPress && READER_SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP) {
+  if (longPress && READER_SETTINGS.longPressButtonBehavior == ReaderSettings::CHAPTER_SKIP) {
     const bool succeeded = skipPages(nextTriggered ? 1 : -1);
     notePageTurn(false, succeeded);
     if (succeeded && (touch.prev || touch.next)) haptic_feedback::touchAction(true);
@@ -1004,10 +1004,10 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  if (longPress && READER_SETTINGS.longPressButtonBehavior == SETTINGS.ORIENTATION_CHANGE) {
+  if (longPress && READER_SETTINGS.longPressButtonBehavior == ReaderSettings::ORIENTATION_CHANGE) {
     const uint8_t newOrientation =
-        nextTriggered ? (READER_SETTINGS.orientation - 1 + SETTINGS.ORIENTATION_COUNT) % SETTINGS.ORIENTATION_COUNT
-                      : (READER_SETTINGS.orientation + 1) % SETTINGS.ORIENTATION_COUNT;
+        nextTriggered ? (READER_SETTINGS.orientation - 1 + ReaderSettings::ORIENTATION_COUNT) % ReaderSettings::ORIENTATION_COUNT
+                      : (READER_SETTINGS.orientation + 1) % ReaderSettings::ORIENTATION_COUNT;
     applyOrientation(newOrientation);
     if (touch.prev || touch.next) haptic_feedback::touchAction(true);
     requestUpdate();
