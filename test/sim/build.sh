@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 out=${1:?output directory}
 mkdir -p "$out"
-json=$(ls -d .pio/libdeps/*/ArduinoJson/src 2>/dev/null | head -1)
+json=$(ls -d .pio/libdeps/*/ArduinoJson/src 2>/dev/null | head -1 || true)
 if [ -z "$json" ]; then
   # Without a PlatformIO build: the same ArduinoJson version, header only.
   json="$out/ArduinoJson/src"
