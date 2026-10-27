@@ -117,7 +117,8 @@ The server stores packets exactly as received and can read none of them.
 A unit that hears a packet it has not seen (by type, sender, counter and
 fragment) and whose hops left is above 0 sends it again with hops − 1 after a
 random delay of 0.5–2.5 s, unless it heard another unit relay it first. Units
-never relay their own packets.
+never relay their own packets. The gateway relays too, without the delay: it sits at
+home with the best antenna, and units that hear its copy skip their own.
 
 ## Airtime
 

@@ -191,6 +191,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.server.handle(bytes.fromhex(V["ack"]), "lora"), [])
         self.assertEqual(self.store.counts(), {})
 
+    def test_lora_packets_are_relayed_once(self):
+        sent = []
+
+        class Radio:
+            def send(self, raw):
+                sent.append(raw)
+
+        self.server.radio = Radio()
+        pkts, _ = packets("group message")
+        self.server.handle(pkts[0], "lora")
+        self.server.handle(pkts[0], "lora")
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(P.parse_header(sent[0]).hops, P.DEFAULT_HOPS - 1)
+        self.assertEqual(sent[0][4:], pkts[0][4:])  # only the hops changed
+
     def test_wifi_packets_go_out_over_lora(self):
         sent = []
 

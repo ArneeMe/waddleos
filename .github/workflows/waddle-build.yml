@@ -93,6 +93,10 @@ jobs:
           # The reader, the mesh unit (T5) and the mesh gateway (Heltec V4).
           pio run -e "$PIO_ENV" -e t5s3-waddle -e heltec-gateway -j"$(nproc)" 2>&1 | tee build.log
 
+      # Three simulated units and the server, running the real mesh code.
+      - name: Mesh simulation
+        run: bash test/sim/run.sh
+
       # Compiler errors as annotations, readable through the checks API.
       - name: Report build errors
         if: failure()

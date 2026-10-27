@@ -1,5 +1,6 @@
 """What the server does with a packet, whichever way it came (LoRa or Wi-Fi)."""
 
+import collections
 import logging
 import time
 
@@ -16,6 +17,7 @@ class Server:
         self.store = store
         self.group = group
         self.radio = None  # set by the gateway link: radio.send(raw)
+        self.relayed = collections.deque(maxlen=256)  # packets already passed on
 
     def _ack(self, member, counter, state, to):
         h = P.Header(type=P.ACK, group=self.group, sender=P.SERVER, recipient=to,
@@ -37,6 +39,8 @@ class Server:
         if h.group != self.group or h.sender == P.SERVER:
             return []
         self.store.seen_unit(h.sender, via, rssi=rssi, snr=snr)
+        if via == "lora":
+            self._relay(h, raw)
 
         if h.type in (P.MSG, P.POS, P.SOS):
             new = self.store.add_packet(h, raw, via)
@@ -70,6 +74,17 @@ class Server:
             self.store.seen_unit(h.sender, via, battery=req.battery, build="%02x" % req.build)
             return self.sync_answer(h.sender, req, via)
         return []
+
+    def _relay(self, h, raw):
+        """The gateway passes packets on like a unit does (protocol/PROTOCOL.md,
+        "Relaying"), at once, so the units hear it and skip their own relay."""
+        key = (h.type, h.sender, h.counter, h.piece_index)
+        if not self.radio or h.hops == 0 or h.type == P.SYNC_REQ or key in self.relayed:
+            return
+        self.relayed.append(key)
+        out = bytearray(raw)
+        out[3] = (out[3] & 0xF0) | (h.hops - 1)
+        self.radio.send(bytes(out))
 
     def sync_answer(self, member, req, via):
         """Everything member is missing: messages, then positions and ACKs."""

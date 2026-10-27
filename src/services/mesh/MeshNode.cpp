@@ -383,10 +383,13 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
   m.time = get32(plain.data());
   memcpy(m.prevHash, plain.data() + 4, 4);
   m.text.assign(reinterpret_cast<const char*>(plain.data() + MSG_PREFIX), plain.size() - MSG_PREFIX);
+  // The chain: the previous message from this sender should be the one we have.
+  // A message older than our newest from them fills a gap and is not checked.
   uint8_t expected[4];
   store_.lastHash(conversation, h.sender, expected);
   const bool haveEarlier = expected[0] | expected[1] | expected[2] | expected[3];
-  m.chainWarning = haveEarlier && memcmp(expected, m.prevHash, 4) != 0;
+  const bool late = h.counter < store_.lastChainCounter(conversation, h.sender);
+  m.chainWarning = haveEarlier && !late && memcmp(expected, m.prevHash, 4) != 0;
   store_.addMessage(conversation, m);
   sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
   // The radio's clock source when the unit has none yet.
