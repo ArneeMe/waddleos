@@ -171,7 +171,8 @@ jobs:
   # Publishes every device that built, even when another one failed.
   publish:
     needs: build
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    # Pushes to waddle and PRs from this repo; a manual run only builds.
+    if: ${{ !cancelled() && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
