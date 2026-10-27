@@ -14,6 +14,7 @@
 #include "core/activities/settings/SdFirmwareUpdateActivity.h"
 #include "core/components/UITheme.h"
 #include "core/fontIds.h"
+#include "core/network/FirmwareBoardTag.h"
 #include "core/network/HttpDownloader.h"
 
 namespace {
@@ -67,7 +68,9 @@ void UpdateActivity::fail(const char* message) {
   requestUpdate();
 }
 
-// version.json: {"versjon": "WaddleOS 1.42", "build": "abc1234", "dato": "26. okt kl 22:22", "melding": "..."}
+// version.json has one entry per device, {"x4pro": {"versjon": "WaddleOS 2.4", "build": "abc1234",
+// "dato": "26. okt kl 22:22", "melding": "..."}, "t5s3": {...}}, and the reader's entry at the top level
+// too, for readers from before there was one version per device.
 void UpdateActivity::check() {
   if (lowHeap()) return fail("For lite minne");
   std::string body;
@@ -78,8 +81,10 @@ void UpdateActivity::check() {
                                              return true;
                                            });
   waddle::wifi::off();
-  JsonDocument doc;
-  if (!ok || deserializeJson(doc, body) || doc["build"].isNull()) return fail("Fant ingen oppdatering");
+  JsonDocument all;
+  if (!ok || deserializeJson(all, body)) return fail("Fant ingen oppdatering");
+  const JsonVariantConst doc = all[std::string(board_tag::boardName(), board_tag::boardNameLen())];
+  if (doc["build"].isNull()) return fail("Fant ingen oppdatering");
   {
     RenderLock lock(*this);
     latestBuild = doc["build"] | "";

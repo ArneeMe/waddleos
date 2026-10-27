@@ -20,6 +20,14 @@ From PR #29 (Oppdater fastvare) and #30 (core/apps/products, settings per app):
 - [ ] Web settings page (Filoverføring → open the reader's address in a browser):
       settings show and can be changed.
 
+From PR #32 (keyboard, one version per device):
+
+- [ ] Any text field (Wi-Fi password): the keyboard has æ, ø and å; the "Lang"
+      key switches to the English layout and back.
+- [ ] Oppdater fastvare shows "WaddleOS 2.<n>". After installing it says it is
+      the newest; a change to only the mesh unit does not offer the reader an update.
+- [ ] `waddle update --pr <n>` installs a pull request's test build.
+
 ## Mesh unit (T5 S3 Pro)
 
 Flash the first time over USB: `pio run -e t5s3-waddle -t upload` (hold BOOT
@@ -54,9 +62,15 @@ Setup and messages (two units, or one unit and the gateway):
 - [ ] Synk in Meldinger with the Pi reachable: "Server: tilkoblet".
 - [ ] Away from home on a phone hotspot: Synk reaches the Pi through the router.
 
+- [ ] Asleep (BOOT button), then a message from the other unit: the sleep screen
+      gets a line "1 nye meldinger · sist fra …" without waking up.
+- [ ] Keyboard: æ, ø, å and the "Lang" key, as on the reader.
+
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
       "SOS fra …" with distance. "Avbryt SOS" ends it on both.
+- [ ] The SOS screen shows "Mottatt av <name>" once the other unit has it, "og
+      serveren" when the Pi has it, and "Sett av <name>" after they tap "Sett".
 
 Battery (the spec asks for 3 days):
 - [ ] Note the battery % in the morning and the evening of a normal day with the
@@ -75,4 +89,6 @@ Flash the gateway: plug it into the computer, `pio run -e heltec-gateway -t uplo
       and the status page `https://<pi>:8443/` says "tilkoblet".
 - [ ] Status page opens from a phone on the home Wi-Fi, and not from mobile data.
 - [ ] After a reboot of the Pi the server starts by itself.
+- [ ] Two units out of range of each other but both near the gateway: a message
+      goes straight through (the gateway passes it on), within seconds.
 - [ ] Next morning: a backup file in `/var/backups/waddlemesh/`.

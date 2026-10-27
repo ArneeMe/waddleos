@@ -9,6 +9,7 @@ The reader must be on File Transfer -> Join a Network.
   waddle update                      # latest build from GitHub
   waddle update firmware.bin         # local file, e.g. .pio/build/x4pro-waddle/firmware.bin
   waddle update --ip 192.168.50.185  # reader IP (or set WADDLE_IP)
+  waddle update --pr 32              # test build of pull request 32
   waddle update --check              # download and check only, do not upload
 
 Only uses the Python standard library.
@@ -87,21 +88,25 @@ def progress(done, total, start):
 # 1. Firmware -----------------------------------------------------------------
 
 
-def fetch_latest():
-    step(f"Fetching latest build from github.com/{REPO}")
+def fetch_latest(tag=TAG):
+    step(f"Fetching {'latest build' if tag == TAG else tag} from github.com/{REPO}")
     try:
-        with urllib.request.urlopen(f"https://api.github.com/repos/{REPO}/releases/tags/{TAG}", timeout=15) as r:
+        with urllib.request.urlopen(f"https://api.github.com/repos/{REPO}/releases/tags/{tag}", timeout=15) as r:
             release = json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            die(f"No {tag} release", "A PR's test build appears when its build has finished, and goes when it closes.")
+        die(f"Could not reach GitHub: {e}")
     except urllib.error.URLError as e:
         die(f"Could not reach GitHub: {e}")
     asset = next((a for a in release.get("assets", []) if a["name"] == ASSET), None)
     if not asset:
-        die(f"No {ASSET} in the {TAG} release yet", "Has the WaddleOS build workflow finished?")
+        die(f"No {ASSET} in the {tag} release yet", "Has the WaddleOS build workflow finished?")
     ok(f"{release.get('body', '').strip() or TAG}")
     print(f"    {DIM}published {asset['updated_at'].replace('T', ' ').rstrip('Z')} UTC{N}")
 
     CACHE.mkdir(parents=True, exist_ok=True)
-    path = CACHE / ASSET
+    path = CACHE / f"{tag}-{ASSET}"
     total = asset["size"]
     start = time.time()
     with urllib.request.urlopen(asset["browser_download_url"], timeout=60) as r, open(path, "wb") as f:
@@ -213,6 +218,7 @@ def main():
     p = argparse.ArgumentParser(prog="waddle update", description="Update the reader's firmware over Wi-Fi.")
     p.add_argument("file", nargs="?", help="local .bin (default: latest build from GitHub)")
     p.add_argument("--ip", default=os.environ.get("WADDLE_IP", DEFAULT_IP), help="reader IP (env WADDLE_IP)")
+    p.add_argument("--pr", type=int, metavar="N", help="install the test build of pull request N")
     p.add_argument("--check", action="store_true", help="only get and check the firmware, do not upload")
     args = p.parse_args()
 
@@ -224,7 +230,7 @@ def main():
         if board not in ASSETS:
             die(f"Unknown device '{board}'")
         ASSET, BOARD = ASSETS[board], board.encode()
-    path = Path(args.file) if args.file else fetch_latest()
+    path = Path(args.file) if args.file else fetch_latest(f"pr-{args.pr}" if args.pr else TAG)
     if not path.is_file():
         die(f"{path}: not found")
     data = path.read_bytes()

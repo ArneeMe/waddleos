@@ -1,8 +1,13 @@
 name: WaddleOS build
 
-# Builds the X4 Pro firmware for pull requests into waddle (check only) and on
-# every push to waddle, which also publishes it to the "waddle-latest" pre-release:
+# Tests and builds every device on its own, at the same time, so a slow or
+# broken build of one device does not hold up the others.
+#
+# Push to waddle: publishes the devices that built to the "waddle-latest"
+# pre-release, where arnee.me and `waddle update` get them:
 #   https://github.com/ArneeMe/waddleos/releases/download/waddle-latest/waddleos-x4pro.bin
+# Pull request: publishes them to a "pr-<number>" pre-release, for
+# `waddle update --pr <number>` (removed again when the PR closes).
 
 on:
   push:
@@ -19,16 +24,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Everything that runs on the computer, no device toolchain needed: the mesh
+  # protocol (C++ and Python against each other), the Pi server, and three
+  # simulated units talking through the server.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Mesh protocol
+        run: |
+          set -euo pipefail
+          bash test/mesh/run.sh
+          git diff --exit-code protocol/vectors.json
+      - name: Server
+        run: |
+          pip install -q cryptography
+          cd server && python3 -m unittest discover -s tests
+      - name: Mesh simulation
+        run: bash test/sim/run.sh
+      - name: Tools
+        run: python3 -m unittest discover -s tools/tests
+
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      PIO_ENV: x4pro-waddle
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: x4pro
+            env: x4pro-waddle
+            file: waddleos-x4pro.bin
+          - board: t5s3
+            env: t5s3-waddle
+            file: waddleos-t5.bin
+          - board: gateway
+            env: heltec-gateway
+            file: waddle-gateway.bin
+    name: build (${{ matrix.board }})
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+          # The full history: each device's version counts its own commits.
+          fetch-depth: 0
+          # The PR's own commit, not GitHub's temporary merge commit, so the
+          # version hash is the same before and after merging.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@v6
         with:
@@ -45,19 +89,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-          restore-keys: pio-${{ runner.os }}-
+          key: pio-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ matrix.env }}-
 
-      # Object files from the last build. SCons compares file contents, so
-      # unchanged sources are not compiled again.
+      # Object files from the last build of this device. SCons compares file
+      # contents, so unchanged sources are not compiled again.
       - name: Cache build output
         uses: actions/cache@v4
         with:
-          path: .pio
-          key: build-${{ env.PIO_ENV }}-${{ hashFiles('platformio.ini') }}-${{ github.sha }}
-          restore-keys: build-${{ env.PIO_ENV }}-${{ hashFiles('platformio.ini') }}-
+          path: |
+            .pio/build/${{ matrix.env }}
+            .pio/libdeps/${{ matrix.env }}
+          key: build-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}-${{ github.sha }}
+          restore-keys: build-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}-
 
-      # Same toolchain setup as release.yml.
       - name: Install PlatformIO Core
         run: |
           uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
@@ -69,33 +114,43 @@ jobs:
       - name: Pin pioarduino core inside the platform penv
         run: |
           set -euo pipefail
-          pio pkg install -e "$PIO_ENV"
+          pio pkg install -e "${{ matrix.env }}"
           uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
 
-      # The mesh protocol: C++ library and Pi server, checked against each other.
-      - name: Mesh tests
+      - name: Version
+        env:
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          bash test/mesh/run.sh
-          git diff --exit-code protocol/vectors.json
-          pip install -q cryptography
-          (cd server && python3 -m unittest discover -s tests)
+          read -r count hash < <(bash scripts/board-version.sh "${{ matrix.board }}")
+          version="WaddleOS 2.${count}${PR:+ (PR $PR)}"
+          # A PR build always differs from the published one, so it can be installed.
+          build="${hash}${PR:+-pr$PR}"
+          # Shown on the device and compared with version.json (Oppdater fastvare).
+          # A header only WaddleVersion.cpp includes, so the rest of the cache stays valid.
+          {
+            echo "#define WADDLE_VERSION \"${version}\""
+            echo "#define WADDLE_BUILD \"${build}\""
+          } > src/core/waddle/WaddleBuild.h
+          python3 - "${{ matrix.board }}" "$version" "$build" "$hash" <<'PY'
+          import json, subprocess, sys
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          board, version, build, commit = sys.argv[1:]
+          months = ["jan", "feb", "mar", "apr", "mai", "jun", "jul", "aug", "sep", "okt", "nov", "des"]
+          now = datetime.now(ZoneInfo("Europe/Oslo"))
+          note = subprocess.check_output(["git", "log", "-1", "--format=%s", commit], text=True).strip()
+          json.dump({"board": board, "versjon": version, "build": build,
+                     "dato": f"{now.day}. {months[now.month - 1]} kl {now:%H:%M}", "melding": note},
+                    open(f"version-{board}.json", "w"), ensure_ascii=False)
+          PY
+          echo "${version} (${build})"
 
       - name: Build
         run: |
           set -o pipefail
-          # Shown on the reader and compared with version.json (Oppdater fastvare).
-          # A header only WaddleVersion.cpp includes, so the rest of the cache stays valid.
-          {
-            echo "#define WADDLE_VERSION \"WaddleOS 1.${GITHUB_RUN_NUMBER}\""
-            echo "#define WADDLE_BUILD \"$(git rev-parse --short=7 HEAD)\""
-          } > src/core/waddle/WaddleBuild.h
-          # The reader, the mesh unit (T5) and the mesh gateway (Heltec V4).
-          pio run -e "$PIO_ENV" -e t5s3-waddle -e heltec-gateway -j"$(nproc)" 2>&1 | tee build.log
-
-      # Three simulated units and the server, running the real mesh code.
-      - name: Mesh simulation
-        run: bash test/sim/run.sh
+          pio run -e "${{ matrix.env }}" -j"$(nproc)" 2>&1 | tee build.log
+          cp ".pio/build/${{ matrix.env }}/firmware.bin" "${{ matrix.file }}"
 
       # Compiler errors as annotations, readable through the checks API.
       - name: Report build errors
@@ -105,40 +160,54 @@ jobs:
             echo "::error::${line}"
           done
 
-      - name: Publish to waddle-latest
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          cp ".pio/build/$PIO_ENV/firmware.bin" waddleos-x4pro.bin
-          cp .pio/build/t5s3-waddle/firmware.bin waddleos-t5.bin
-          cp .pio/build/heltec-gateway/firmware.bin waddle-gateway.bin
-          sha=$(git rev-parse --short=7 HEAD)
-          notes="Built from ${sha}: $(git log -1 --format=%s)"
-          if gh release view waddle-latest >/dev/null 2>&1; then
-            gh release edit waddle-latest --notes "$notes" --target "$GITHUB_SHA"
-          else
-            gh release create waddle-latest --prerelease --title "WaddleOS latest" --notes "$notes" --target "$GITHUB_SHA"
-          fi
-          # The reader's Oppdater fastvare reads this to see if a newer build exists.
-          python3 - "$sha" "WaddleOS 1.${GITHUB_RUN_NUMBER}" <<'PY'
-          import json, subprocess, sys
-          from datetime import datetime
-          from zoneinfo import ZoneInfo
-          months = ["jan", "feb", "mar", "apr", "mai", "jun", "jul", "aug", "sep", "okt", "nov", "des"]
-          now = datetime.now(ZoneInfo("Europe/Oslo"))
-          note = subprocess.check_output(["git", "log", "-1", "--format=%s"], text=True).strip()
-          json.dump({"versjon": sys.argv[2], "build": sys.argv[1], "dato": f"{now.day}. {months[now.month - 1]} kl {now:%H:%M}", "melding": note},
-                    open("version.json", "w"), ensure_ascii=False)
-          PY
-          gh release upload waddle-latest waddleos-x4pro.bin waddleos-t5.bin waddle-gateway.bin version.json --clobber
-
-      - name: Copy firmware
-        run: cp ".pio/build/$PIO_ENV/firmware.bin" waddleos-x4pro.bin
-
       - uses: actions/upload-artifact@v6
         with:
-          name: waddleos-x4pro
-          path: waddleos-x4pro.bin
+          name: firmware-${{ matrix.board }}
+          path: |
+            ${{ matrix.file }}
+            version-${{ matrix.board }}.json
           retention-days: 14
+
+  # Publishes every device that built, even when another one failed.
+  publish:
+    needs: build
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'waddle-latest' }}
+      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: firmware-*
+          merge-multiple: true
+          path: out
+      - name: Publish
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          bins=(out/*.bin)
+          if [ ${#bins[@]} -eq 0 ]; then echo "Nothing built."; exit 1; fi
+          if [ "$TAG" = waddle-latest ]; then
+            title="WaddleOS latest"
+            notes="Built from ${SHA::7}."
+          else
+            title="WaddleOS PR ${TAG#pr-}"
+            notes="Test build of pull request #${TAG#pr-}. Install with: waddle update --pr ${TAG#pr-}"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes "$notes" --target "$SHA"
+            gh release download "$TAG" -p version.json -O old.json || true
+          else
+            gh release create "$TAG" --prerelease --title "$title" --notes "$notes" --target "$SHA"
+          fi
+          python3 scripts/version_json.py old.json version.json out/version-*.json
+          cat version.json
+          gh release upload "$TAG" "${bins[@]}" version.json --clobber

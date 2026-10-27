@@ -1,0 +1,21 @@
+name: Remove PR test build
+
+# Deletes the "pr-<number>" pre-release (and its tag) that waddle-build.yml made
+# for a pull request, once the pull request is merged or closed.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [waddle]
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release delete "pr-${{ github.event.pull_request.number }}" --cleanup-tag --yes || true
