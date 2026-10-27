@@ -10,6 +10,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "SimArduino.h"
 
@@ -33,6 +34,8 @@ class HalFile {
     return c == EOF ? -1 : c;
   }
   size_t write(const void* buf, size_t n) { return f_ ? std::fwrite(buf, 1, n, f_) : 0; }
+  bool seek(size_t pos) { return f_ && std::fseek(f_, long(pos), SEEK_SET) == 0; }
+  bool seekCur(int64_t offset) { return f_ && std::fseek(f_, long(offset), SEEK_CUR) == 0; }
   bool close() {
     if (f_) std::fclose(f_);
     f_ = nullptr;
@@ -59,6 +62,15 @@ class HalStorage {
     std::ofstream f(full(path), std::ios::binary | std::ios::trunc);
     f.write(content.c_str(), std::streamsize(content.length()));
     return bool(f);
+  }
+  std::vector<String> listFiles(const char* path = "/", int maxFiles = 200) {
+    std::vector<String> names;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(full(path), ec)) {
+      if (int(names.size()) >= maxFiles) break;
+      names.emplace_back(e.path().filename().string().c_str());
+    }
+    return names;
   }
   HalFile open(const char* path, int oflag = O_RDONLY) {
     const char* mode = "rb";

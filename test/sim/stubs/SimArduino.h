@@ -3,6 +3,7 @@
 // The bits of Arduino the mesh code uses, for running it on a computer.
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -19,7 +20,7 @@ class String {
   String() = default;
   String(const char* s) : s_(s ? s : "") {}
   String(const char* s, size_t n) : s_(s, n) {}
-  String(const std::string& s) : s_(s) {}
+  explicit String(const std::string& s) : s_(s) {}
   const char* c_str() const { return s_.c_str(); }
   size_t length() const { return s_.size(); }
 
@@ -29,5 +30,6 @@ class String {
 
 struct SimEsp {
   uint32_t getFreeHeap() const { return 200000; }
+  [[noreturn]] void restart() const { std::abort(); }
 };
 inline SimEsp ESP;
