@@ -27,8 +27,8 @@ together (firmware, arnee.me, the `waddle` command) and
   once (a few minutes), then `pio run -e x4pro-waddle`. The PR build in GitHub
   Actions (`.github/workflows/waddle-build.yml`) checks again; its compiler
   errors show up as annotations on the `build` check run.
-- Only Arne can flash and look at the reader. Every firmware change needs a
-  short "how to check it on the device" note.
+- Only Arne can flash and look at the devices. Every firmware change adds its
+  "how to check it on the device" items to `docs/waddle/TESTING.md` in the same PR.
 - Show a preview (image mockup) before changing anything visual.
 - Explain things plainly; Arne is not a C++ or firmware specialist.
 
