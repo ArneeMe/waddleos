@@ -33,7 +33,7 @@ bool readHeader(const uint8_t* in, size_t len, Header& h) {
   if (h.pieceCount == 0 || h.pieceIndex >= h.pieceCount) return false;
   if (!h.fragmented && h.pieceCount != 1) return false;
   if (h.sender != SERVER && !isMember(h.sender)) return false;
-  if (h.recipient != GROUP && h.recipient != SERVER && !isMember(h.recipient)) return false;
+  if (h.recipient != GROUP && h.recipient != SERVER && !isMember(h.recipient) && !isSmallGroup(h.recipient)) return false;
   return true;
 }
 
@@ -90,15 +90,15 @@ bool readAck(const uint8_t* in, size_t len, Ack& a) {
 
 void writeSyncReq(const SyncReq& s, uint8_t out[SYNC_REQ_SIZE]) {
   for (int i = 0; i < MAX_MEMBERS; i++) put32(out + 4 * i, s.lastCounter[i]);
-  out[12] = s.battery;
-  out[13] = s.build;
+  out[4 * MAX_MEMBERS] = s.battery;
+  out[4 * MAX_MEMBERS + 1] = s.build;
 }
 
 bool readSyncReq(const uint8_t* in, size_t len, SyncReq& s) {
   if (len != SYNC_REQ_SIZE) return false;
   for (int i = 0; i < MAX_MEMBERS; i++) s.lastCounter[i] = get32(in + 4 * i);
-  s.battery = in[12];
-  s.build = in[13];
+  s.battery = in[4 * MAX_MEMBERS];
+  s.build = in[4 * MAX_MEMBERS + 1];
   return true;
 }
 

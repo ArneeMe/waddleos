@@ -10,7 +10,7 @@ namespace mesh::web {
 
 namespace {
 bool groupChanged = false;
-constexpr size_t MAX_GROUP_JSON = 8192;  // three members and a certificate
+constexpr size_t MAX_GROUP_JSON = 8192;  // four members, three small groups and a certificate
 }  // namespace
 
 bool takeGroupChanged() {

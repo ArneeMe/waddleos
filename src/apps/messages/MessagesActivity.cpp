@@ -4,6 +4,8 @@
 #include <HalDisplay.h>
 #include <Memory.h>
 
+#include <algorithm>
+
 #include "MeshUi.h"
 #include "core/MappedInputManager.h"
 #include "core/activities/util/KeyboardEntryActivity.h"
@@ -19,22 +21,27 @@ constexpr int TEXT_FONT = NOTOSANS_14_FONT_ID;
 
 mesh::Node& node() { return mesh::Node::get(); }
 
-const char* conversationName(const uint8_t conversation) {
-  return conversation == mesh::CONV_GROUP ? "Gruppe" : node().group().name(conversation);
+// Member bits of everyone in the group.
+uint8_t everyone() {
+  uint8_t bits = 0;
+  for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
+    if (node().group().member(n)->present) bits |= mesh::memberBit(n);
+  }
+  return bits;
 }
+
+bool isDm(const uint8_t conversation) { return conversation != mesh::CONV_GROUP && !mesh::isSmallConversation(conversation); }
 
 // What the sender sees under their own message.
 std::string deliveryText(const mesh::ChatMessage& m, const uint8_t conversation) {
-  const auto& group = node().group();
-  uint8_t others = 0;
-  for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
-    if (n != group.me && group.member(n)->present) others |= uint8_t(1u << (n - 1));
-  }
-  const uint8_t wanted = conversation == mesh::CONV_GROUP ? others : uint8_t(1u << (conversation - 1));
+  const uint8_t me = mesh::memberBit(node().group().me);
+  const uint8_t wanted = conversation == mesh::CONV_GROUP     ? uint8_t(everyone() & ~me)
+                         : mesh::isSmallConversation(conversation) ? uint8_t((conversation - mesh::CONV_SMALL) & ~me)
+                                                                   : mesh::memberBit(conversation);
   std::string when = meshui::timeText(m.time);
   if (!when.empty()) when += " · ";
   if (m.readBy && (m.readBy & wanted) == wanted) return when + "lest";
-  if ((m.deliveredTo & wanted) == wanted) return when + (conversation == mesh::CONV_GROUP ? "levert til alle" : "levert");
+  if ((m.deliveredTo & wanted) == wanted) return when + (isDm(conversation) ? "levert" : "levert til alle");
   if (m.deliveredTo) return when + "levert til noen";
   if (m.stored) return when + "lagret på server";
   if (m.sent) return when + "sendt";
@@ -56,12 +63,24 @@ void MessagesActivity::onEnter() {
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
     if (n != group.me && group.member(n)->present) conversations.push_back(n);
   }
+  // Small groups with messages; new ones start from "Ny gruppe".
+  bool anySmall = false;
+  for (uint8_t c = mesh::CONV_SMALL; c < mesh::CONVERSATIONS; c++) {
+    if (!node().canWrite(c)) continue;
+    anySmall = true;
+    if (node().store().summary(c).count) conversations.push_back(c);
+  }
+  if (anySmall) conversations.push_back(NEW_GROUP);
   requestUpdate();
 }
 
 bool MessagesActivity::preventAutoSleep() { return node().wifiSyncRunning(); }
 
 void MessagesActivity::open(const uint8_t conversation) {
+  if (conversation == NEW_GROUP) {
+    activityManager.replaceActivity(std::make_unique<NewGroupActivity>(renderer, mappedInput));
+    return;
+  }
   activityManager.replaceActivity(std::make_unique<ChatActivity>(renderer, mappedInput, conversation));
 }
 
@@ -97,7 +116,7 @@ void MessagesActivity::loop() {
       return;
     }
     for (size_t i = 0; i < rows.size(); i++) {
-      if (rows[i].contains(x, y)) {
+      if (rows[i].h && rows[i].contains(x, y)) {
         open(conversations[i]);
         return;
       }
@@ -138,15 +157,29 @@ void MessagesActivity::render(RenderLock&&) {
   y += 56;
   renderer.drawLine(SIDE, y, width - SIDE, y);
 
+  // As many rows as fit, scrolled so the focused one shows.
+  const int fit = std::max(1, (renderer.getScreenHeight() - y) / ROW_H);
+  const int count = static_cast<int>(conversations.size());
+  if (focus < first) first = focus;
+  if (focus >= first + fit) first = focus - fit + 1;
   rows.assign(conversations.size(), Box{});
-  for (size_t i = 0; i < conversations.size(); i++) {
+  for (int i = first; i < std::min(count, first + fit); i++) {
     const uint8_t c = conversations[i];
-    const auto& sum = node().store().summary(c);
     rows[i] = {0, y, width, ROW_H};
-    if (static_cast<int>(i) == focus) renderer.fillRect(0, y + 1, 6, ROW_H - 2);
-    renderer.drawText(UI_12_FONT_ID, SIDE, y + 12, conversationName(c), true, EpdFontFamily::BOLD);
+    if (i == focus) renderer.fillRect(0, y + 1, 6, ROW_H - 2);
+    if (c == NEW_GROUP) {
+      renderer.drawText(UI_12_FONT_ID, SIDE, y + 12, "+ Ny gruppe", true, EpdFontFamily::BOLD);
+      renderer.drawText(UI_10_FONT_ID, SIDE, y + 46, "Skriv til noen av dere");
+      y += ROW_H;
+      renderer.drawLine(SIDE, y, width - SIDE, y);
+      continue;
+    }
+    const auto& sum = node().store().summary(c);
+    renderer.drawText(UI_12_FONT_ID, SIDE, y + 12,
+                      renderer.truncatedText(UI_12_FONT_ID, meshui::conversationName(c).c_str(), width - 2 * SIDE - 70).c_str(),
+                      true, EpdFontFamily::BOLD);
     std::string preview = sum.count ? sum.lastText : std::string("Ingen meldinger ennå");
-    if (sum.count && c == mesh::CONV_GROUP) {
+    if (sum.count && !isDm(c)) {
       preview = std::string(sum.lastSender == node().group().me ? "Du" : node().group().name(sum.lastSender)) + ": " + preview;
     } else if (sum.count && sum.lastSender == node().group().me) {
       preview = "Du: " + preview;
@@ -169,9 +202,7 @@ void MessagesActivity::render(RenderLock&&) {
 // --- One conversation --------------------------------------------------------
 
 ChatActivity::ChatActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const uint8_t conversation)
-    : Activity("Chat", renderer, mappedInput), conversation(conversation) {}
-
-const char* ChatActivity::title() const { return conversationName(conversation); }
+    : Activity("Chat", renderer, mappedInput), conversation(conversation), name(meshui::conversationName(conversation)) {}
 
 void ChatActivity::reload() {
   auto loaded = node().store().load(conversation, 40);
@@ -188,7 +219,7 @@ void ChatActivity::onEnter() {
 
 void ChatActivity::write() {
   char heading[48];
-  snprintf(heading, sizeof(heading), "Til %s", title());
+  snprintf(heading, sizeof(heading), "Til %s", name.c_str());
   auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, heading, "", mesh::MAX_TEXT,
                                                            InputType::Text);
   if (!keyboard) return;
@@ -243,7 +274,7 @@ void ChatActivity::render(RenderLock&&) {
   const int height = renderer.getScreenHeight();
   const uint8_t me = node().group().me;
   renderer.clearScreen();
-  const int top = meshui::drawTitle(renderer, title());
+  const int top = meshui::drawTitle(renderer, name.c_str());
 
   // Input bar.
   inputY = height - 82;
@@ -267,7 +298,7 @@ void ChatActivity::render(RenderLock&&) {
     for (const auto& l : lines) textW = std::max(textW, renderer.getTextWidth(TEXT_FONT, l.c_str()));
     const int bw = std::min(BUBBLE_MAX_W, textW + 32);
     const int bh = static_cast<int>(lines.size()) * lineH + 20;
-    const bool showName = !mine && conversation == mesh::CONV_GROUP;
+    const bool showName = !mine && !isDm(conversation);
     const int below = mine ? smallH + 6 : 0;
     const int above = mine ? 0 : smallH + 6;
     const int needed = above + bh + below + 14;
@@ -303,4 +334,122 @@ void ChatActivity::render(RenderLock&&) {
 
   // Fast refresh while chatting, a clean one now and then against ghosting.
   renderer.displayBuffer(++renders % 8 == 0 ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH);
+}
+
+// --- Ny gruppe -----------------------------------------------------------------
+
+NewGroupActivity::NewGroupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
+    : Activity("NewGroup", renderer, mappedInput) {}
+
+void NewGroupActivity::onEnter() {
+  Activity::onEnter();
+  members.clear();
+  const auto& group = node().group();
+  for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
+    if (n != group.me && group.member(n)->present) members.push_back(n);
+  }
+  requestUpdate();
+}
+
+void NewGroupActivity::toggle(const int index) {
+  chosen ^= mesh::memberBit(members[index]);
+  problem = nullptr;
+  requestUpdate();
+}
+
+void NewGroupActivity::finish() {
+  const uint8_t bits = chosen | mesh::memberBit(node().group().me);
+  const int people = mesh::memberCount(bits);
+  uint8_t conversation = mesh::CONV_GROUP;
+  if (people < 2) {
+    problem = "Velg minst én";
+  } else if (bits == everyone()) {
+    conversation = mesh::CONV_GROUP;
+  } else if (people == 2) {
+    conversation = members[0];
+    for (const uint8_t n : members) {
+      if (chosen & mesh::memberBit(n)) conversation = n;
+    }
+  } else {
+    conversation = uint8_t(mesh::CONV_SMALL + bits);
+    if (!node().canWrite(conversation)) problem = "Mangler nøkkel: kjør \"waddle mesh setup\" på nytt";
+  }
+  if (problem) {
+    requestUpdate();
+    return;
+  }
+  activityManager.replaceActivity(std::make_unique<ChatActivity>(renderer, mappedInput, conversation));
+}
+
+void NewGroupActivity::loop() {
+  using Button = MappedInputManager::Button;
+  if (mappedInput.wasReleased(Button::Back) || mappedInput.wasHomeGesture()) {
+    activityManager.replaceActivity(std::make_unique<MessagesActivity>(renderer, mappedInput));
+    return;
+  }
+  const int count = static_cast<int>(members.size()) + 1;
+  if (mappedInput.wasReleased(Button::Down) || mappedInput.wasReleased(Button::PageForward)) {
+    focus = (focus + 1) % count;
+    requestUpdate();
+  } else if (mappedInput.wasReleased(Button::Up) || mappedInput.wasReleased(Button::PageBack)) {
+    focus = (focus + count - 1) % count;
+    requestUpdate();
+  } else if (mappedInput.wasReleased(Button::Confirm)) {
+    if (focus < static_cast<int>(members.size())) {
+      toggle(focus);
+    } else {
+      finish();
+    }
+    return;
+  }
+  int x = 0, y = 0;
+  if (mappedInput.wasScreenTapped(x, y)) {
+    if (doneBox.contains(x, y)) {
+      finish();
+      return;
+    }
+    for (size_t i = 0; i < rows.size(); i++) {
+      if (rows[i].contains(x, y)) {
+        toggle(static_cast<int>(i));
+        return;
+      }
+    }
+  }
+}
+
+void NewGroupActivity::render(RenderLock&&) {
+  const int width = renderer.getScreenWidth();
+  renderer.clearScreen();
+  int y = meshui::drawTitle(renderer, "Ny gruppe");
+  renderer.drawText(UI_10_FONT_ID, SIDE, y + 8, "Hvem skal være med? Du er alltid med.");
+  y += 50;
+  rows.assign(members.size(), Box{});
+  for (size_t i = 0; i < members.size(); i++) {
+    rows[i] = {0, y, width, ROW_H};
+    if (static_cast<int>(i) == focus) renderer.fillRect(0, y + 1, 6, ROW_H - 2);
+    const bool on = chosen & mesh::memberBit(members[i]);
+    const int box = 40;
+    const int bx = SIDE, by = y + (ROW_H - box) / 2;
+    if (on) {
+      renderer.fillRoundedRect(bx, by, box, box, 8, Color::Black);
+      renderer.drawLine(bx + 9, by + 21, bx + 17, by + 29, 3, false);
+      renderer.drawLine(bx + 17, by + 29, bx + 31, by + 11, 3, false);
+    } else {
+      renderer.drawRoundedRect(bx, by, box, box, 2, 8, true);
+    }
+    renderer.drawText(UI_12_FONT_ID, bx + box + 20, y + 26, node().group().name(members[i]), true,
+                      EpdFontFamily::BOLD);
+    y += ROW_H;
+    renderer.drawLine(SIDE, y, width - SIDE, y);
+  }
+  y += 30;
+  doneBox = {SIDE, y, width - 2 * SIDE, 70};
+  const bool focused = focus == static_cast<int>(members.size());
+  renderer.fillRoundedRect(doneBox.x, doneBox.y, doneBox.w, doneBox.h, 14, Color::Black);
+  if (focused) renderer.drawRoundedRect(doneBox.x + 6, doneBox.y + 6, doneBox.w - 12, doneBox.h - 12, 2, 10, false);
+  const char* label = "Skriv til dem";
+  const int lw = renderer.getTextWidth(UI_12_FONT_ID, label, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, doneBox.x + (doneBox.w - lw) / 2, doneBox.y + 20, label, false, EpdFontFamily::BOLD);
+  if (problem) renderer.drawCenteredText(UI_10_FONT_ID, doneBox.y + doneBox.h + 24, problem);
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }

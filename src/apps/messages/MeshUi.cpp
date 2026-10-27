@@ -5,8 +5,12 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <vector>
 
 #include "core/components/UITheme.h"
+#include "services/mesh/MeshGps.h"
+#include "services/mesh/MeshNode.h"
+#include "services/mesh/MeshSettings.h"
 
 namespace meshui {
 
@@ -106,6 +110,87 @@ std::string coordinatesText(const mesh::Position& p) {
     if (*c == '.') *c = ',';
   }
   return out;
+}
+
+std::string conversationName(const uint8_t conversation) {
+  const auto& group = mesh::Node::get().group();
+  if (conversation == mesh::CONV_GROUP) return "Alle";
+  if (!mesh::isSmallConversation(conversation)) return group.name(conversation);
+  const uint8_t bits = conversation - mesh::CONV_SMALL;
+  std::vector<std::string> names;
+  if (bits & mesh::memberBit(group.me)) names.push_back("Du");
+  for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
+    if (n != group.me && (bits & mesh::memberBit(n))) names.push_back(group.name(n));
+  }
+  std::string out;
+  for (size_t i = 0; i < names.size(); i++) {
+    out += (i == 0 ? "" : i + 1 == names.size() ? " og " : ", ") + names[i];
+  }
+  return out;
+}
+
+std::string contactText(const uint8_t member) {
+  auto& node = mesh::Node::get();
+  const auto& st = node.member(member);
+  std::vector<std::string> parts;
+  if (st.heardAtMs) {
+    const uint32_t ago = (millis() - st.heardAtMs) / 1000;
+    const uint32_t now = nowUnix();
+    parts.push_back("hørt " + (now ? agoText(now - ago) : std::string("nylig")));
+  } else if (st.hasPosition && st.position.time) {
+    parts.push_back("posisjon " + agoText(st.position.time));
+  } else {
+    parts.push_back("ikke hørt ennå");
+  }
+  if (st.battery) parts.push_back(std::to_string(st.battery) + " %");
+  // Distance when we both know where we are.
+  const auto& self = node.member(node.group().me);
+  mesh::Position mine;
+  bool haveMine = false;
+  if (mesh::gps::lastFix().valid) {
+    mine.latE7 = mesh::gps::lastFix().latE7;
+    mine.lonE7 = mesh::gps::lastFix().lonE7;
+    haveMine = true;
+  } else if (self.hasPosition) {
+    mine = self.position;
+    haveMine = true;
+  }
+  if (haveMine && st.hasPosition) {
+    parts.push_back(distanceText(distanceM(mine, st.position)) + " " + directionText(bearingDeg(mine, st.position)));
+  }
+  std::string out;
+  for (size_t i = 0; i < parts.size(); i++) out += (i ? " · " : "") + parts[i];
+  return out;
+}
+
+std::string modeText() {
+  const auto& s = MESH_SETTINGS;
+  const char* every = "lytter hele tiden";
+  switch (s.onTrip ? s.tripCheck : s.homeCheck) {
+    case MeshSettings::CHECK_15_MIN:
+      every = "sjekker hvert kvarter";
+      break;
+    case MeshSettings::CHECK_HOUR:
+      every = "sjekker hver time";
+      break;
+    case MeshSettings::CHECK_6_HOURS:
+      every = "sjekker hver 6. time";
+      break;
+    case MeshSettings::CHECK_DAY:
+      every = "sjekker en gang i døgnet";
+      break;
+    case MeshSettings::CHECK_ON_WAKE:
+      every = "sjekker når du vekker den";
+      break;
+    default:
+      break;
+  }
+  return std::string(s.onTrip ? "På tur" : "Hjemme") + " · " + every;
+}
+
+std::string lastCheckText() {
+  const uint32_t at = mesh::Node::get().lastCheckUnix();
+  return at ? "sist sjekket " + timeText(at) : std::string();
 }
 
 }  // namespace meshui

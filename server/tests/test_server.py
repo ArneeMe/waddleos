@@ -52,7 +52,7 @@ class PacketTests(unittest.TestCase):
         self.assertEqual((a.sender, a.counter, a.state), (1, 10, P.STORED))
         sync = bytes.fromhex(V["syncReq"])
         req = P.parse_sync_req(sync[P.HEADER_SIZE:])
-        self.assertEqual(req.last_counter, {1: 10, 2: 0, 3: 7})
+        self.assertEqual(req.last_counter, {1: 10, 2: 0, 3: 7, 4: 2})
         self.assertEqual((req.battery, req.build), (64, 0x2A))
         self.assertEqual(req.pack(), sync[P.HEADER_SIZE:])
 
@@ -115,6 +115,14 @@ class CryptoCrossCheck(unittest.TestCase):
         self.assertEqual(self.open(pkts, key), plain)
         group_plain = packets("group message")[1]
         self.assertEqual(plain[4:8], hashlib.blake2b(group_plain, digest_size=32).digest()[:4])
+
+    def test_small_group_message(self):
+        pkts, plain = packets("small group message")
+        h = P.parse_header(pkts[0])
+        self.assertEqual(h.recipient, P.SMALL_GROUP | 0x0B)
+        self.assertTrue(P.is_small_group(h.recipient))
+        self.assertEqual([P.can_read(m, 1, h.recipient) for m in P.MEMBERS], [True, True, False, True])
+        self.assertEqual(self.open(pkts, bytes.fromhex(V["smallGroupKey"])), plain)
 
     def test_tampering_is_caught(self):
         pkts, _ = packets("group message")

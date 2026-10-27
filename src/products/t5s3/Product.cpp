@@ -95,9 +95,11 @@ void drawUnreadOnSleepScreen(const uint32_t unread) {
 
 }  // namespace
 
-// Light sleep with the radio listening: messages still arrive, are stored,
-// acknowledged and relayed, and positions go out on time. The power button or
-// the user button wakes the screen; so does an SOS from a member.
+// Light sleep. With "Lytt hele tiden" the radio listens: messages arrive, are
+// stored, acknowledged and relayed as they come. Otherwise the radio sleeps too
+// and wakes for each check (MeshSettings), for positions on a trip and for
+// retries of unanswered messages. The power button or the user button wakes the
+// screen; so does an SOS from a member.
 bool sleep() {
   auto& node = mesh::Node::get();
   if (!node.configured()) return false;  // no group: sleep deeply, like the reader
@@ -109,14 +111,19 @@ bool sleep() {
   gpio_wakeup_enable(powerButton, GPIO_INTR_LOW_LEVEL);
   gpio_wakeup_enable(expanderIrq, GPIO_INTR_LOW_LEVEL);
   esp_sleep_enable_gpio_wakeup();
-  LOG_INF("SLP", "Light sleep, radio listening");
+  LOG_INF("SLP", "Light sleep, %s", node.listensAlways() ? "radio listening" : "radio asleep between checks");
   uint32_t shownUnread = node.store().totalUnread();
 
   while (true) {
-    const uint32_t ms = std::max<uint32_t>(node.msUntilWork(), 1000);
-    esp_sleep_enable_timer_wakeup(uint64_t(ms) * 1000ULL);
+    uint32_t ms = node.msUntilWork();
+    if (!node.listensAlways()) {
+      mesh::radio::pause();
+      ms = std::min(ms, node.msUntilCheck());
+    }
+    esp_sleep_enable_timer_wakeup(uint64_t(std::max<uint32_t>(ms, 1000)) * 1000ULL);
     esp_light_sleep_start();
     if (digitalRead(T5S3_BOOT_BTN) == LOW || BoardT5S3::readButton()) break;
+    // node.loop() starts a check that is due; sending wakes the radio by itself.
     mesh::radio::rearm();
     // Handle what woke us, and finish sending before sleeping again.
     do {
@@ -135,8 +142,10 @@ bool sleep() {
   gpio_wakeup_disable(radioIrq);
   gpio_wakeup_disable(powerButton);
   gpio_wakeup_disable(expanderIrq);
+  mesh::radio::resume();
   mesh::radio::rearm();
-  node.requestSync();
+  // Woken by hand: fetch what came in while asleep.
+  node.startCheck();
   LOG_INF("SLP", "Awake");
   return true;
 }

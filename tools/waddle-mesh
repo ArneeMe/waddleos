@@ -10,6 +10,7 @@ private DM key never leaves it. Uses only the Python standard library.
 """
 
 import hashlib
+import itertools
 import json
 import os
 import secrets
@@ -54,6 +55,16 @@ def ssh(host, command):
     return subprocess.run(["ssh", host, command], check=True, capture_output=True, text=True).stdout
 
 
+def small_groups(numbers):
+    """A key for every small group: some of the members, at least three.
+
+    With four units that is the four groups of three. Each unit gets only the
+    keys of the groups it is in, so the one left out cannot read them.
+    """
+    return [{"members": list(c), "key": secrets.token_hex(32)}
+            for size in range(3, len(numbers)) for c in itertools.combinations(numbers, size)]
+
+
 def setup():
     say(f"\n{B}🐧 waddle mesh setup{N}\n")
     old = {}
@@ -63,9 +74,9 @@ def setup():
         say(f"{DIM}Last setup: group {old.get('group')} with "
             f"{', '.join(m['name'] for m in old.get('members', []))}{N}\n")
 
-    count = int(ask("How many units (2 or 3)", str(len(old.get("members", [])) or 3)))
-    if count not in (2, 3):
-        raise RuntimeError("2 or 3 units")
+    count = int(ask("How many units (2 to 4)", str(len(old.get("members", [])) or 4)))
+    if count not in (2, 3, 4):
+        raise RuntimeError("2 to 4 units")
     say(f"\nOn every unit: {B}Meldinger{N} (or File Transfer) -> Join a Network. Each shows its address.\n")
     members = []
     for n in range(1, count + 1):
@@ -98,8 +109,10 @@ def setup():
 
     say(f"\n{C}▸{N} Giving every unit the group")
     public = [{k: m[k] for k in ("number", "name", "publicKey", "senderKey")} for m in members]
+    groups = small_groups([m["number"] for m in members])
     for m in members:
-        doc = {"group": group, "me": m["number"], "members": public}
+        doc = {"group": group, "me": m["number"], "members": public,
+               "groups": [g for g in groups if m["number"] in g["members"]]}
         if server:
             doc["server"] = {"url": server["url"], "token": server["tokens"][m["number"]], "cert": server["cert"]}
         unit_post(m["ip"], "/api/mesh/group", doc)

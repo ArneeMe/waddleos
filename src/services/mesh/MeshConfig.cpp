@@ -100,7 +100,7 @@ const char* parseGroup(const JsonDocument& doc, Group& group) {
   const int id = doc["group"] | -1;
   const int me = doc["me"] | -1;
   if (id < 0 || id > 255) return "group mangler";
-  if (!isMember(uint8_t(me))) return "me må være 1-3";
+  if (!isMember(uint8_t(me))) return "me må være 1-4";
   group.id = uint8_t(id);
   group.me = uint8_t(me);
   const Identity& mine = identity();
@@ -108,7 +108,7 @@ const char* parseGroup(const JsonDocument& doc, Group& group) {
   for (JsonObjectConst m : doc["members"].as<JsonArrayConst>()) {
     const int number = m["number"] | -1;
     Member* member = group.member(uint8_t(number));
-    if (!member) return "medlem må ha number 1-3";
+    if (!member) return "medlem må ha number 1-4";
     member->present = true;
     strlcpy(member->name, m["name"] | "", sizeof(member->name));
     if (!fromHex(m["publicKey"] | "", member->publicKey, KEY_SIZE)) return "publicKey er feil";
@@ -122,6 +122,13 @@ const char* parseGroup(const JsonDocument& doc, Group& group) {
   if (count < 2) return "gruppen trenger minst 2 medlemmer";
   for (auto& m : group.members) {
     if (m.present && &m != self) pairKey(mine.secret, mine.publicKey, m.publicKey, m.pairKey);
+  }
+  for (JsonObjectConst g : doc["groups"].as<JsonArrayConst>()) {
+    uint8_t bits = 0;
+    for (JsonVariantConst n : g["members"].as<JsonArrayConst>()) bits |= memberBit(n.as<uint8_t>());
+    if (!isSmallGroup(SMALL_GROUP | bits) || !(bits & memberBit(group.me))) return "en gruppe er feil";
+    if (!fromHex(g["key"] | "", group.smallGroupKeys[bits], KEY_SIZE)) return "gruppenøkkel er feil";
+    group.smallGroups |= uint16_t(1u << bits);
   }
   group.serverUrl = doc["server"]["url"] | "";
   group.serverToken = doc["server"]["token"] | "";

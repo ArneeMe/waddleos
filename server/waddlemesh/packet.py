@@ -15,7 +15,8 @@ HEADER_SIZE = 11
 DEFAULT_HOPS = 3
 SERVER = 0
 GROUP = 0xFF
-MEMBERS = (1, 2, 3)
+MEMBERS = (1, 2, 3, 4)
+SMALL_GROUP = 0x80  # | a bit per member: some of the members, at least three
 
 MSG, ACK, SYNC_REQ, POS, SOS = 1, 2, 3, 4, 5
 TYPE_NAMES = {MSG: "MSG", ACK: "ACK", SYNC_REQ: "SYNC_REQ", POS: "POS", SOS: "SOS"}
@@ -62,6 +63,17 @@ def is_member(n):
     return n in MEMBERS
 
 
+def is_small_group(recipient):
+    return recipient & 0xF0 == SMALL_GROUP and bin(recipient & 0x0F).count("1") >= 3
+
+
+def can_read(member, sender, recipient):
+    """Whether member can read a packet sender sent to recipient."""
+    if recipient == GROUP or member in (sender, recipient):
+        return True
+    return is_small_group(recipient) and bool(recipient & (1 << (member - 1)))
+
+
 def parse_header(raw):
     if len(raw) < HEADER_SIZE or len(raw) > MAX_PACKET:
         raise BadPacket("length %d" % len(raw))
@@ -85,7 +97,7 @@ def parse_header(raw):
         raise BadPacket("pieces")
     if h.sender != SERVER and not is_member(h.sender):
         raise BadPacket("sender %d" % h.sender)
-    if h.recipient not in (GROUP, SERVER) and not is_member(h.recipient):
+    if h.recipient not in (GROUP, SERVER) and not is_member(h.recipient) and not is_small_group(h.recipient):
         raise BadPacket("recipient %d" % h.recipient)
     return h
 
@@ -109,20 +121,23 @@ def parse_ack(body):
 
 @dataclass
 class SyncReq:
-    last_counter: dict = field(default_factory=lambda: {1: 0, 2: 0, 3: 0})
+    last_counter: dict = field(default_factory=lambda: {m: 0 for m in MEMBERS})
     battery: int = 0
     build: int = 0
 
     def pack(self):
-        return struct.pack("<IIIBB", self.last_counter[1], self.last_counter[2], self.last_counter[3],
-                           self.battery, self.build)
+        counters = [self.last_counter.get(m, 0) for m in MEMBERS]
+        return struct.pack("<%dIBB" % len(MEMBERS), *counters, self.battery, self.build)
+
+
+SYNC_REQ_SIZE = 4 * len(MEMBERS) + 2
 
 
 def parse_sync_req(body):
-    if len(body) != 14:
+    if len(body) != SYNC_REQ_SIZE:
         raise BadPacket("sync body")
-    a, b, c, battery, build = struct.unpack("<IIIBB", body)
-    return SyncReq({1: a, 2: b, 3: c}, battery, build)
+    *counters, battery, build = struct.unpack("<%dIBB" % len(MEMBERS), body)
+    return SyncReq(dict(zip(MEMBERS, counters)), battery, build)
 
 
 def frame(packets):

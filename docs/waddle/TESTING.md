@@ -42,13 +42,14 @@ Start-up, screen and buttons:
 - [ ] Battery % on Hjem looks right; it goes up while charging.
 - [ ] The clock keeps time after a restart (RTC).
 - [ ] Bøker opens the library; a book reads like on the reader.
-- [ ] Innstillinger shows Offline-modus and Del posisjon under Generelt.
+- [ ] Innstillinger shows Modus, Sjekk meldinger hjemme / på tur, Bruk Wi-Fi
+      hjemme and Del posisjon på tur.
 
 Radio and GPS (look in the log):
 - [ ] `RADIO Listening on 869.525 MHz` (not `SX1262 start failed`).
-- [ ] `GPS GPS talks at ... baud` with Offline-modus on. **Write down the baud and
+- [ ] `GPS GPS talks at ... baud` with Modus "På tur". **Write down the baud and
       the GPS lines with TXT in them**: that answers which GPS this unit has.
-- [ ] Outside with Offline-modus on: Kart shows "Du: 59,9… N …" within a few minutes.
+- [ ] Outside on "På tur": Kart shows "Du: 59,9… N …" within a few minutes.
 
 Setup and messages (two units, or one unit and the gateway):
 - [ ] Meldinger on a new unit says "ikke satt opp"; tapping it opens File Transfer.
@@ -66,6 +67,25 @@ Setup and messages (two units, or one unit and the gateway):
       gets a line "1 nye meldinger · sist fra …" without waking up.
 - [ ] Keyboard: æ, ø, å and the "Lang" key, as on the reader.
 
+Modus and checks (PR #33):
+- [ ] Hjem shows "Hjemme · sjekker en gang i døgnet"; tapping it switches to
+      "På tur · sjekker hver time" and back. The log says `GPS` wakes on "På tur".
+- [ ] Hjemme, asleep: the log says "radio asleep between checks". A message sent to
+      it does not arrive until you wake it; then it arrives within ~20 seconds
+      (from the Pi, or from the other unit) and Hjem says "sist sjekket <time>".
+- [ ] Set "Sjekk meldinger hjemme" to "Hver time", sleep, wait an hour: the sleep
+      screen gets "1 ny melding" without waking it.
+- [ ] "Lytt hele tiden": messages arrive at once while asleep, as before.
+- [ ] Your own SOS goes out at once in every mode. Someone else's SOS reaches a
+      sleeping unit at its next check (at once with "Lytt hele tiden").
+
+Four people and groups (PR #33):
+- [ ] `waddle mesh setup` with 4 units: Hjem shows "Alle" and three contacts, each
+      with "hørt … siden", battery % and (on a trip) distance.
+- [ ] Meldinger → "+ Ny gruppe", tick two people, "Skriv til dem": the chat is
+      called "Du, Kari og Per". They get it; the fourth unit does not.
+- [ ] Ticking one person opens the DM; ticking everyone opens "Alle".
+
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
       "SOS fra …" with distance. "Avbryt SOS" ends it on both.
@@ -74,8 +94,8 @@ SOS:
 
 Battery (the spec asks for 3 days):
 - [ ] Note the battery % in the morning and the evening of a normal day with the
-      unit asleep in a pocket, Offline-modus off. Tell Claude the numbers.
-- [ ] The same with Offline-modus on (GPS on).
+      unit asleep in a pocket, Modus "Hjemme" (checks once a day). Tell Claude the numbers.
+- [ ] The same on "På tur" (GPS on, checks every hour), and with "Lytt hele tiden".
 
 ## Gateway (Heltec V4) and server (Pi)
 

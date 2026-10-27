@@ -109,6 +109,29 @@ static void testBodies() {
         t.lastCounter[2] == 900 && t.battery == 40 && t.build == 0xab);
 }
 
+static void testSmallGroups() {
+  // Member 4 exists; member 5 does not.
+  uint8_t raw[HEADER_SIZE];
+  Header h = msgHeader(4, GROUP, 1), r;
+  writeHeader(h, raw);
+  CHECK(readHeader(raw, sizeof(raw), r) && r.sender == 4);
+  raw[4] = 5;
+  CHECK(!readHeader(raw, sizeof(raw), r));
+
+  // Members 1, 2 and 4.
+  const uint8_t trio = SMALL_GROUP | 0x0B;
+  CHECK(isSmallGroup(trio) && !isSmallGroup(SMALL_GROUP | 0x03) && !isSmallGroup(SMALL_GROUP));
+  h = msgHeader(1, trio, 2);
+  writeHeader(h, raw);
+  CHECK(readHeader(raw, sizeof(raw), r) && r.recipient == trio);
+  raw[5] = SMALL_GROUP | 0x05;  // only two members: a DM, not a group
+  CHECK(!readHeader(raw, sizeof(raw), r));
+
+  CHECK(canRead(2, 1, trio) && canRead(4, 1, trio) && !canRead(3, 1, trio));
+  CHECK(canRead(3, 1, GROUP) && canRead(2, 1, 2) && canRead(1, 1, 2) && !canRead(3, 1, 2));
+  CHECK(memberBit(4) == 8 && memberBit(0) == 0 && memberCount(0x0F) == 4);
+}
+
 // Seals, then receives the pieces in the given order and opens the result.
 static bool roundTrip(const Header& h, const uint8_t key[KEY_SIZE], const uint8_t* plain, size_t len,
                       const int* order, Sealed& sealed) {
@@ -247,6 +270,10 @@ static void writeVectors(const char* path) {
                hex(bPublic, KEY_SIZE).c_str());
   std::fprintf(f, "  \"pairKey\": \"%s\",\n", hex(dmKey, KEY_SIZE).c_str());
 
+  uint8_t smallKey[KEY_SIZE];
+  fill(smallKey, KEY_SIZE, 3);
+  std::fprintf(f, "  \"smallGroupKey\": \"%s\",\n", hex(smallKey, KEY_SIZE).c_str());
+
   static Sealed sealed;
   std::fprintf(f, "  \"messages\": [\n");
   struct Case {
@@ -278,10 +305,14 @@ static void writeVectors(const char* path) {
   Header dh = msgHeader(1, 2, 11);
   Header ph = msgHeader(1, GROUP, 12);
   ph.type = Type::Pos;
+  // Members 1, 2 and 4, under the small group's own key.
+  Header sh = msgHeader(1, SMALL_GROUP | 0x0B, 13);
   const Case cases[] = {{"group message", gh, senderKey, groupPlain},
                         {"direct message in 3 pieces", dh, dmKey, dmPlain},
-                        {"position", ph, senderKey, posPlain}};
-  for (size_t c = 0; c < 3; c++) {
+                        {"position", ph, senderKey, posPlain},
+                        {"small group message", sh, smallKey, groupPlain}};
+  constexpr size_t CASES = sizeof(cases) / sizeof(cases[0]);
+  for (size_t c = 0; c < CASES; c++) {
     const Case& k = cases[c];
     seal(k.h, k.key, reinterpret_cast<const uint8_t*>(k.plain.data()), k.plain.size(), sealed);
     std::fprintf(f, "    {\"name\": \"%s\", \"plain\": \"%s\", \"packets\": [", k.name,
@@ -289,7 +320,7 @@ static void writeVectors(const char* path) {
     for (int i = 0; i < sealed.count; i++) {
       std::fprintf(f, "%s\"%s\"", i ? ", " : "", hex(sealed.packets[i], sealed.lengths[i]).c_str());
     }
-    std::fprintf(f, "]}%s\n", c < 2 ? "," : "");
+    std::fprintf(f, "]}%s\n", c + 1 < CASES ? "," : "");
   }
   std::fprintf(f, "  ],\n");
 
@@ -307,6 +338,7 @@ static void writeVectors(const char* path) {
   s.lastCounter[0] = 10;
   s.lastCounter[1] = 0;
   s.lastCounter[2] = 7;
+  s.lastCounter[3] = 2;
   s.battery = 64;
   s.build = 0x2a;
   writeSyncReq(s, sb);
@@ -324,6 +356,7 @@ static void writeVectors(const char* path) {
 int main(int argc, char** argv) {
   testHeader();
   testBodies();
+  testSmallGroups();
   testSealOpen();
   testPairKey();
   testRadioRules();

@@ -21,8 +21,9 @@ namespace mesh {
 enum class ServerState : uint8_t { Unknown, Online, Offline };
 
 struct MemberStatus {
-  uint32_t heardAtMs = 0;  // last packet heard from the member (0 = never)
+  uint32_t heardAtMs = 0;  // last packet heard straight from the member's radio (0 = never)
   int rssi = 0;
+  uint8_t battery = 0;  // from their last sync request or position, 0 = unknown
   bool hasPosition = false;
   Position position;
   uint32_t positionAtMs = 0;
@@ -44,9 +45,11 @@ class Node {
   const Identity& me() const { return identity(); }
   MessageStore& store() { return store_; }
 
-  // Writes a message to a conversation (CONV_GROUP or a member number).
-  // False when it is too long or the unit has no group.
+  // Writes a message to a conversation (MessageStore.h). False when it is too
+  // long or the unit has no key for that conversation.
   bool sendText(uint8_t conversation, const std::string& text);
+  // Whether this unit has the key to write to the conversation.
+  bool canWrite(uint8_t conversation) const;
   // The conversation was shown: clears unread and tells the sender "read".
   void markRead(uint8_t conversation);
 
@@ -66,6 +69,17 @@ class Node {
 
   // Asks the server and the other units for what this unit missed (over LoRa).
   void requestSync();
+  // A check for messages: asks over LoRa (and the server over Wi-Fi at home),
+  // then listens for the answers for a little while. Runs by itself at the
+  // interval set in MeshSettings, and when the unit is woken.
+  void startCheck();
+  // Whether the radio should stay on while the unit sleeps: the interval is
+  // "all the time", or an SOS is going on.
+  bool listensAlways() const;
+  // Milliseconds until the next check (UINT32_MAX: only when woken).
+  uint32_t msUntilCheck() const;
+  // Unix time of the last check that reached anyone, 0 = none yet.
+  uint32_t lastCheckUnix() const { return lastCheckUnix_; }
   // Joins Wi-Fi and talks to the server directly. Runs in loop(); at most 30 s.
   void startWifiSync();
   bool wifiSyncRunning() const { return wifi_ != WifiStep::Idle; }
@@ -110,6 +124,9 @@ class Node {
   uint32_t wifiStartedMs_ = 0;
   uint32_t lastWifiSyncMs_ = 0;
   uint32_t lastSyncReqMs_ = 0;
+  uint32_t nextCheckMs_ = 0;
+  uint32_t checkUntilMs_ = 0;  // listening for the answers of a check
+  uint32_t lastCheckUnix_ = 0;
   uint32_t nextPositionMs_ = 0;
   bool sosActive_ = false;
   uint32_t nextSosMs_ = 0;
@@ -130,6 +147,7 @@ class Node {
   void handleAck(const Header& h, const uint8_t* body, size_t len);
   void handleSyncReq(const Header& h, const uint8_t* body, size_t len);
   const uint8_t* keyFor(const Header& h) const;
+  const uint8_t* sendingKey(uint8_t conversation) const;
   uint8_t conversationOfMine(uint32_t counter);
   void sendOutbox();
   void retryPending();
