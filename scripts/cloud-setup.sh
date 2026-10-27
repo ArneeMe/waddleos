@@ -25,7 +25,7 @@ cd "$(dirname "$0")/.."
 git submodule update --init --recursive -q
 # PlatformIO makes its own Python environment partway through the install, and
 # that one needs the certificate too: patch it and run the install again.
-if ! pio pkg install -e x4pro-waddle; then
+if ! pio pkg install -e x4pro-waddle -e t5s3-waddle -e heltec-gateway; then
   [ -f /root/.ccr/ca-bundle.crt ] && add_proxy_ca
   pio pkg install -e x4pro-waddle -e t5s3-waddle -e heltec-gateway
 fi
