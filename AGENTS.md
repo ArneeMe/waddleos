@@ -33,7 +33,9 @@ together (firmware, arnee.me, the `waddle` command) and
 
 ## Code
 
-- Our own code lives in `src/waddle/`. Upstream code may be edited directly.
+- `src/` is split into `core/` (shared), `apps/` (one folder per app) and
+  `products/` (one folder per device; `x4pro/` is the reader). WaddleOS base code
+  is in `src/core/waddle/`. Upstream code may be edited directly.
 - `WADDLE` and `WADDLE_PRIVATE` are always on in `x4pro-waddle`, the only
   build. Old `#if WADDLE` blocks may be simplified to plain code.
 - User-facing text goes through `tr(STR_*)` with Norwegian in

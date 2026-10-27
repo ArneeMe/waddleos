@@ -35,12 +35,12 @@ when changing a screen.
 Activities use `MappedInputManager::Button`, not raw `HalGPIO::BTN_*` indices
 except in `ButtonRemapActivity`. Front buttons are user-remappable; page buttons
 follow `SETTINGS.sideButtonLayout`. Inspect
-[MappedInputManager](../../src/MappedInputManager.cpp) for the mapping.
+[MappedInputManager](../../src/core/MappedInputManager.cpp) for the mapping.
 
 ### Input frames and ownership
 
 The main loop updates `MappedInputManager` before
-[ActivityManager::loop()](../../src/activities/ActivityManager.cpp).
+[ActivityManager::loop()](../../src/core/activities/ActivityManager.cpp).
 Activities read that shared snapshot; a second update can erase an edge.
 
 | Query | Physical-button meaning |
@@ -109,8 +109,8 @@ For non-PSRAM dictionary memory and `.dict.dz`, consult [dictionary.md](../../do
 
 ### Global Font Loading
 
-Built-ins are registered in `src/main.cpp`; inspect
-`lib/EpdFont/builtinFonts/all.h` and `src/fontIds.h` for the current set.
+Built-ins are registered in `src/products/x4pro/main.cpp`; inspect
+`lib/EpdFont/builtinFonts/all.h` and `src/core/fontIds.h` for the current set.
 Built-in glyph data uses static flash storage; rendering caches consume DRAM.
 SD/vector fonts have separate runtime ownership. Check `OMIT_FONTS` when changing
 registration or build footprint.

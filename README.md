@@ -13,7 +13,7 @@ CrossPoint. WaddleOS adds:
 - Hjem: clock, weather, the book you are reading and NRK headlines, with penguins.
 - Nyheter: NRK's top stories as a book, fetched from arnee.me.
 - A Bluesound remote.
-- Penguin boot and sleep screens (`src/waddle/`, `assets/waddle/`).
+- Penguin boot and sleep screens (`src/core/waddle/`, `assets/waddle/`).
 - One command on the computer, `waddle`, for updates, books and the dictionary.
 - A build for the X4 Pro only.
 

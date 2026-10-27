@@ -60,8 +60,8 @@ Decided:
 
 Phases:
 
-1. Restructure into `core/`, `apps/`, `services/`, `products/` with no
-   change in behavior (one pure-move PR).
+1. Done: `src/` split into `core/`, `apps/` and `products/x4pro/` with no
+   change in behavior. `services/` (radio, mesh, GPS) comes with phase 3.
 2. T5 bring-up: display, touch, buttons, battery, SD card.
 3. Radio: LoRa send and receive, measure power use.
 4. Messaging: group and direct messages, keys, ACK and sync.
