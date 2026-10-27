@@ -31,7 +31,7 @@ enum class SettingAction {
 struct SettingInfo {
   StrId nameId;
   SettingType type;
-  uint8_t CrossPointSettings::* valuePtr = nullptr;
+  uint8_t* valuePtr = nullptr;  // the value, in CrossPointSettings or an app's settings
   std::vector<StrId> enumValues;
   std::span<const StrId> staticEnumValues;
   std::vector<std::string> enumStringValues;  // runtime alternative to StrId enumValues (for SD card fonts etc.)
@@ -51,8 +51,8 @@ struct SettingInfo {
 
   bool webHidden = false;  // Persisted normally, but omitted from the generic Web Settings API
 
-  // Direct char[] string fields (for settings stored in CrossPointSettings)
-  size_t stringOffset = 0;
+  // Direct char[] string fields (for settings stored in CrossPointSettings or an app's settings)
+  char* stringPtr = nullptr;
   size_t stringMaxLen = 0;
 
   // Dynamic accessors (for settings stored outside CrossPointSettings, e.g. KOReaderCredentialStore)
@@ -80,7 +80,7 @@ struct SettingInfo {
     return staticEnumValues.empty() ? std::span<const StrId>(enumValues) : staticEnumValues;
   }
 
-  static SettingInfo Toggle(StrId nameId, uint8_t CrossPointSettings::* ptr, const char* key = nullptr,
+  static SettingInfo Toggle(StrId nameId, uint8_t* ptr, const char* key = nullptr,
                             StrId category = StrId::STR_NONE_OPT) {
     SettingInfo s;
     s.nameId = nameId;
@@ -91,7 +91,7 @@ struct SettingInfo {
     return s;
   }
 
-  static SettingInfo Enum(StrId nameId, uint8_t CrossPointSettings::* ptr, std::vector<StrId> values,
+  static SettingInfo Enum(StrId nameId, uint8_t* ptr, std::vector<StrId> values,
                           const char* key = nullptr, StrId category = StrId::STR_NONE_OPT) {
     SettingInfo s;
     s.nameId = nameId;
@@ -103,7 +103,7 @@ struct SettingInfo {
     return s;
   }
 
-  static SettingInfo StaticEnum(StrId nameId, uint8_t CrossPointSettings::* ptr, std::span<const StrId> values,
+  static SettingInfo StaticEnum(StrId nameId, uint8_t* ptr, std::span<const StrId> values,
                                 const char* key = nullptr, StrId category = StrId::STR_NONE_OPT) {
     SettingInfo s;
     s.nameId = nameId;
@@ -123,7 +123,7 @@ struct SettingInfo {
     return s;
   }
 
-  static SettingInfo Value(StrId nameId, uint8_t CrossPointSettings::* ptr, const ValueRange valueRange,
+  static SettingInfo Value(StrId nameId, uint8_t* ptr, const ValueRange valueRange,
                            const char* key = nullptr, StrId category = StrId::STR_NONE_OPT) {
     SettingInfo s;
     s.nameId = nameId;
@@ -135,12 +135,12 @@ struct SettingInfo {
     return s;
   }
 
-  static SettingInfo String(StrId nameId, const char* ptr, size_t maxLen, const char* key = nullptr,
+  static SettingInfo String(StrId nameId, char* ptr, size_t maxLen, const char* key = nullptr,
                             StrId category = StrId::STR_NONE_OPT) {
     SettingInfo s;
     s.nameId = nameId;
     s.type = SettingType::STRING;
-    s.stringOffset = (size_t)ptr - (size_t)&SETTINGS;
+    s.stringPtr = ptr;
     s.stringMaxLen = maxLen;
     s.key = key;
     s.category = category;

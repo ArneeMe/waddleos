@@ -1,4 +1,5 @@
 #include "EpubReaderMenuActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <BlePageTurner.h>
 #include <GfxRenderer.h>
@@ -63,7 +64,7 @@ void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, const 
   if (bleturner::status().compiledIn) {
     items.push_back({MenuAction::BLUETOOTH, StrId::STR_BT_PAGE_TURNER});
   }
-  if (SETTINGS.dictionaryName[0] != '\0') {
+  if (READER_SETTINGS.dictionaryName[0] != '\0') {
     items.push_back({MenuAction::DICTIONARY, StrId::STR_LOOKUP});
   }
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
@@ -111,7 +112,7 @@ void EpubReaderMenuActivity::activateIndex(const int index) {
                      pendingOrientation, [this](int idx) {
                        pendingOrientation = idx;
                        // Rotate the menu immediately. Only the renderer turns;
-                       // SETTINGS.orientation stays unchanged so the reader's
+                       // READER_SETTINGS.orientation stays unchanged so the reader's
                        // result handler still detects the change and reflows.
                        ReaderUtils::applyOrientation(renderer, pendingOrientation);
                        app.setDevice(uiTarget.deviceContext());  // hit rects follow the new frame

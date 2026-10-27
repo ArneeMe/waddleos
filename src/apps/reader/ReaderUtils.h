@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/CrossPointSettings.h"
+#include "apps/reader/ReaderSettings.h"
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalTiltSensor.h>
@@ -22,12 +23,12 @@ constexpr unsigned long BOOKMARK_HOLD_MS = 400;
 constexpr unsigned long BOOKMARK_MESSAGE_DURATION_MS = 2500;
 
 inline bool gestureAllowsSwipe(const uint8_t gesture) {
-  return gesture == CrossPointSettings::TAP_AND_SWIPE || gesture == CrossPointSettings::SWIPE_ONLY;
+  return gesture == ReaderSettings::TAP_AND_SWIPE || gesture == ReaderSettings::SWIPE_ONLY;
 }
 
 inline bool gestureAllowsTap(const uint8_t gesture) {
-  return gesture == CrossPointSettings::TAP_AND_SWIPE || gesture == CrossPointSettings::TAP_ONLY ||
-         gesture == CrossPointSettings::INVERTED_TAP;
+  return gesture == ReaderSettings::TAP_AND_SWIPE || gesture == ReaderSettings::TAP_ONLY ||
+         gesture == ReaderSettings::INVERTED_TAP;
 }
 
 inline bool isRtlBookLanguage(std::string_view tag) {
@@ -40,16 +41,16 @@ inline bool isRtlBookLanguage(std::string_view tag) {
 
 inline void applyOrientation(GfxRenderer& renderer, const uint8_t orientation) {
   switch (orientation) {
-    case CrossPointSettings::ORIENTATION::PORTRAIT:
+    case ReaderSettings::ORIENTATION::PORTRAIT:
       renderer.setOrientation(GfxRenderer::Orientation::Portrait);
       break;
-    case CrossPointSettings::ORIENTATION::LANDSCAPE_CW:
+    case ReaderSettings::ORIENTATION::LANDSCAPE_CW:
       renderer.setOrientation(GfxRenderer::Orientation::LandscapeClockwise);
       break;
-    case CrossPointSettings::ORIENTATION::INVERTED:
+    case ReaderSettings::ORIENTATION::INVERTED:
       renderer.setOrientation(GfxRenderer::Orientation::PortraitInverted);
       break;
-    case CrossPointSettings::ORIENTATION::LANDSCAPE_CCW:
+    case ReaderSettings::ORIENTATION::LANDSCAPE_CCW:
       renderer.setOrientation(GfxRenderer::Orientation::LandscapeCounterClockwise);
       break;
     default:
@@ -64,9 +65,9 @@ struct PageTurnResult {
 };
 
 inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
-  const bool usePress = SETTINGS.longPressButtonBehavior == SETTINGS.OFF;
-  const bool tiltNext = SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedForward();
-  const bool tiltPrev = SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedBack();
+  const bool usePress = READER_SETTINGS.longPressButtonBehavior == SETTINGS.OFF;
+  const bool tiltNext = READER_SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedForward();
+  const bool tiltPrev = READER_SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedBack();
   const bool swapFront = input.isNavDirectionSwapped();
   const auto prevButton = swapFront ? MappedInputManager::Button::Right : MappedInputManager::Button::Left;
   const auto nextButton = swapFront ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
@@ -93,7 +94,7 @@ struct TouchPageTurn {
 inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const MappedInputManager& input,
                                          const bool rtlBook = false) {
   TouchPageTurn result{false, false, 0};
-  if (!SETTINGS.touchReaderControls || !input.hasTouch()) {
+  if (!READER_SETTINGS.touchReaderControls || !input.hasTouch()) {
     return result;
   }
 
@@ -101,14 +102,14 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
   const auto dir = input.wasSwipe();
   if (dir != MappedInputManager::SwipeDir::None) {
     result.next = dir == (rtlBook ? MappedInputManager::SwipeDir::Right : MappedInputManager::SwipeDir::Left) &&
-                  gestureAllowsSwipe(SETTINGS.pageTurnGesture);
+                  gestureAllowsSwipe(READER_SETTINGS.pageTurnGesture);
     result.prev = dir == (rtlBook ? MappedInputManager::SwipeDir::Left : MappedInputManager::SwipeDir::Right) &&
-                  gestureAllowsSwipe(SETTINGS.previousPageGesture);
+                  gestureAllowsSwipe(READER_SETTINGS.previousPageGesture);
     return result;
   }
 
-  const bool nextTaps = gestureAllowsTap(SETTINGS.pageTurnGesture);
-  const bool prevTaps = gestureAllowsTap(SETTINGS.previousPageGesture);
+  const bool nextTaps = gestureAllowsTap(READER_SETTINGS.pageTurnGesture);
+  const bool prevTaps = gestureAllowsTap(READER_SETTINGS.previousPageGesture);
   if (!nextTaps && !prevTaps) {
     return result;
   }
@@ -123,7 +124,7 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
   const int height = renderer.getScreenHeight();
   // The centered reader-menu tap target (isTouchMenuTap below) keeps priority
   // over the page-turn zones.
-  if (SETTINGS.showReaderMenu == CrossPointSettings::READER_MENU_TAP && x >= width / 3 && x < width - width / 3 &&
+  if (READER_SETTINGS.showReaderMenu == ReaderSettings::READER_MENU_TAP && x >= width / 3 && x < width - width / 3 &&
       y >= height / 3 && y < height - height / 3) {
     return result;
   }
@@ -131,8 +132,8 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
   // Give the whole page to the sole tap-enabled direction. When both accept
   // taps, split at the left third. RTL books and Inverted Tap each reverse
   // the shared zones.
-  const bool inverted = (SETTINGS.pageTurnGesture == CrossPointSettings::INVERTED_TAP ||
-                         SETTINGS.previousPageGesture == CrossPointSettings::INVERTED_TAP) != rtlBook;
+  const bool inverted = (READER_SETTINGS.pageTurnGesture == ReaderSettings::INVERTED_TAP ||
+                         READER_SETTINGS.previousPageGesture == ReaderSettings::INVERTED_TAP) != rtlBook;
   const bool nextZone = inverted ? x < (width * 2) / 3 : x >= width / 3;
   result.next = nextTaps && (!prevTaps || nextZone);
   result.prev = prevTaps && (!nextTaps || !nextZone);
@@ -147,7 +148,7 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
 // menu stays reachable through the key's long-press function.
 inline bool isTouchMenuTap(const GfxRenderer& renderer, const MappedInputManager& input) {
   if (!input.hasTouch()) return false;
-  if (SETTINGS.showReaderMenu != CrossPointSettings::READER_MENU_TAP) return false;
+  if (READER_SETTINGS.showReaderMenu != ReaderSettings::READER_MENU_TAP) return false;
   int x = 0;
   int y = 0;
   if (!input.wasScreenTapped(x, y)) return false;
@@ -167,7 +168,7 @@ inline bool isTouchMenuGesture(const GfxRenderer& renderer, const MappedInputMan
   if (input.wasMenuGesture()) return true;
   // Bottom-edge up-swipe variant: only selectable on home-key boards, where
   // Home is the capacitive key and the bottom edge is otherwise unused.
-  if (SETTINGS.showReaderMenu == CrossPointSettings::READER_MENU_SWIPE_UP && input.wasReaderMenuSwipeUp()) {
+  if (READER_SETTINGS.showReaderMenu == ReaderSettings::READER_MENU_SWIPE_UP && input.wasReaderMenuSwipeUp()) {
     return true;
   }
   return isTouchMenuTap(renderer, input);
@@ -271,7 +272,7 @@ inline bool handleBackNavigation(const MappedInputManager& mappedInput, Activity
   if (!backTriggered) return false;
 
   const bool longPress = mappedInput.getHeldTime() >= GO_BACK_OR_HOME_MS;
-  if (longPress != SETTINGS.backShortToFileBrowser) {
+  if (longPress != READER_SETTINGS.backShortToFileBrowser) {
     activityManager.goToFileBrowser(filePath);
   } else {
     goHome.fn(goHome.ctx);

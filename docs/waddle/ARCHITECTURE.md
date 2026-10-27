@@ -85,8 +85,9 @@ docs/waddle/            this file, PLAN.md, privacy notes
 ```
 
 Not yet clean: some core files still know about apps (the settings screen opens
-reader settings, `ActivityManager` opens the reader and Hjem, the web server
-lists books). Untangle those when the second device needs it.
+the reader's text and status bar screens, `ActivityManager` opens the reader and
+Hjem, the web server lists books, the theme draws the reader's status bar, the
+SD card font system lives in core). Untangle those when the second device needs it.
 
 ### WaddleOS files
 
@@ -119,6 +120,31 @@ so they may be edited freely.
 | `core/activities/settings/SettingsActivity.cpp` | "Oppdater fastvare" opens `UpdateActivity` |
 | `core/network/CrossPointWebServer.cpp` | Registers `/api/firmware/apply`; reports `waddle::version()` |
 | `lib/hal/HalClock.*` | `setUtc()`, used by Hjem to set the clock from arnee.me |
+
+## Settings
+
+One settings system in core, and each app brings its own settings.
+
+- **Storage:** everything is in `/.crosspoint/settings.json`, one key per
+  setting. A device reads the keys it knows and ignores the rest, so the same
+  file works on every device. Never rename a key that has shipped; new app keys
+  get a prefix (`mesh.channel`).
+- **Core** (`core/CrossPointSettings.*`, `SETTINGS`): settings every device has
+  (sleep, night mode, language, clock, buttons, frontlight, Bluetooth).
+  `core/SettingsList.cpp` lists their rows. Hardware-only rows are shown only
+  where the board has the hardware (`BoardConfig`, `FREEINK_CAP_*`).
+- **Apps** (`apps/reader/ReaderSettings.*`, `READER_SETTINGS`): an app keeps
+  its own settings and hands core a `SettingsModule` (`core/SettingsModule.h`):
+  its rows, extra keys to save and load, and changes to the rows at runtime
+  (fonts, dictionaries).
+- **Products** pick which apps' settings exist: `settingsModules()` in
+  `products/x4pro/ProductSettings.cpp`. A new device lists its own apps.
+- **Screens:** the Settings screen and the web settings page are built from
+  core's rows followed by each module's rows, grouped by category.
+
+To add a setting: put the field in the struct that owns it (core or the app),
+add a row with a new key to that owner's list, and add the Norwegian text in
+`lib/I18n/translations/norwegian.yaml`.
 
 ## How a screen works
 

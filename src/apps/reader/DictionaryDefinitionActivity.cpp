@@ -1,4 +1,5 @@
 #include "DictionaryDefinitionActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <BidiUtils.h>
 #include <FontCacheManager.h>
@@ -232,7 +233,7 @@ bool DictionaryDefinitionActivity::wrapText(Definition& next) {
   lines.clear();
   if (!reserveLines(next, definition.size() / 32 + 8)) return false;
 
-  const int fontId = SETTINGS.getReaderFontId();
+  const int fontId = READER_SETTINGS.getReaderFontId();
   // SD-card fonts: merge every definition codepoint into the persistent
   // advance table up front. Otherwise each unseen codepoint measured below
   // falls back to an on-demand glyph load from SD (8-slot overflow ring).
@@ -453,7 +454,7 @@ void DictionaryDefinitionActivity::navigateDefinition(const bool back) {
 
 bool DictionaryDefinitionActivity::buildPlainSelectionPages() {
   // Only the selection window gets packed word arenas; the definition keeps its cheap line spans.
-  const int fontId = SETTINGS.getReaderFontId();
+  const int fontId = READER_SETTINGS.getReaderFontId();
   const int lineHeight = renderer.getLineHeight(fontId, PLAIN_TEXT_LINE_SPACING);
   const int pageCount = std::min<int>(SELECTION_PAGE_WINDOW, content.totalPages - content.selectionPage);
   const size_t scratchBytes =
@@ -599,7 +600,7 @@ void DictionaryDefinitionActivity::loop() {
       finish();
     return;
   }
-  if (longPress && SETTINGS.touchReaderControls) {
+  if (longPress && READER_SETTINGS.touchReaderControls) {
     startSelection(sx, sy);
     return;
   }
@@ -702,7 +703,7 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   // Body: two-pass draw inside a prewarm scope (same pattern as the reader's
   // renderContents) so SD-card font glyphs load from SD in one batch instead
   // of one on-demand overflow read per character on every page turn.
-  const int fontId = SETTINGS.getReaderFontId();
+  const int fontId = READER_SETTINGS.getReaderFontId();
   const BodyArea body = bodyArea();
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();

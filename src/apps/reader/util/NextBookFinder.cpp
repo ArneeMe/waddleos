@@ -1,4 +1,5 @@
 #include "NextBookFinder.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <FsHelpers.h>
 #include <HalStorage.h>
@@ -56,7 +57,7 @@ std::vector<std::string> NextBookFinder::findNextBooks(const std::string& curren
       continue;
     }
     file.getName(nameBuffer.get(), NAME_BUFFER_SIZE);
-    if (!SETTINGS.showHiddenFiles && nameBuffer[0] == '.') {
+    if (!READER_SETTINGS.showHiddenFiles && nameBuffer[0] == '.') {
       continue;
     }
     if (!isSupportedBookFile(nameBuffer.get())) {

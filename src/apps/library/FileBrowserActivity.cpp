@@ -1,4 +1,5 @@
 #include "FileBrowserActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -117,7 +118,7 @@ void FileBrowserActivity::loadFiles() {
   for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
     file.getName(fileNameBuffer.get(), NAME_BUFFER_SIZE);
     const bool isDirectory = file.isDirectory();
-    if ((!SETTINGS.showHiddenFiles && fileNameBuffer[0] == '.') ||
+    if ((!READER_SETTINGS.showHiddenFiles && fileNameBuffer[0] == '.') ||
         strcmp(fileNameBuffer.get(), "System Volume Information") == 0) {
       continue;
     }

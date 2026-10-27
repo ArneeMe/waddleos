@@ -1,4 +1,5 @@
 #include "ClipSelectionActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <Arduino.h>
 #include <FontCacheManager.h>
@@ -71,7 +72,7 @@ ClipSelectionActivity::ClipSelectionActivity(GfxRenderer& renderer, MappedInputM
 
 void ClipSelectionActivity::onEnter() {
   Activity::onEnter();
-  fontId = SETTINGS.getReaderFontId();
+  fontId = READER_SETTINGS.getReaderFontId();
   lineHeight = renderer.getLineHeight(fontId);
   const bool extracted = extractWords();
   if (!extracted && mode == Mode::DefinitionLookup) {

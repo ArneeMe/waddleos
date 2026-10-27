@@ -1,4 +1,5 @@
 #include "EpubReaderFootnoteSelectActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <GfxRenderer.h>
 #include <I18n.h>
@@ -122,7 +123,7 @@ bool EpubReaderFootnoteSelectActivity::drawHighlightWithSnapshot() {
   // Draw a small marker (the footnote number) at the highlight position
   const char* number = footnoteLinks[selected].footnote->number;
   if (number[0]) {
-    renderer.drawText(SETTINGS.getReaderFontId(), x, y - 1, number, false);
+    renderer.drawText(READER_SETTINGS.getReaderFontId(), x, y - 1, number, false);
   }
   return saved;
 }
@@ -144,7 +145,7 @@ void EpubReaderFootnoteSelectActivity::render(RenderLock&&) {
 
   // Render the page underneath
   if (page) {
-    page->render(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop);
+    page->render(renderer, READER_SETTINGS.getReaderFontId(), marginLeft, marginTop);
   }
 
   if (!footnoteLinks.empty()) {

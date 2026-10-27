@@ -1,4 +1,5 @@
 #include "ReaderActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
@@ -44,7 +45,7 @@ std::unique_ptr<ReaderActivity> ReaderActivity::create(GfxRenderer& renderer, Ma
   return activity;
 }
 
-void ReaderActivity::applyInitialOrientation() { ReaderUtils::applyOrientation(renderer, SETTINGS.orientation); }
+void ReaderActivity::applyInitialOrientation() { ReaderUtils::applyOrientation(renderer, READER_SETTINGS.orientation); }
 
 void ReaderActivity::disableFastInitialRefresh() { pagesUntilFullRefresh = 0; }
 
@@ -193,7 +194,7 @@ void ReaderActivity::loop() {
 
   const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
   const bool skip =
-      !fromTilt && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP && heldMs >= ReaderUtils::SKIP_HOLD_MS;
+      !fromTilt && READER_SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP && heldMs >= ReaderUtils::SKIP_HOLD_MS;
 
   const bool changed = skip ? skipPages(prevTriggered ? -10 : 10) : pageTurn(!prevTriggered);
   // A skip is navigation, not reading: it never counts toward session dwell.

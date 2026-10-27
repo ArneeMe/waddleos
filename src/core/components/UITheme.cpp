@@ -1,4 +1,5 @@
 #include "UITheme.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -117,7 +118,7 @@ UIIcon UITheme::getFileIcon(const std::string& filename) {
 
 int UITheme::getStatusBarHeight() {
   const ThemeMetrics metrics = UITheme::getInstance().getMetrics();
-  const auto sb = SETTINGS.statusBarSpec();
+  const auto sb = READER_SETTINGS.statusBarSpec();
 
   // Layout reservation is hardware-agnostic: pass clockAvailable=true so the
   // reserved height does not depend on whether an RTC is present.
@@ -127,7 +128,7 @@ int UITheme::getStatusBarHeight() {
 
 int UITheme::getProgressBarHeight() {
   const ThemeMetrics metrics = UITheme::getInstance().getMetrics();
-  const auto sb = SETTINGS.statusBarSpec();
+  const auto sb = READER_SETTINGS.statusBarSpec();
   return sb.showsProgressBar() ? (sb.progressBarHeightPx + metrics.progressBarMarginTop) : 0;
 }
 

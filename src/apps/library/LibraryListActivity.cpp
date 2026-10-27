@@ -1,4 +1,5 @@
 #include "LibraryListActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <BoardConfig.h>
 #include <FreeInkUIIcon.h>
@@ -98,7 +99,7 @@ void LibraryListActivity::onEnter() {
 
   // Rebuild when the index is missing, invalid, or was built with the other
   // metadata mode. Otherwise entering the screen stays instant.
-  const bool readMetadata = SETTINGS.libraryUseMetadata != 0;
+  const bool readMetadata = READER_SETTINGS.libraryUseMetadata != 0;
   const bool rebuildNeeded = library::isLibraryIndexDirty() || !index.open(library::libraryIndexPath()) ||
                              index.header().metadataEnabled != readMetadata;
   if (rebuildNeeded) {
@@ -126,7 +127,7 @@ void LibraryListActivity::onExit() {
 
 bool LibraryListActivity::rebuildIndex() {
   library::BuildStats stats;
-  const bool ok = library::buildLibraryIndex("/", stats, SETTINGS.libraryUseMetadata != 0);
+  const bool ok = library::buildLibraryIndex("/", stats, READER_SETTINGS.libraryUseMetadata != 0);
   if (!ok) {
     LOG_ERR("LIB", "index build failed");
     return false;

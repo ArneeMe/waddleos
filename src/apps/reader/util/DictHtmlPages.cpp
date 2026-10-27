@@ -1,4 +1,5 @@
 #include "DictHtmlPages.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <Arduino.h>
 #include <Epub/parsers/ChapterHtmlSlimParser.h>
@@ -225,9 +226,9 @@ bool buildDictionaryHtmlPages(GfxRenderer& renderer, const std::string& definiti
     // handling, the only path that dereferences it.
     std::unique_ptr<ChapterHtmlSlimParser> parser;
     parser = makeUniqueNoThrow<ChapterHtmlSlimParser>(
-        nullptr, tmpPath, renderer, SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-        SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
-        SETTINGS.hyphenationEnabled, SETTINGS.focusReadingEnabled,
+        nullptr, tmpPath, renderer, READER_SETTINGS.getReaderFontId(), READER_SETTINGS.getReaderLineCompression(),
+        READER_SETTINGS.extraParagraphSpacing, READER_SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+        READER_SETTINGS.hyphenationEnabled, READER_SETTINGS.focusReadingEnabled,
         [&pagesOut, &parser, &retainedElements, &limitReason](std::unique_ptr<Page> page, uint16_t, uint16_t,
                                                               uint32_t) {
           if (limitReason) return;
@@ -258,8 +259,8 @@ bool buildDictionaryHtmlPages(GfxRenderer& renderer, const std::string& definiti
     if (!parser) {
       LOG_ERR("DHTML", "OOM: ChapterHtmlSlimParser");
     } else {
-      parser->setTextSpacing(SETTINGS.getCharacterSpacing(), SETTINGS.wordSpacing);
-      parser->setParagraphIndentSpaces(SETTINGS.paragraphIndentSpaces);
+      parser->setTextSpacing(READER_SETTINGS.getCharacterSpacing(), READER_SETTINGS.wordSpacing);
+      parser->setParagraphIndentSpaces(READER_SETTINGS.paragraphIndentSpaces);
       ok = parser->parseAndBuildPages();  // closes the file on both outcomes
     }
   }

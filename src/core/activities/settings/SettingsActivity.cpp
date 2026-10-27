@@ -1,4 +1,5 @@
 #include "SettingsActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <BlePageTurner.h>
 #include <BoardConfig.h>
@@ -46,12 +47,12 @@ bool showOnDevice(const SettingInfo& setting) {
   if (sectionFor(setting) == SettingsSection::End || home_button::isSetting(setting.valuePtr)) return false;
   // The sunlight fading fix is a grayscale-waveform compensation that does
   // not apply on the X4 Pro / X4 Classic (plain OTP waveform, same panels).
-  if (setting.valuePtr == &CrossPointSettings::fadingFix && (BoardConfig::isX4Pro() || BoardConfig::isX4Classic())) {
+  if (setting.valuePtr == &SETTINGS.fadingFix && (BoardConfig::isX4Pro() || BoardConfig::isX4Classic())) {
     return false;
   }
   // Merged into the Text Settings screen.
   if (setting.category == StrId::STR_CAT_READER && setting.inTextSettings) return false;
-  if (setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
+  if (setting.valuePtr == &READER_SETTINGS.pwrBtnFootnoteBack &&
       SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES) {
     return false;
   }
@@ -61,12 +62,12 @@ bool showOnDevice(const SettingInfo& setting) {
 // End = not a row here: other categories (KOReader Sync, Status Bar, ...)
 // only group the web UI; their rows live on their own sub-screens.
 SettingsSection sectionFor(const SettingInfo& setting) {
-  if (setting.valuePtr == &CrossPointSettings::libraryUseMetadata ||
-      setting.valuePtr == &CrossPointSettings::removeReadBooksFromRecents ||
-      setting.valuePtr == &CrossPointSettings::moveFinishedToReadFolder) {
+  if (setting.valuePtr == &READER_SETTINGS.libraryUseMetadata ||
+      setting.valuePtr == &READER_SETTINGS.removeReadBooksFromRecents ||
+      setting.valuePtr == &READER_SETTINGS.moveFinishedToReadFolder) {
     return SettingsSection::Library;
   }
-  if (setting.valuePtr == &CrossPointSettings::sleepTimeoutMinutes) return SettingsSection::Display;
+  if (setting.valuePtr == &SETTINGS.sleepTimeoutMinutes) return SettingsSection::Display;
   if (setting.category == StrId::STR_CAT_DISPLAY) return SettingsSection::Display;
   if (setting.category == StrId::STR_CAT_READER) return SettingsSection::Reader;
   if (setting.category == StrId::STR_CAT_CONTROLS) return SettingsSection::Controls;
@@ -83,12 +84,9 @@ void SettingsActivity::rebuildSettings() {
   // reader activity ran — otherwise the font-family picker shows stale list.
   sdFontSystem.refreshIfDirty();
 
-  // Rescan /dictionaries on every rebuild: cheap (one directory listing) and
-  // picks up dictionaries copied to the SD card since the last visit.
-  std::vector<DictionaryEntry> dictionaries;
-  DictionaryRegistry::discover(dictionaries);
-
-  auto all = getSettingsList(&sdFontSystem.registry(), &dictionaries);
+  // Also rescans /dictionaries (ReaderSettings), picking up dictionaries
+  // copied to the SD card since the last visit.
+  auto all = getSettingsList();
 
   const size_t count = std::count_if(all.begin(), all.end(), [this](const SettingInfo& setting) {
     return sectionFor(setting) == section && showOnDevice(setting);
@@ -193,23 +191,23 @@ void SettingsActivity::toggleSelectedSetting() {
 
   if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
     // Toggle the boolean value using the member pointer
-    const bool currentValue = SETTINGS.*(setting.valuePtr);
-    SETTINGS.*(setting.valuePtr) = !currentValue;
+    const bool currentValue = *(setting.valuePtr);
+    *(setting.valuePtr) = !currentValue;
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
-    const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
+    const uint8_t currentValue = *(setting.valuePtr);
     const auto enumLabels = setting.enumLabels();
     if (enumLabels.size() > 2) {
       const auto valuePtr = setting.valuePtr;
       optionPopup.show(setting.nameId, enumLabels.data(), static_cast<int>(enumLabels.size()), currentValue,
                        [this, valuePtr](int idx) {
-                         SETTINGS.*valuePtr = idx;
+                         *valuePtr = idx;
                          SETTINGS.saveToFile();
                          rebuildSettings();
                        });
       requestUpdate();
       return;
     }
-    SETTINGS.*(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(enumLabels.size());
+    *(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(enumLabels.size());
   } else if (setting.type == SettingType::ENUM && setting.valueGetter && setting.valueSetter) {
     const uint8_t totalValues = setting.enumStringValues.empty()
                                     ? static_cast<uint8_t>(setting.enumLabels().size())
@@ -234,11 +232,11 @@ void SettingsActivity::toggleSelectedSetting() {
     }
     setting.valueSetter((cur + 1) % totalValues);
   } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
-    const int8_t currentValue = SETTINGS.*(setting.valuePtr);
+    const int8_t currentValue = *(setting.valuePtr);
     if (currentValue + setting.valueRange.step > setting.valueRange.max) {
-      SETTINGS.*(setting.valuePtr) = setting.valueRange.min;
+      *(setting.valuePtr) = setting.valueRange.min;
     } else {
-      SETTINGS.*(setting.valuePtr) = currentValue + setting.valueRange.step;
+      *(setting.valuePtr) = currentValue + setting.valueRange.step;
     }
   } else if (setting.type == SettingType::ACTION) {
     auto resultHandler = [this](const ActivityResult&) { SETTINGS.saveToFile(); };
@@ -364,7 +362,7 @@ std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
   if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     // Guard like the valueGetter branch below: a corrupt/migrated settings
     // byte must not index past the enum table.
-    const uint8_t value = SETTINGS.*(setting.valuePtr);
+    const uint8_t value = *(setting.valuePtr);
     const auto enumLabels = setting.enumLabels();
     if (value >= enumLabels.size()) return "";
     return I18N.get(enumLabels[value]);
@@ -387,10 +385,10 @@ std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
       }
       char valueBuffer[32];
       snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_SLEEP_TIMER_VALUE_FORMAT),
-               static_cast<unsigned int>(SETTINGS.*(setting.valuePtr)));
+               static_cast<unsigned int>(*(setting.valuePtr)));
       return valueBuffer;
     }
-    return std::to_string(SETTINGS.*(setting.valuePtr));
+    return std::to_string(*(setting.valuePtr));
   }
   return "";
 }
@@ -412,7 +410,7 @@ void SettingsActivity::buildScreen(UiScreen& screen) {
                           (setting.type == SettingType::ENUM && setting.enumStringValues.empty() &&
                            labels.size() == 2 && labels[0] == StrId::STR_STATE_OFF && labels[1] == StrId::STR_STATE_ON);
     if (checkbox && (setting.valuePtr || setting.valueGetter)) {
-      const bool checked = setting.valuePtr ? SETTINGS.*(setting.valuePtr) != 0 : setting.valueGetter() != 0;
+      const bool checked = setting.valuePtr ? *(setting.valuePtr) != 0 : setting.valueGetter() != 0;
       rowValues_[i].clear();
       GUI.setCheckboxRow(rowItems_[i], checked);
     } else {

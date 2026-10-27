@@ -1,4 +1,5 @@
 #include "DictionaryWordSelectActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
@@ -20,7 +21,7 @@ void indexBuildYield(void*) { vTaskDelay(1); }
 
 void DictionaryWordSelectActivity::onEnter() {
   Activity::onEnter();
-  fontId = SETTINGS.getReaderFontId();
+  fontId = READER_SETTINGS.getReaderFontId();
   lookupPending = true;
   popupMsg = StrId::STR_DICT_LOOKING_UP;
   popup = Popup::Busy;
@@ -35,7 +36,7 @@ void DictionaryWordSelectActivity::performLookup() {
   }
   if (!dictOpenAttempted) {
     dictOpenAttempted = true;
-    dictOpenOk = dict.open(SETTINGS.dictionaryName);
+    dictOpenOk = dict.open(READER_SETTINGS.dictionaryName);
     // needsIndex() opens and validates the .qidx sidecar, so ask it once per
     // open rather than once per word: the answer only changes when we build
     // the sidecar ourselves, which is handled below.

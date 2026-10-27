@@ -31,6 +31,7 @@
 #include <cstring>
 
 #include "core/CrossPointSettings.h"
+#include "apps/reader/ReaderSettings.h"
 #include "core/CrossPointState.h"
 #include "core/MappedInputManager.h"
 #include "apps/reader/RecentBooksStore.h"
@@ -230,8 +231,8 @@ void handleSlideSwitch() {
       SETTINGS.screenInverted = on ? 1 : 0;
       break;
     case CrossPointSettings::SLIDE_SWITCH_TOUCH_CONTROLS:
-      if ((SETTINGS.touchReaderControls != CrossPointSettings::TOUCH_READER_OFF) == on) return;
-      SETTINGS.touchReaderControls = on ? CrossPointSettings::TOUCH_READER_ON : CrossPointSettings::TOUCH_READER_OFF;
+      if ((READER_SETTINGS.touchReaderControls != ReaderSettings::TOUCH_READER_OFF) == on) return;
+      READER_SETTINGS.touchReaderControls = on ? ReaderSettings::TOUCH_READER_ON : ReaderSettings::TOUCH_READER_OFF;
       break;
     default:
       if (!Frontlight.present() || Frontlight.isOn() == on) return;
@@ -543,7 +544,7 @@ void setup() {
   // in-memory value only when the file carries no readerMenuStyle key, so a
   // user's saved choice (either style) still wins.
   if (gpio.hasTouch()) {
-    SETTINGS.readerMenuStyle = CrossPointSettings::READER_MENU_TOOLBAR;
+    READER_SETTINGS.readerMenuStyle = ReaderSettings::READER_MENU_TOOLBAR;
   }
   SETTINGS.loadFromFile();
   // Push the saved timezone's POSIX rule into the clock (migrating the legacy
@@ -750,7 +751,7 @@ void loop() {
 
   // After the exclusive-storage return: it saves settings to the SD card.
   handleSlideSwitch();
-  halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
+  halTiltSensor.update(READER_SETTINGS.tiltPageTurn, READER_SETTINGS.orientation, activityManager.isReaderActivity());
 
   // Under the render lock, so a step never overlaps the themes' gauge reads.
   static bool gaugeCapacityPending = true;

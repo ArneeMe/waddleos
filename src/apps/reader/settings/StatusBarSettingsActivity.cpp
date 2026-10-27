@@ -1,4 +1,5 @@
 #include "StatusBarSettingsActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <GfxRenderer.h>
 #include <HalClock.h>
@@ -59,7 +60,7 @@ const StrId titleNames[TITLE_ITEMS] = {StrId::STR_BOOK, StrId::STR_CHAPTER, StrI
 constexpr int XTC_STATUS_BAR_ITEMS = 3;
 const StrId xtcStatusBarNames[XTC_STATUS_BAR_ITEMS] = {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP};
 
-constexpr int STATUS_BAR_CLOCK_ITEMS = CrossPointSettings::STATUS_BAR_CLOCK_MODE_COUNT;
+constexpr int STATUS_BAR_CLOCK_ITEMS = ReaderSettings::STATUS_BAR_CLOCK_MODE_COUNT;
 const StrId statusBarClockNames[STATUS_BAR_CLOCK_ITEMS] = {StrId::STR_HIDE, StrId::STR_DIR_RIGHT, StrId::STR_DIR_LEFT};
 
 const int verticalPreviewTextPadding = 40;
@@ -74,24 +75,24 @@ void StatusBarSettingsActivity::onEnter() {
   visibleItemCount = halClock.isAvailable() ? FULL_MENU_ITEMS : BASE_MENU_ITEMS;
 
   // Clamp statusBarProgressBar and statusBarTitle in case of corrupt/migrated data
-  if (SETTINGS.statusBarProgressBar >= PROGRESS_BAR_ITEMS) {
-    SETTINGS.statusBarProgressBar = CrossPointSettings::STATUS_BAR_PROGRESS_BAR::HIDE_PROGRESS;
+  if (READER_SETTINGS.statusBarProgressBar >= PROGRESS_BAR_ITEMS) {
+    READER_SETTINGS.statusBarProgressBar = ReaderSettings::STATUS_BAR_PROGRESS_BAR::HIDE_PROGRESS;
   }
 
-  if (SETTINGS.statusBarProgressBarThickness >= PROGRESS_BAR_THICKNESS_ITEMS) {
-    SETTINGS.statusBarProgressBarThickness = CrossPointSettings::STATUS_BAR_PROGRESS_BAR_THICKNESS::PROGRESS_BAR_NORMAL;
+  if (READER_SETTINGS.statusBarProgressBarThickness >= PROGRESS_BAR_THICKNESS_ITEMS) {
+    READER_SETTINGS.statusBarProgressBarThickness = ReaderSettings::STATUS_BAR_PROGRESS_BAR_THICKNESS::PROGRESS_BAR_NORMAL;
   }
 
-  if (SETTINGS.statusBarTitle >= TITLE_ITEMS) {
-    SETTINGS.statusBarTitle = CrossPointSettings::STATUS_BAR_TITLE::HIDE_TITLE;
+  if (READER_SETTINGS.statusBarTitle >= TITLE_ITEMS) {
+    READER_SETTINGS.statusBarTitle = ReaderSettings::STATUS_BAR_TITLE::HIDE_TITLE;
   }
 
-  if (SETTINGS.xtcStatusBarMode >= XTC_STATUS_BAR_ITEMS) {
-    SETTINGS.xtcStatusBarMode = CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_HIDE;
+  if (READER_SETTINGS.xtcStatusBarMode >= XTC_STATUS_BAR_ITEMS) {
+    READER_SETTINGS.xtcStatusBarMode = ReaderSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_HIDE;
   }
 
-  if (SETTINGS.statusBarClock >= STATUS_BAR_CLOCK_ITEMS) {
-    SETTINGS.statusBarClock = CrossPointSettings::STATUS_BAR_CLOCK_MODE::STATUS_BAR_CLOCK_HIDE;
+  if (READER_SETTINGS.statusBarClock >= STATUS_BAR_CLOCK_ITEMS) {
+    READER_SETTINGS.statusBarClock = ReaderSettings::STATUS_BAR_CLOCK_MODE::STATUS_BAR_CLOCK_HIDE;
   }
 
   // Labels never change (unlike the values, which track live SETTINGS
@@ -119,43 +120,43 @@ void StatusBarSettingsActivity::activateIndex(const int index) {
 void StatusBarSettingsActivity::handleSelection() {
   switch (nav.selected) {
     case ITEM_CHAPTER_PAGE_COUNT:
-      SETTINGS.statusBarChapterPageCount = (SETTINGS.statusBarChapterPageCount + 1) % 2;
+      READER_SETTINGS.statusBarChapterPageCount = (READER_SETTINGS.statusBarChapterPageCount + 1) % 2;
       break;
     case ITEM_BOOK_PROGRESS_PERCENTAGE:
-      SETTINGS.statusBarBookProgressPercentage = (SETTINGS.statusBarBookProgressPercentage + 1) % 2;
+      READER_SETTINGS.statusBarBookProgressPercentage = (READER_SETTINGS.statusBarBookProgressPercentage + 1) % 2;
       break;
     case ITEM_PROGRESS_BAR:
-      optionPopup.show(StrId::STR_PROGRESS_BAR, progressBarNames, PROGRESS_BAR_ITEMS, SETTINGS.statusBarProgressBar,
+      optionPopup.show(StrId::STR_PROGRESS_BAR, progressBarNames, PROGRESS_BAR_ITEMS, READER_SETTINGS.statusBarProgressBar,
                        [this](int idx) {
-                         SETTINGS.statusBarProgressBar = idx;
+                         READER_SETTINGS.statusBarProgressBar = idx;
                          SETTINGS.saveToFile();
                        });
       return;
     case ITEM_PROGRESS_BAR_THICKNESS:
       optionPopup.show(StrId::STR_PROGRESS_BAR_THICKNESS, progressBarThicknessNames, PROGRESS_BAR_THICKNESS_ITEMS,
-                       SETTINGS.statusBarProgressBarThickness, [this](int idx) {
-                         SETTINGS.statusBarProgressBarThickness = idx;
+                       READER_SETTINGS.statusBarProgressBarThickness, [this](int idx) {
+                         READER_SETTINGS.statusBarProgressBarThickness = idx;
                          SETTINGS.saveToFile();
                        });
       return;
     case ITEM_TITLE:
-      optionPopup.show(StrId::STR_TITLE, titleNames, TITLE_ITEMS, SETTINGS.statusBarTitle, [this](int idx) {
-        SETTINGS.statusBarTitle = idx;
+      optionPopup.show(StrId::STR_TITLE, titleNames, TITLE_ITEMS, READER_SETTINGS.statusBarTitle, [this](int idx) {
+        READER_SETTINGS.statusBarTitle = idx;
         SETTINGS.saveToFile();
       });
       return;
     case ITEM_BATTERY:
-      SETTINGS.statusBarBattery = (SETTINGS.statusBarBattery + 1) % 2;
+      READER_SETTINGS.statusBarBattery = (READER_SETTINGS.statusBarBattery + 1) % 2;
       break;
     case ITEM_XTC_STATUS_BAR:
-      optionPopup.show(StrId::STR_XTC_STATUS_BAR, xtcStatusBarNames, XTC_STATUS_BAR_ITEMS, SETTINGS.xtcStatusBarMode,
+      optionPopup.show(StrId::STR_XTC_STATUS_BAR, xtcStatusBarNames, XTC_STATUS_BAR_ITEMS, READER_SETTINGS.xtcStatusBarMode,
                        [this](int idx) {
-                         SETTINGS.xtcStatusBarMode = idx;
+                         READER_SETTINGS.xtcStatusBarMode = idx;
                          SETTINGS.saveToFile();
                        });
       return;
     case ITEM_CLOCK:
-      SETTINGS.statusBarClock = (SETTINGS.statusBarClock + 1) % STATUS_BAR_CLOCK_ITEMS;
+      READER_SETTINGS.statusBarClock = (READER_SETTINGS.statusBarClock + 1) % STATUS_BAR_CLOCK_ITEMS;
       break;
     default:
       return;
@@ -166,15 +167,15 @@ void StatusBarSettingsActivity::handleSelection() {
 std::string StatusBarSettingsActivity::rowValueText(const int index) {
   switch (index) {
     case ITEM_PROGRESS_BAR:
-      return I18N.get(progressBarNames[SETTINGS.statusBarProgressBar]);
+      return I18N.get(progressBarNames[READER_SETTINGS.statusBarProgressBar]);
     case ITEM_PROGRESS_BAR_THICKNESS:
-      return I18N.get(progressBarThicknessNames[SETTINGS.statusBarProgressBarThickness]);
+      return I18N.get(progressBarThicknessNames[READER_SETTINGS.statusBarProgressBarThickness]);
     case ITEM_TITLE:
-      return I18N.get(titleNames[SETTINGS.statusBarTitle]);
+      return I18N.get(titleNames[READER_SETTINGS.statusBarTitle]);
     case ITEM_XTC_STATUS_BAR:
-      return I18N.get(xtcStatusBarNames[SETTINGS.xtcStatusBarMode]);
+      return I18N.get(xtcStatusBarNames[READER_SETTINGS.xtcStatusBarMode]);
     case ITEM_CLOCK:
-      return I18N.get(statusBarClockNames[SETTINGS.statusBarClock]);
+      return I18N.get(statusBarClockNames[READER_SETTINGS.statusBarClock]);
     default:
       return "";
   }
@@ -201,9 +202,9 @@ void StatusBarSettingsActivity::buildScreen(UiScreen& screen) {
     rowValues_[i] = rowValueText(i);
     rowItems_[i].value = rowValues_[i].empty() ? nullptr : rowValues_[i].c_str();
   }
-  GUI.setCheckboxRow(rowItems_[ITEM_CHAPTER_PAGE_COUNT], SETTINGS.statusBarChapterPageCount);
-  GUI.setCheckboxRow(rowItems_[ITEM_BOOK_PROGRESS_PERCENTAGE], SETTINGS.statusBarBookProgressPercentage);
-  GUI.setCheckboxRow(rowItems_[ITEM_BATTERY], SETTINGS.statusBarBattery);
+  GUI.setCheckboxRow(rowItems_[ITEM_CHAPTER_PAGE_COUNT], READER_SETTINGS.statusBarChapterPageCount);
+  GUI.setCheckboxRow(rowItems_[ITEM_BOOK_PROGRESS_PERCENTAGE], READER_SETTINGS.statusBarBookProgressPercentage);
+  GUI.setCheckboxRow(rowItems_[ITEM_BATTERY], READER_SETTINGS.statusBarBattery);
 
   fui::ListProps props;
   props.items = rowItems_;
@@ -235,9 +236,9 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   std::string title;
-  if (SETTINGS.statusBarTitle == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {
+  if (READER_SETTINGS.statusBarTitle == ReaderSettings::STATUS_BAR_TITLE::BOOK_TITLE) {
     title = tr(STR_EXAMPLE_BOOK);
-  } else if (SETTINGS.statusBarTitle == CrossPointSettings::STATUS_BAR_TITLE::CHAPTER_TITLE) {
+  } else if (READER_SETTINGS.statusBarTitle == ReaderSettings::STATUS_BAR_TITLE::CHAPTER_TITLE) {
     title = tr(STR_EXAMPLE_CHAPTER);
   }
 

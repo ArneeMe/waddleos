@@ -1,4 +1,5 @@
 #include "CrossPointWebServer.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <ArduinoJson.h>
 #include <BoardConfig.h>
@@ -541,7 +542,7 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
     auto fileName = String(name);
 
     // Skip hidden items (starting with ".")
-    bool shouldHide = !SETTINGS.showHiddenFiles && fileName.startsWith(".");
+    bool shouldHide = !READER_SETTINGS.showHiddenFiles && fileName.startsWith(".");
 
     // Check against explicitly hidden items list
     if (!shouldHide) {
@@ -1278,12 +1279,8 @@ void CrossPointWebServer::handleSettingsPage() const {
 }
 
 void CrossPointWebServer::handleGetSettings() const {
-  // Pass the SD font registry so the fontFamily setting's enumStringValues
-  // includes SD-resident families — otherwise the web API only exposes the
-  // three built-in fonts.
-  std::vector<DictionaryEntry> dictionaries;
-  DictionaryRegistry::discover(dictionaries);
-  const auto& settings = getSettingsList(&sdFontSystem.registry(), &dictionaries);
+  // The reader adds SD-resident font families and dictionaries to the list.
+  const auto& settings = getSettingsList();
 
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
@@ -1306,7 +1303,7 @@ void CrossPointWebServer::handleGetSettings() const {
       case SettingType::TOGGLE: {
         doc["type"] = "toggle";
         if (s.valuePtr) {
-          doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
+          doc["value"] = static_cast<int>(*(s.valuePtr));
         }
         break;
       }
@@ -1316,7 +1313,7 @@ void CrossPointWebServer::handleGetSettings() const {
                             labels[1] == StrId::STR_STATE_ON;
         doc["type"] = toggle ? "toggle" : "enum";
         if (s.valuePtr) {
-          doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
+          doc["value"] = static_cast<int>(*(s.valuePtr));
         } else if (s.valueGetter) {
           doc["value"] = static_cast<int>(s.valueGetter());
         }
@@ -1336,7 +1333,7 @@ void CrossPointWebServer::handleGetSettings() const {
       case SettingType::VALUE: {
         doc["type"] = "value";
         if (s.valuePtr) {
-          doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
+          doc["value"] = static_cast<int>(*(s.valuePtr));
         }
         doc["min"] = s.valueRange.min;
         doc["max"] = s.valueRange.max;
@@ -1351,11 +1348,11 @@ void CrossPointWebServer::handleGetSettings() const {
           doc["hasPassword"] =
               s.stringGetter
                   ? !s.stringGetter().empty()
-                  : s.stringMaxLen > 0 && *(reinterpret_cast<const char*>(&SETTINGS) + s.stringOffset) != '\0';
+                  : s.stringPtr && *s.stringPtr != '\0';
         } else if (s.stringGetter) {
           doc["value"] = s.stringGetter();
-        } else if (s.stringMaxLen > 0) {
-          doc["value"] = reinterpret_cast<const char*>(&SETTINGS) + s.stringOffset;
+        } else if (s.stringPtr && s.stringMaxLen > 0) {
+          doc["value"] = s.stringPtr;
         }
         break;
       }
@@ -1398,9 +1395,7 @@ void CrossPointWebServer::handlePostSettings() {
     return;
   }
 
-  std::vector<DictionaryEntry> dictionaries;
-  DictionaryRegistry::discover(dictionaries);
-  const auto& settings = getSettingsList(&sdFontSystem.registry(), &dictionaries);
+  const auto& settings = getSettingsList();
   int applied = 0;
 
   for (const auto& s : settings) {
@@ -1411,7 +1406,7 @@ void CrossPointWebServer::handlePostSettings() {
       case SettingType::TOGGLE: {
         const int val = doc[s.key].as<int>() ? 1 : 0;
         if (s.valuePtr) {
-          SETTINGS.*(s.valuePtr) = val;
+          *(s.valuePtr) = val;
         }
         applied++;
         break;
@@ -1422,7 +1417,7 @@ void CrossPointWebServer::handlePostSettings() {
                                                       : static_cast<int>(s.enumStringValues.size());
         if (val >= 0 && val < maxVal) {
           if (s.valuePtr) {
-            SETTINGS.*(s.valuePtr) = static_cast<uint8_t>(val);
+            *(s.valuePtr) = static_cast<uint8_t>(val);
           } else if (s.valueSetter) {
             s.valueSetter(static_cast<uint8_t>(val));
           }
@@ -1434,7 +1429,7 @@ void CrossPointWebServer::handlePostSettings() {
         const int val = doc[s.key].as<int>();
         if (val >= s.valueRange.min && val <= s.valueRange.max) {
           if (s.valuePtr) {
-            SETTINGS.*(s.valuePtr) = static_cast<uint8_t>(val);
+            *(s.valuePtr) = static_cast<uint8_t>(val);
           }
           applied++;
         }
@@ -1444,8 +1439,8 @@ void CrossPointWebServer::handlePostSettings() {
         const std::string val = doc[s.key].as<std::string>();
         if (s.stringSetter) {
           s.stringSetter(val);
-        } else if (s.stringMaxLen > 0) {
-          char* ptr = reinterpret_cast<char*>(&SETTINGS) + s.stringOffset;
+        } else if (s.stringPtr && s.stringMaxLen > 0) {
+          char* ptr = s.stringPtr;
           strncpy(ptr, val.c_str(), s.stringMaxLen - 1);
           ptr[s.stringMaxLen - 1] = '\0';
         }

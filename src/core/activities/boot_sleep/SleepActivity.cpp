@@ -1,4 +1,5 @@
 #include "SleepActivity.h"
+#include "apps/reader/ReaderSettings.h"
 
 #include <BitmapHelpers.h>
 #include <Epub.h>
@@ -601,7 +602,7 @@ void SleepActivity::onEnter() {
     // polarity after the display driver returns to normal.
     if (frameWasInverted) renderer.invertScreen();
     if (APP_STATE.lastSleepFromReader) {
-      ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+      ReaderUtils::applyOrientation(renderer, READER_SETTINGS.orientation);
     }
     drawSleepPopupPreservingFrame(renderer);
     if (APP_STATE.lastSleepFromReader) {
@@ -616,7 +617,7 @@ void SleepActivity::onEnter() {
 
   // Show popup with reader orientation only when going to sleep from reader
   if (APP_STATE.lastSleepFromReader) {
-    ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+    ReaderUtils::applyOrientation(renderer, READER_SETTINGS.orientation);
     GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
     renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   } else {

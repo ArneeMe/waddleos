@@ -24,7 +24,8 @@ inline constexpr uint8_t CrossPointSettings::* FIELDS[] = {&CrossPointSettings::
                                                            &CrossPointSettings::homeButtonDoubleTapAction,
                                                            &CrossPointSettings::homeButtonLongPressAction};
 inline constexpr const char* KEYS[] = {"homeButtonTapAction", "homeButtonDoubleTapAction", "homeButtonLongPressAction"};
-inline bool isSetting(uint8_t CrossPointSettings::* field) {
-  return field == FIELDS[0] || field == FIELDS[1] || field == FIELDS[2];
+inline bool isSetting(const uint8_t* value) {
+  const CrossPointSettings& s = SETTINGS;
+  return value == &(s.*FIELDS[0]) || value == &(s.*FIELDS[1]) || value == &(s.*FIELDS[2]);
 }
 }  // namespace home_button
