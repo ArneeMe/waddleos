@@ -5,7 +5,9 @@ WaddleOS is Arne's personal e-reader firmware for the **Xteink X4 Pro**
 a fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)
 but no longer follows upstream: change, move or delete any code freely.
 
-Read [docs/waddle/PLAN.md](docs/waddle/PLAN.md) for what exists and what is next.
+Read [docs/waddle/ARCHITECTURE.md](docs/waddle/ARCHITECTURE.md) for how the system fits
+together (firmware, arnee.me, the `waddle` command) and
+[docs/waddle/PLAN.md](docs/waddle/PLAN.md) for what is done and what is next.
 
 ## Goals, in order
 
