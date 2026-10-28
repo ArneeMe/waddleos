@@ -54,7 +54,9 @@ Radio and GPS (look in the log):
 
 Setup and messages (two units, or one unit and the gateway):
 - [ ] Meldinger on a new unit says "ikke satt opp"; tapping it opens File Transfer.
-- [ ] `waddle mesh setup` finds every unit and finishes; Hjem then greets each by name.
+- [ ] `waddle mesh setup` makes the network, asks for the Pi, then for each of your
+      units on File Transfer its address, name and the setup code; Hjem then greets
+      each by name. `~/.config/waddle/admin.json` exists and only you can read it.
 - [ ] A group message arrives on the other unit within seconds; it shows
       "levert til alle", and "lest" after the other opens the chat.
 - [ ] A DM reaches only that person.
@@ -82,7 +84,7 @@ Modus and checks (PR #33):
       sleeping unit at its next check (at once with "Lytt hele tiden").
 
 Four people and groups (PR #33):
-- [ ] `waddle mesh setup` with 4 units: Hjem shows "Alle" and three contacts, each
+- [ ] Four units in the network: Hjem shows "Alle" and three contacts, each
       with "hørt … siden", battery % and (on a trip) distance.
 - [ ] Ticking one person in "+ Ny gruppe" opens the DM.
 
@@ -104,11 +106,26 @@ Groups made on the unit (PR #35):
       neither of them can read or write in the group afterwards.
 - [ ] Make a group while one member is off, restart your own unit, switch the
       member on: the group still reaches them (at your next check).
-- [ ] `waddle mesh reset-keys` with one unit switched off ("lost"): the others
-      get new keys and setup runs; they still talk, and keep their numbers.
+- [ ] `waddle mesh remove <name>` with that unit switched off ("lost"): the others
+      get the new member list at their next check, make new keys and still talk,
+      keeping their numbers. The removed unit, switched on, can open nothing new.
 - [ ] Lose one message on purpose (switch a unit off while the other sends two,
       then on just before the third): the "(!) en melding kan mangle" warning
       shows briefly or not at all, and the missing message arrives.
+
+Joining (protocol 3: up to 32 members):
+- [ ] `waddle mesh invite Ola` prints a `waddle://join/…` link and how Ola runs it.
+- [ ] On a second computer (Ola's), unit on File Transfer → Join a Network:
+      `waddle mesh join '<link>' --name Ola` asks the address, the setup code, then
+      prints six digits that the unit shows too, and "Waiting for the admin".
+- [ ] `waddle mesh approve` on your computer shows "Ola" and the same six digits;
+      answer y. Within 10 s Ola's tool says "You are in!" and his unit starts.
+- [ ] The other units show Ola after their next check (the new member list
+      reaches them over Wi-Fi or LoRa), and a DM to Ola arrives.
+- [ ] `waddle mesh members` lists everyone with numbers; Ola has the lowest free one.
+- [ ] The same link a second time: the server says it is used; approve forgets it.
+- [ ] The status page shows Ola by name and "Medlemsliste versjon N".
+- [ ] `waddle mesh check` on Ola's computer asks his unit how it is.
 
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
@@ -145,8 +162,8 @@ gateway's HELLO. Install the server:
 - [ ] Two units out of range of each other but both near the gateway: a message
       goes straight through (the gateway passes it on), within seconds.
 - [ ] Next morning: a backup file in `/var/backups/waddlemesh/`.
-- [ ] Gateway: `pio device monitor -e heltec-gateway`, type `PING <group>`
-      (the "group" in `/etc/waddlemesh.json`; the gateway saves it): it
+- [ ] Gateway: `pio device monitor -e heltec-gateway`, type `PING <network>`
+      (the "network" in `/etc/waddlemesh.json`; the gateway saves it): it
       answers `PONG 0 2 gc1109` (or `kct8103l`).
 - [ ] Status page on a phone (home Wi-Fi): every unit by name, "Sist hørt",
       battery, "Hjemme" or "På tur" with how often it checks; signal for a unit

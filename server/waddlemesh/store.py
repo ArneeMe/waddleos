@@ -4,6 +4,8 @@ import sqlite3
 import threading
 import time
 
+from . import packet as P
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS packets (
     id INTEGER PRIMARY KEY,
@@ -42,14 +44,35 @@ CREATE TABLE IF NOT EXISTS units (
     flags INTEGER,
     sos_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS roster (
+    version INTEGER PRIMARY KEY,
+    signed BLOB NOT NULL,
+    packets BLOB NOT NULL,
+    sent INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS joins (
+    invite TEXT PRIMARY KEY,
+    from_key TEXT NOT NULL,
+    box TEXT NOT NULL,
+    at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS welcomes (
+    invite TEXT PRIMARY KEY,
+    box TEXT NOT NULL,
+    at INTEGER NOT NULL
+);
 """
+# Join requests and welcomes are forgotten after a week.
+JOIN_KEPT_S = 7 * 86400
+MAX_JOINS = 20
 # Columns added after the first release, for databases made before them.
 NEW_COLUMNS = {"units": ("flags INTEGER", "sos_at INTEGER")}
 
 
 class Store:
     def __init__(self, path):
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        # The CLI (set-roster, welcome) writes while the server runs: wait for each other.
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=10)
         self.lock = threading.Lock()
         with self.lock:
             self.db.executescript(SCHEMA)
@@ -182,6 +205,100 @@ class Store:
         if acks:
             counts[2] = acks
         return counts
+
+    # --- Roster ---------------------------------------------------------------
+
+    def set_roster(self, version, signed, packets, replace=False):
+        """Keeps the newest roster and its ROSTER packets. False when not newer
+        (unless replace: the stored one belongs to an earlier network)."""
+        with self.lock:
+            (have,) = self.db.execute("SELECT COALESCE(MAX(version), 0) FROM roster").fetchone()
+            if version <= have and not replace:
+                return False
+            self.db.execute("DELETE FROM roster")
+            self.db.execute("INSERT INTO roster (version, signed, packets) VALUES (?, ?, ?)",
+                            (version, signed, P.frame(packets)))
+            self.db.commit()
+        return True
+
+    def roster(self):
+        """(version, signed bytes, ROSTER packets) of the newest roster, or None."""
+        with self.lock:
+            row = self.db.execute("SELECT version, signed, packets FROM roster").fetchone()
+        return None if row is None else (row[0], bytes(row[1]), P.unframe(bytes(row[2])))
+
+    def roster_version(self):
+        with self.lock:
+            (v,) = self.db.execute("SELECT COALESCE(MAX(version), 0) FROM roster").fetchone()
+        return v
+
+    def take_unsent_roster(self):
+        """The ROSTER packets of a roster not yet sent out over LoRa (then marked sent), or []."""
+        with self.lock:
+            row = self.db.execute("SELECT version, packets FROM roster WHERE sent = 0").fetchone()
+            if row is None:
+                return []
+            self.db.execute("UPDATE roster SET sent = 1 WHERE version = ?", (row[0],))
+            self.db.commit()
+        return P.unframe(bytes(row[1]))
+
+    # --- Joining ----------------------------------------------------------------
+
+    def _forget_old_joins(self, now):
+        for table in ("joins", "welcomes"):
+            self.db.execute("DELETE FROM %s WHERE at < ?" % table, (now - JOIN_KEPT_S,))
+
+    def add_join(self, invite, from_key, box, now=None):
+        """A newcomer's request. Returns "ok", "taken" (that invitation already
+        has one) or "full"."""
+        now = int(now or time.time())
+        with self.lock:
+            self._forget_old_joins(now)
+            taken = self.db.execute("SELECT 1 FROM joins WHERE invite = ? UNION SELECT 1 FROM welcomes"
+                                    " WHERE invite = ?", (invite, invite)).fetchone()
+            (waiting,) = self.db.execute("SELECT COUNT(*) FROM joins").fetchone()
+            if taken:
+                result = "taken"
+            elif waiting >= MAX_JOINS:
+                result = "full"
+            else:
+                self.db.execute("INSERT INTO joins (invite, from_key, box, at) VALUES (?, ?, ?, ?)",
+                                (invite, from_key, box, now))
+                result = "ok"
+            self.db.commit()
+        return result
+
+    def joins(self, now=None):
+        with self.lock:
+            self._forget_old_joins(int(now or time.time()))
+            self.db.commit()
+            rows = self.db.execute("SELECT invite, from_key, box, at FROM joins ORDER BY at").fetchall()
+        return [{"invite": r[0], "from": r[1], "box": r[2], "at": r[3]} for r in rows]
+
+    def forget_join(self, invite):
+        with self.lock:
+            self.db.execute("DELETE FROM joins WHERE invite = ?", (invite,))
+            self.db.commit()
+
+    def add_welcome(self, invite, box, now=None):
+        """The admin let them in: the request is done, the welcome waits to be fetched."""
+        with self.lock:
+            self.db.execute("DELETE FROM joins WHERE invite = ?", (invite,))
+            self.db.execute("INSERT OR REPLACE INTO welcomes (invite, box, at) VALUES (?, ?, ?)",
+                            (invite, box, int(now or time.time())))
+            self.db.commit()
+
+    def take_welcome(self, invite, now=None):
+        """The sealed welcome for an invitation, once (then forgotten), or None."""
+        with self.lock:
+            self._forget_old_joins(int(now or time.time()))
+            row = self.db.execute("SELECT box FROM welcomes WHERE invite = ?", (invite,)).fetchone()
+            self.db.execute("DELETE FROM welcomes WHERE invite = ?", (invite,))
+            self.db.commit()
+        return row[0] if row else None
+
+    def close(self):
+        self.db.close()
 
     def backup(self, path):
         """A consistent copy of the database, safe while the server runs."""

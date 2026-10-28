@@ -1,12 +1,13 @@
 """HTTPS for units on Wi-Fi, and a small status page for Arne's home network.
 
-POST /api/packets   units: length-prefixed packets in, length-prefixed packets out
-GET  /              status page (only from private addresses: the home network)
-GET  /api/status    the same as JSON
+POST /api/packets       units: length-prefixed packets in, length-prefixed packets out
+GET  /api/roster        units: the newest signed roster
+POST /api/join          a newcomer's sealed request (no token: the invitation's password proves it)
+GET  /api/join/<id>     the sealed welcome, once the admin let them in (404 before)
+GET  /                  status page (only from private addresses: the home network)
+GET  /api/status        the same as JSON
 """
 
-import hashlib
-import hmac
 import html
 import ipaddress
 import json
@@ -20,10 +21,19 @@ from . import packet as P
 log = logging.getLogger("waddlemesh.web")
 
 MAX_BODY = 64 * 1024
+MAX_JOIN_BODY = 4096
+MAX_JOIN_BOX = 1024  # bytes, sealed
 
 
-def token_hash(token):
-    return hashlib.sha256(token.encode()).hexdigest()
+def _hex(value, size=None, max_size=None):
+    """value as bytes when it is hex of the right size, else None."""
+    try:
+        raw = bytes.fromhex(value)
+    except (TypeError, ValueError):
+        return None
+    if (size is not None and len(raw) != size) or (max_size is not None and not 0 < len(raw) <= max_size):
+        return None
+    return raw
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -45,11 +55,7 @@ class Handler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
             return None
-        digest = token_hash(auth[7:].strip())
-        for member, expected in self.server.tokens.items():
-            if hmac.compare_digest(digest, expected):
-                return member
-        return None
+        return self.server.mesh.member_for_token(auth[7:].strip())
 
     def _local(self):
         try:
@@ -57,7 +63,35 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    def _json(self, code, doc):
+        self._send(code, json.dumps(doc).encode(), "application/json")
+
+    def _join(self):
+        """POST /api/join {"invite", "from", "box"}: kept for the admin's `waddle mesh approve`."""
+        length = int(self.headers.get("Content-Length", "0"))
+        if length > MAX_JOIN_BODY:
+            return self._send(413, b"")
+        try:
+            doc = json.loads(self.rfile.read(length))
+        except ValueError:
+            return self._send(400, b"")
+        if not isinstance(doc, dict):
+            return self._send(400, b"")
+        invite, unit, box = _hex(doc.get("invite"), 8), _hex(doc.get("from"), 32), _hex(doc.get("box"), None,
+                                                                                         MAX_JOIN_BOX)
+        if invite is None or unit is None or box is None:
+            return self._send(400, b"")
+        result = self.server.mesh.store.add_join(invite.hex(), unit.hex(), box.hex())
+        if result == "taken":
+            return self._json(409, {"error": "invitation already used"})
+        if result == "full":
+            return self._json(429, {"error": "too many waiting"})
+        log.info("join request for invitation %s", invite.hex())
+        self._json(200, {})
+
     def do_POST(self):
+        if self.path == "/api/join":
+            return self._join()
         if self.path != "/api/packets":
             return self._send(404, b"")
         member = self._member()
@@ -83,6 +117,16 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, P.frame(answers))
 
     def do_GET(self):
+        if self.path.startswith("/api/join/"):
+            invite = _hex(self.path[len("/api/join/"):], 8)
+            box = invite and self.server.mesh.store.take_welcome(invite.hex())
+            return self._json(200, {"box": box}) if box else self._send(404, b"")
+        if self.path == "/api/roster":
+            if self._member() is None:
+                time.sleep(1)
+                return self._send(401, b"")
+            stored = self.server.mesh.store.roster()
+            return self._send(200, stored[1]) if stored else self._send(404, b"")
         if not self._local():
             return self._send(404, b"")
         status = self.server.mesh.status()
@@ -213,7 +257,10 @@ def status_page(status, now=None):
             html.escape(u["name"]), html.escape(ago(u["ago_s"]))) for u in status["units"] if u["sos"])
     units = "".join(_unit_card(u) for u in status["units"]) or '<p class="dim">Ingen enheter ennå.</p>'
     counts = ", ".join("%d %s" % (n, COUNT_NAMES.get(t, t)) for t, n in status["packets"].items())
-    server = _rows([("Lagret", counts or "ingenting ennå"), ("Oppe i", duration(status["uptime_s"]))])
+    rows = [("Lagret", counts or "ingenting ennå"), ("Oppe i", duration(status["uptime_s"]))]
+    if status.get("roster"):
+        rows.insert(0, ("Medlemsliste", "versjon %d" % status["roster"]))
+    server = _rows(rows)
     return """<!doctype html><html lang="no"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="30">
@@ -231,10 +278,9 @@ Siden oppdateres hvert 30. sekund.</footer>
 class WebServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, mesh, tokens, gateway_status, cert=None, key=None):
+    def __init__(self, address, mesh, gateway_status, cert=None, key=None):
         super().__init__(address, Handler)
         self.mesh = mesh
-        self.tokens = tokens  # member -> sha256 hex of its token
         self.gateway_status = gateway_status
         if cert:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

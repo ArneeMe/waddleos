@@ -1,7 +1,7 @@
 """The USB serial link to the Heltec gateway (protocol/PROTOCOL.md, "Gateway serial link").
 
 Text lines at 115200 baud: "RX <rssi> <snr> <hex>" in, "TX <hex>" out.
-Every 10 s a "PING <group>". Without one for 30 s the gateway carries on alone
+Every 10 s a "PING <network id>". Without one for 30 s the gateway carries on alone
 and keeps what it hears; its "PONG <kept> ..." says how many it kept. The
 server then asks for them with DUMP and, once all came, sends CLEAR.
 Uses only the standard library (termios), so no pyserial is needed.
@@ -93,11 +93,14 @@ class Gateway:
             time.sleep(P.airtime_ms(len(raw)) / 1000 + 0.05)
 
     def _ping(self):
-        """Tells the gateway the Pi is here (and the group id, for when it is alone)."""
+        """Tells the gateway the Pi is here (and the network id, for when it is
+        alone). A roster the admin just set goes out over LoRa once, too."""
         now = time.time()
         if now - self.last_ping >= PING_EVERY_S:
             self.last_ping = now
-            self._write("PING %d" % self.server.group)
+            self._write("PING %d" % self.server.network)
+            for raw in self.server.store.take_unsent_roster():
+                self.send(raw)
 
     def _handle_line(self, line):
         parts = line.split()
