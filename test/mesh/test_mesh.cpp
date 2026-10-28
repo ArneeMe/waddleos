@@ -6,6 +6,7 @@
 #include <MeshCrypto.h>
 #include <MeshPacket.h>
 #include <MeshRadioRules.h>
+#include <MeshRoster.h>
 #include <monocypher.h>
 
 #include "../../src/services/mesh/MeshTime.h"
@@ -64,11 +65,14 @@ static void testHeader() {
   bad[0] = 0;
   CHECK(!readHeader(bad, sizeof(bad), r));  // wrong magic
   memcpy(bad, buf, sizeof(bad));
-  bad[1] = 0x19;
+  bad[1] = 0x39;
   CHECK(!readHeader(bad, sizeof(bad), r));  // unknown type
   memcpy(bad, buf, sizeof(bad));
-  bad[4] = 7;
-  CHECK(!readHeader(bad, sizeof(bad), r));  // no member 7
+  bad[1] = 0x21;
+  CHECK(!readHeader(bad, sizeof(bad), r));  // version 2
+  memcpy(bad, buf, sizeof(bad));
+  bad[4] = 33;
+  CHECK(!readHeader(bad, sizeof(bad), r));  // no member 33
   memcpy(bad, buf, sizeof(bad));
   bad[10] = 0x22;
   CHECK(!readHeader(bad, sizeof(bad), r));  // piece 2 of 2
@@ -105,11 +109,60 @@ static void testBodies() {
   s.battery = 40;
   s.build = 0xab;
   s.flags = SYNC_ON_TRIP | SYNC_SOS;
-  uint8_t sb[SYNC_REQ_SIZE];
-  writeSyncReq(s, sb);
+  s.rosterVersion = 7;
+  s.lastCounter[31] = 12;  // member 32
+  uint8_t sb[SYNC_REQ_MAX];
+  const size_t sn = writeSyncReq(s, sb);
+  CHECK(sn == SYNC_REQ_HEAD + 3 * 5);  // only the members with counters
   SyncReq t;
-  CHECK(readSyncReq(sb, sizeof(sb), t) && t.lastCounter[0] == 5 && t.lastCounter[1] == 0 &&
-        t.lastCounter[2] == 900 && t.battery == 40 && t.build == 0xab && t.flags == 3);
+  CHECK(readSyncReq(sb, sn, t) && t.lastCounter[0] == 5 && t.lastCounter[1] == 0 && t.lastCounter[2] == 900 &&
+        t.lastCounter[31] == 12 && t.battery == 40 && t.build == 0xab && t.flags == 3 && t.rosterVersion == 7);
+  CHECK(!readSyncReq(sb, sn - 1, t));
+}
+
+static void testRoster() {
+  uint8_t seed[32], other[32], sign[SIGN_KEY_SIZE], otherSign[SIGN_KEY_SIZE];
+  fill(seed, 32, 1);
+  fill(other, 32, 2);
+  signPublicKey(seed, sign);
+  signPublicKey(other, otherSign);
+  Roster r;
+  r.network = 9;
+  r.version = 12;
+  for (uint8_t n : {1, 5, 32}) {
+    RosterEntry e;
+    e.number = n;
+    e.admin = n == 1;
+    e.name = n == 32 ? std::string(30, 'x') : "Ola";  // cut to 20
+    fill(e.publicKey, KEY_SIZE, n);
+    r.members.push_back(e);
+  }
+  auto bytes = writeRoster(r, seed);
+  Roster got;
+  CHECK(readRoster(bytes.data(), bytes.size(), sign, got));
+  CHECK(got.network == 9 && got.version == 12 && got.members.size() == 3 && got.member(5) && !got.member(2));
+  CHECK(got.member(1)->admin && !got.member(5)->admin && got.member(32)->name.size() == ROSTER_NAME);
+  CHECK(got.everyone() == (memberBit(1) | memberBit(5) | memberBit(32)));
+  CHECK(!readRoster(bytes.data(), bytes.size(), otherSign, got));  // not the admin's
+  bytes[3] ^= 1;                                                     // version changed
+  CHECK(!readRoster(bytes.data(), bytes.size(), sign, got));
+
+  // The unit and the admin get the same join key.
+  uint8_t unitSecret[KEY_SIZE], unitPublic[KEY_SIZE], adminSecret[KEY_SIZE], adminPublic[KEY_SIZE];
+  uint8_t password[PASSWORD_SIZE], k1[KEY_SIZE], k2[KEY_SIZE];
+  fill(unitSecret, KEY_SIZE, 3);
+  fill(adminSecret, KEY_SIZE, 4);
+  fill(password, PASSWORD_SIZE, 5);
+  publicKey(unitSecret, unitPublic);
+  publicKey(adminSecret, adminPublic);
+  joinKey(unitSecret, unitPublic, adminPublic, password, k1);
+  uint8_t input[KEY_SIZE + PASSWORD_SIZE + 2 * KEY_SIZE];
+  crypto_x25519(input, adminSecret, unitPublic);
+  memcpy(input + KEY_SIZE, password, PASSWORD_SIZE);
+  memcpy(input + KEY_SIZE + PASSWORD_SIZE, unitPublic, KEY_SIZE);
+  memcpy(input + 2 * KEY_SIZE + PASSWORD_SIZE, adminPublic, KEY_SIZE);
+  crypto_blake2b(k2, KEY_SIZE, input, sizeof(input));
+  CHECK(memcmp(k1, k2, KEY_SIZE) == 0);
 }
 
 static void testSetupBox() {
@@ -140,28 +193,30 @@ static void testSetupBox() {
 }
 
 static void testGroups() {
-  // Member 4 exists; member 5 does not.
+  // Member 32 exists; member 33 does not.
   uint8_t raw[HEADER_SIZE];
-  Header h = msgHeader(4, GROUP, 1), r;
+  Header h = msgHeader(32, GROUP, 1), r;
   writeHeader(h, raw);
-  CHECK(readHeader(raw, sizeof(raw), r) && r.sender == 4 && r.key == 0);
-  raw[4] = 5;
+  CHECK(readHeader(raw, sizeof(raw), r) && r.sender == 32 && r.key == 0 && r.groupId == 0);
+  raw[4] = 33;
   CHECK(!readHeader(raw, sizeof(raw), r));
 
   // Kari's (member 2) third group, key number 4.
-  const uint8_t id = groupId(2, 3);
-  CHECK(id == 0x23 && groupCreator(id) == 2);
-  h = msgHeader(2, GROUP_FLAG | id, 7);
+  const uint16_t id = groupId(2, 3);
+  CHECK(id == 0x0203 && groupCreator(id) == 2);
+  h = msgHeader(2, GROUP_TO, 7);
+  h.groupId = id;
   h.key = 4;
   writeHeader(h, raw);
-  CHECK(readHeader(raw, sizeof(raw), r) && r.recipient == (GROUP_FLAG | id) && r.key == 4);
-  CHECK(isGroup(GROUP_FLAG | id) && !isGroup(GROUP) && !isGroup(GROUP_FLAG | groupId(6, 0)));
-  raw[5] = GROUP_FLAG | groupId(6, 0);  // made by member 6, who does not exist
+  CHECK(readHeader(raw, sizeof(raw), r) && r.recipient == GROUP_TO && r.groupId == id && r.key == 4);
+  put16(raw + 11, groupId(40, 0));  // made by member 40, who cannot exist
+  CHECK(!readHeader(raw, sizeof(raw), r));
+  put16(raw + 11, 0);  // a group packet needs an id
   CHECK(!readHeader(raw, sizeof(raw), r));
 
   // Groups go to everyone; DMs only to the two.
-  CHECK(canRead(3, 1, GROUP_FLAG | id) && canRead(3, 1, GROUP) && canRead(2, 1, 2) && !canRead(3, 1, 2));
-  CHECK(memberBit(4) == 8 && memberBit(0) == 0 && memberCount(0x0F) == 4);
+  CHECK(canRead(3, 1, GROUP_TO) && canRead(3, 1, GROUP) && canRead(2, 1, 2) && !canRead(3, 1, 2));
+  CHECK(memberBit(4) == 8 && memberBit(32) == 0x80000000u && memberBit(0) == 0 && memberCount(0x0F) == 4);
 
   // The key number is sealed with the header: changing it breaks the message.
   uint8_t key[KEY_SIZE];
@@ -320,9 +375,8 @@ static RawPacket msgPacket(uint8_t sender, uint8_t recipient, uint32_t counter, 
 static RawPacket syncPacket(uint8_t sender, uint32_t counter, const SyncReq& s) {
   Header h = msgHeader(sender, SERVER, counter);
   h.type = Type::SyncReq;
-  uint8_t body[SYNC_REQ_SIZE];
-  writeSyncReq(s, body);
-  return unitPacket(h, body, sizeof(body));
+  uint8_t body[SYNC_REQ_MAX];
+  return unitPacket(h, body, writeSyncReq(s, body));
 }
 
 static void testGatewayStore() {
@@ -369,7 +423,9 @@ static void testGatewayStore() {
 
   // A sync from member 3: member 1's group message and member 2's DM to 3, in
   // order, with hops 0. Member 4 does not get the DM.
-  feed(msgPacket(1, GROUP_FLAG | groupId(1, 0), 11));
+  RawPacket groupMsg = msgPacket(1, GROUP_TO, 11);
+  put16(groupMsg.data + 11, groupId(1, 0));
+  feed(groupMsg);
   SyncReq s;
   feed(syncPacket(3, 5, s));
   CHECK(r.count == 4);
@@ -529,7 +585,8 @@ static void writeVectors(const char* path) {
   Header ph = msgHeader(1, GROUP, 12);
   ph.type = Type::Pos;
   // A group made by member 1 (its first), under the group's key number 2.
-  Header sh = msgHeader(1, GROUP_FLAG | groupId(1, 0), 13);
+  Header sh = msgHeader(1, GROUP_TO, 13);
+  sh.groupId = groupId(1, 0);
   sh.key = 2;
   const Case cases[] = {{"group message", gh, senderKey, groupPlain},
                         {"direct message in 3 pieces", dh, dmKey, dmPlain},
@@ -548,7 +605,7 @@ static void writeVectors(const char* path) {
   }
   std::fprintf(f, "  ],\n");
 
-  uint8_t ab[ACK_SIZE], sb[SYNC_REQ_SIZE], hb[HEADER_SIZE];
+  uint8_t ab[ACK_SIZE], sb[SYNC_REQ_MAX], hb[HEADER_SIZE];
   writeAck(Ack{1, 10, AckState::Stored}, ab);
   Header ackH;
   ackH.type = Type::Ack;
@@ -566,7 +623,8 @@ static void writeVectors(const char* path) {
   s.flags = SYNC_ON_TRIP | (4 << SYNC_CHECK_SHIFT);
   s.battery = 64;
   s.build = 0x2a;
-  writeSyncReq(s, sb);
+  s.rosterVersion = 3;
+  const size_t sn = writeSyncReq(s, sb);
   Header syncH;
   syncH.type = Type::SyncReq;
   syncH.group = 0x42;
@@ -574,14 +632,46 @@ static void writeVectors(const char* path) {
   syncH.recipient = SERVER;
   syncH.counter = 4;
   writeHeader(syncH, hb);
-  std::fprintf(f, "  \"syncReq\": \"%s%s\",\n", hex(hb, HEADER_SIZE).c_str(), hex(sb, SYNC_REQ_SIZE).c_str());
+  std::fprintf(f, "  \"syncReq\": \"%s%s\",\n", hex(hb, HEADER_SIZE).c_str(), hex(sb, sn).c_str());
   uint8_t fb[FETCH_SIZE];
   writeFetch(Fetch{1, 10, 13}, fb);
   Header fetchH = syncH;
   fetchH.type = Type::Fetch;
   fetchH.counter = 5;
   writeHeader(fetchH, hb);
-  std::fprintf(f, "  \"fetch\": \"%s%s\"\n}\n", hex(hb, HEADER_SIZE).c_str(), hex(fb, FETCH_SIZE).c_str());
+  std::fprintf(f, "  \"fetch\": \"%s%s\",\n", hex(hb, HEADER_SIZE).c_str(), hex(fb, FETCH_SIZE).c_str());
+
+  // A roster signed by an admin (seed 0x60...), and a join key.
+  uint8_t adminSeed[32], adminSign[SIGN_KEY_SIZE];
+  fill(adminSeed, 32, 0x60);
+  signPublicKey(adminSeed, adminSign);
+  Roster roster;
+  roster.network = 0x42;
+  roster.version = 3;
+  RosterEntry a, b;
+  a.number = 1;
+  a.admin = true;
+  a.name = "Arne";
+  memcpy(a.publicKey, aPublic, KEY_SIZE);
+  fill(a.tokenHash, TOKEN_HASH_SIZE, 0xA0);
+  b.number = 7;
+  b.name = "Kåre";
+  memcpy(b.publicKey, bPublic, KEY_SIZE);
+  fill(b.tokenHash, TOKEN_HASH_SIZE, 0xB0);
+  roster.members = {a, b};
+  const auto signedRoster = writeRoster(roster, adminSeed);
+  uint8_t password[PASSWORD_SIZE], adminBoxSecret[KEY_SIZE], adminBox[KEY_SIZE], jk[KEY_SIZE];
+  fill(password, PASSWORD_SIZE, 0x11);
+  fill(adminBoxSecret, KEY_SIZE, 0x70);
+  publicKey(adminBoxSecret, adminBox);
+  joinKey(bSecret, bPublic, adminBox, password, jk);
+  char jc[8];
+  joinCode(adminBox, bPublic, jc);
+  std::fprintf(f, "  \"roster\": {\"adminSeed\": \"%s\", \"adminSign\": \"%s\", \"signed\": \"%s\"},\n",
+               hex(adminSeed, 32).c_str(), hex(adminSign, SIGN_KEY_SIZE).c_str(),
+               hex(signedRoster.data(), signedRoster.size()).c_str());
+  std::fprintf(f, "  \"join\": {\"password\": \"%s\", \"adminBoxSecret\": \"%s\", \"key\": \"%s\", \"code\": \"%s\"}\n}\n",
+               hex(password, PASSWORD_SIZE).c_str(), hex(adminBoxSecret, KEY_SIZE).c_str(), hex(jk, KEY_SIZE).c_str(), jc);
   std::fclose(f);
 }
 
@@ -590,6 +680,7 @@ int main(int argc, char** argv) {
   testBodies();
   testGroups();
   testSetupBox();
+  testRoster();
   testSealOpen();
   testPairKey();
   testRadioRules();

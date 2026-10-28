@@ -6,7 +6,8 @@ cd "$(dirname "$0")/../.."
 out=$(mktemp -d)
 san="-fsanitize=address,undefined"
 gcc -O1 $san -c lib/monocypher/src/monocypher.c -o "$out/monocypher.o"
+gcc -O1 $san -Ilib/monocypher/src -c lib/monocypher/src/monocypher-ed25519.c -o "$out/monocypher-ed25519.o"
 g++ -std=c++17 -O1 -Wall -Wextra -Werror $san -Ilib/WaddleMesh/src -Ilib/monocypher/src \
-  test/mesh/test_mesh.cpp lib/WaddleMesh/src/*.cpp "$out/monocypher.o" -o "$out/test_mesh"
+  test/mesh/test_mesh.cpp lib/WaddleMesh/src/*.cpp "$out/monocypher.o" "$out/monocypher-ed25519.o" -o "$out/test_mesh"
 "$out/test_mesh" protocol/vectors.json
 rm -rf "$out"
