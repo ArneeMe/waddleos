@@ -247,7 +247,9 @@ def setup():
     say(f"\n{C}▸{N} Giving every unit the group")
     public = [{k: m[k] for k in ("number", "name", "publicKey", "senderKey")} for m in members]
     for m in members:
-        doc = {"group": group, "me": m["number"], "members": public}
+        # Message counters start above this, so a unit taking a lost unit's number
+        # never repeats its counters.
+        doc = {"group": group, "me": m["number"], "members": public, "counterFloor": int(time.time())}
         if server:
             doc["server"] = {"url": server["url"], "token": server["tokens"][m["number"]], "cert": server["cert"]}
         sealed = aead_seal(m["boxKey"], setup_nonce(2), json.dumps(doc).encode())
@@ -439,6 +441,9 @@ def reset_keys(args):
     with open(CONFIG) as f:
         cfg = json.load(f)
     say(f"\n{B}🐧 waddle mesh reset-keys{N}\n")
+    # Configs from before numbers were saved: number them as setup did then.
+    for i, m in enumerate(cfg.get("members", [])):
+        m.setdefault("number", i + 1)
     names = [m["name"] for m in cfg.get("members", [])]
     lost = ask(f"Which unit is lost ({', '.join(names)})")
     keep = [m for m in cfg.get("members", []) if m["name"] != lost]

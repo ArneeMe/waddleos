@@ -121,6 +121,7 @@ class Node {
   Group group_;
   ChatGroups groups_;
   std::vector<Fetch> fetches_;  // missing messages to ask the server for over Wi-Fi
+  std::vector<uint32_t> controlCounters_;  // my invitations and notices this session
   MessageStore store_;
   LoraParams params_;
   AirtimeBudget budget_;
@@ -168,10 +169,13 @@ class Node {
   void requestFetch(uint8_t sender, uint32_t after, uint32_t before);
   void fillGap(uint8_t conversation, const ChatMessage& late);
   uint8_t syncFlags() const;
-  void sendControl(uint8_t to, const std::string& payload);
+  uint32_t sendControl(uint8_t to, const std::string& payload);
+  void sendToMember(int slot, uint8_t to, char kind, uint8_t about);
   void handleControl(uint8_t from, const std::string& text);
-  void invite(int slot, uint8_t to);
+  bool confirmControl(uint8_t from, uint32_t counter);
+  void resendUnconfirmed();
   void rotate(int slot);
+  void takeOut(int slot, uint8_t member);
   void openWaiting(uint8_t recipient);
   void dropMissingMembers();
   uint8_t conversationOfMine(uint32_t counter);

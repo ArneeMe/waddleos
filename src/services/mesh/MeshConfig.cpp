@@ -148,6 +148,7 @@ const char* parseGroup(const JsonDocument& doc, Group& group) {
   group.serverUrl = doc["server"]["url"] | "";
   group.serverToken = doc["server"]["token"] | "";
   group.serverCert = doc["server"]["cert"] | "";
+  group.counterFloor = doc["counterFloor"] | 0u;
   group.configured = true;
   return nullptr;
 }

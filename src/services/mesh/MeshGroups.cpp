@@ -1,5 +1,6 @@
 #include "MeshGroups.h"
 
+#include <Logging.h>
 #include <Preferences.h>
 
 #include <cstdio>
@@ -11,7 +12,7 @@ namespace mesh {
 namespace {
 
 constexpr const char* NVS_NAMESPACE = "meshgroups";
-constexpr uint8_t RECORD_VERSION = 1;
+constexpr uint8_t RECORD_VERSION = 2;
 
 std::string slotKey(const int slot) {
   char k[8];
@@ -70,14 +71,16 @@ void ChatGroups::load() {
   prefs.end();
 }
 
-void ChatGroups::save(const int slot) {
+bool ChatGroups::save(const int slot) {
   uint8_t record[1 + sizeof(ChatGroup)];
   record[0] = RECORD_VERSION;
   memcpy(record + 1, &groups_[slot], sizeof(ChatGroup));
   Preferences prefs;
   prefs.begin(NVS_NAMESPACE, false);
-  prefs.putBytes(slotKey(slot).c_str(), record, sizeof(record));
+  const bool ok = prefs.putBytes(slotKey(slot).c_str(), record, sizeof(record)) == sizeof(record);
   prefs.end();
+  if (!ok) LOG_ERR("MESH", "Could not save group %02x: flash full?", groups_[slot].id);
+  return ok;
 }
 
 int ChatGroups::find(const uint8_t id) const {
@@ -106,14 +109,15 @@ uint8_t ChatGroups::nextId(const uint8_t me) {
   Preferences prefs;
   prefs.begin(NVS_NAMESPACE, false);
   uint32_t count = prefs.getUInt("next", 0);
-  // 16 per member: past that, the id of a group I have left is used again.
-  uint8_t id = groupId(me, uint8_t(count & 15));
-  for (int tries = 0; tries < 16; tries++, count++) {
-    id = groupId(me, uint8_t(count & 15));
-    const int slot = find(id);
-    if (slot < 0 || groups_[slot].left) break;
+  // 16 per member: past that, the id of a group I have left is used again (its
+  // invitations say "new group", so the others start it afresh).
+  uint8_t id = 0;
+  for (int tries = 0; tries < 16 && !id; tries++, count++) {
+    const uint8_t candidate = groupId(me, uint8_t(count & 15));
+    const int slot = find(candidate);
+    if (slot < 0 || groups_[slot].left) id = candidate;
   }
-  prefs.putUInt("next", count + 1);
+  prefs.putUInt("next", count);
   prefs.end();
   return id;
 }

@@ -9,7 +9,7 @@
 namespace mesh {
 
 constexpr uint8_t MAGIC = 0x57;  // "W"
-constexpr uint8_t VERSION = 1;
+constexpr uint8_t VERSION = 2;  // 2: the 12-byte header (key number), groups made on units, FETCH
 constexpr size_t MAX_PACKET = 200;
 constexpr size_t HEADER_SIZE = 12;
 constexpr size_t TAG_SIZE = 16;

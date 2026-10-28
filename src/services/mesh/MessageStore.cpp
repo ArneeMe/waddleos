@@ -216,6 +216,14 @@ std::vector<std::vector<uint8_t>> MessageStore::packetsAfter(const uint8_t sende
   return out;
 }
 
+std::vector<std::vector<uint8_t>> MessageStore::packetsTo(const uint8_t sender, const uint8_t recipient) {
+  std::vector<std::vector<uint8_t>> out;
+  forEachPacket(sender, [&](const Header& h, const uint8_t* raw, const size_t len) {
+    if (h.type == Type::Msg && h.recipient == recipient) out.emplace_back(raw, raw + len);
+  });
+  return out;
+}
+
 void MessageStore::addMessage(const uint8_t conversation, const ChatMessage& m) {
   if (conversation >= CONVERSATIONS) return;
   std::vector<uint8_t> rec(17 + m.text.size());

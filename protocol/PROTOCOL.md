@@ -1,4 +1,4 @@
-# WaddleOS mesh protocol, version 1
+# WaddleOS mesh protocol, version 2
 
 One small binary packet format for LoRa and Wi-Fi, so the units, the gateway
 and the Pi server share one parser. The C++ code is `lib/WaddleMesh/`; the
@@ -21,7 +21,7 @@ set at setup); units drop packets from other meshes without reading them.
 | Byte | Field | Notes |
 |---|---|---|
 | 0 | magic | `0x57` ("W") |
-| 1 | version and type | high 4 bits = 1, low 4 bits = type (below) |
+| 1 | version and type | high 4 bits = 2, low 4 bits = type (below) |
 | 2 | group id | set at setup |
 | 3 | hops | low 4 bits: hops left (starts at 3); bit 4: fragmented |
 | 4 | sender | 1–4, or 0 = server |
@@ -32,7 +32,12 @@ set at setup); units drop packets from other meshes without reading them.
 
 Message id = (sender, counter). It is unique for ever: a unit never reuses a
 counter. It saves a reserved counter range to flash before using it, so a
-crash or reboot skips ahead instead of repeating.
+crash or reboot skips ahead instead of repeating. Setup also gives each unit a
+floor (`counterFloor`, unix seconds at setup) to start above, so a new unit that
+takes a lost unit's member number does not repeat its counters.
+
+Version 1 (an 11-byte header) is not understood by version 2 units and the
+server: packets of another version are dropped, never stored.
 
 ## Types
 
@@ -137,21 +142,31 @@ accept step.
 - **Key:** the creator makes 32 random bytes, key number 1. It is sent to each
   member in an *invitation*: a DM (MSG to that member, pair key) whose text
   starts with byte `0x00` and then `G`, group id, key number, member bits (u8,
-  bit 0 = member 1), the key (32 bytes) and the group's name (UTF-8). Units do
-  not show such DMs as messages. Being a DM, it gets ACKs, retries and sync like
-  any message.
+  bit 0 = member 1; bit 7 set = a new group, start afresh), the key (32 bytes)
+  and the group's name (UTF-8). Units do not show such DMs as messages. Being a
+  DM, it gets ACKs, retries and sync like any message; on top of that the sender
+  keeps it in flash and sends it again at each check until that member's ACK
+  comes, also after a restart.
+- **Who may change a group:** only the remaining member with the lowest number
+  makes a new key, so two never do at once. An invitation for a group a unit
+  already has counts only when it comes from a member of that group and carries
+  a newer key number than the unit holds; an older one only adds that old key
+  (for history) and changes nothing else.
 - **Messages to the group:** MSG to `0x80 | id`, encrypted with the group key,
   header byte 11 = its key number. A unit keeps every key number it has had, so
   it can open older messages too. A message that arrives before its invitation
   is kept and opened when the key comes.
 - **Leaving:** a member's unit sends each other member a DM `0x00 'L'` + group
-  id, and forgets the group's new keys. The remaining member with the lowest
-  number makes the next key number and sends it in invitations (with the new
-  member bits) to those who remain. The one who left keeps what they already
-  had, but cannot open anything new.
-- **Removing** (a lost unit): any member chooses "Fjern"; their unit makes the
-  next key number and invites the rest, as above. `waddle mesh setup` without a
-  member does the same on every unit for each group that member was in.
+  id + 0. The remaining member with the lowest number makes the next key number
+  and sends it in invitations (with the new member bits) to those who remain.
+  The one who left keeps what they already had, but cannot open anything new.
+- **Removing** (a lost unit): any member chooses "Fjern"; their unit sends
+  `0x00 'R'` + group id + member to the lowest remaining member, who takes them
+  out and makes the next key as above. `waddle mesh setup` without a member does
+  the same for each group that member was in.
+- **After someone is out:** units drop their group messages, except ones under an
+  older key with a counter no higher than the newest one seen from them when
+  they went out (late arrivals of what they wrote before).
 
 ## Relaying
 

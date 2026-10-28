@@ -9,7 +9,7 @@ import struct
 from dataclasses import dataclass, field
 
 MAGIC = 0x57
-VERSION = 1
+VERSION = 2  # 2: the 12-byte header (key number), groups made on units, FETCH
 MAX_PACKET = 200
 HEADER_SIZE = 12
 DEFAULT_HOPS = 3

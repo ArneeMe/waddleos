@@ -6,6 +6,7 @@
 // leaves and the group gets a new key.
 
 #include <MeshCrypto.h>
+#include <MeshPacket.h>
 
 #include <cstdint>
 
@@ -27,6 +28,25 @@ struct ChatGroup {
   bool left = false;    // I left: kept to read the history, no longer written to
   char name[GROUP_NAME] = "";
   GroupKey keys[MAX_GROUP_KEYS];
+  // A member who left or was removed: the first key number they do not have,
+  // and their newest message counter then. Messages they sent before still
+  // open (also when they arrive late); anything newer is dropped.
+  uint8_t removedAt[MAX_MEMBERS] = {};
+  uint32_t removedCounter[MAX_MEMBERS] = {};
+  // My invitation or leave notice to each member that has not been confirmed
+  // (its message counter, 0 = none). Sent again on each check, even after a
+  // restart, until that member's unit answers.
+  uint32_t unconfirmed[MAX_MEMBERS] = {};
+  uint8_t unconfirmedKind[MAX_MEMBERS] = {};   // 'G', 'L' or 'R' (MeshNode.cpp)
+  uint8_t unconfirmedAbout[MAX_MEMBERS] = {};  // for 'R': the member to take out
+
+  bool has(uint8_t member) const { return members & memberBit(member); }
+  // Whether a message from member, with this key number and counter, may be shown.
+  bool accepts(uint8_t member, uint8_t number, uint32_t counter) const {
+    if (!isMember(member)) return false;
+    return has(member) ||
+           (removedAt[member - 1] && number < removedAt[member - 1] && counter <= removedCounter[member - 1]);
+  }
 
   // The newest key, or nullptr.
   const GroupKey* newest() const;
@@ -44,8 +64,9 @@ class ChatGroups {
   int take(uint8_t id);
   ChatGroup& at(int slot) { return groups_[slot]; }
   const ChatGroup& at(int slot) const { return groups_[slot]; }
-  void save(int slot);
-  // The next id for a group made on this unit.
+  // False when flash is full (logged): the change is lost at the next restart.
+  bool save(int slot);
+  // The next id for a group made on this unit, or 0 when all 16 are in use.
   uint8_t nextId(uint8_t me);
 
  private:

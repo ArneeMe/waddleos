@@ -37,6 +37,7 @@ struct Group {
   std::string serverUrl;    // "https://home.example:8443", empty = no Wi-Fi server
   std::string serverToken;  // this unit's key for the server
   std::string serverCert;   // the server's certificate (PEM), the only one trusted
+  uint32_t counterFloor = 0;  // message counters start above this (unix time of setup)
 
   Member* member(uint8_t number) { return isMember(number) ? &members[number - 1] : nullptr; }
   const Member* member(uint8_t number) const { return isMember(number) ? &members[number - 1] : nullptr; }

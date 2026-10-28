@@ -391,7 +391,7 @@ void NewGroupActivity::finish() {
     const std::string name = std::get<KeyboardResult>(result.data).text;
     const uint8_t conversation = node().createGroup(chosen, name);
     if (conversation == mesh::CONV_GROUP) {
-      problem = "Kunne ikke lage gruppen";
+      problem = "Kunne ikke lage gruppen (16 grupper er maks: forlat en først)";
       requestUpdate();
       return;
     }

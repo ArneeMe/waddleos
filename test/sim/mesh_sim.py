@@ -277,6 +277,81 @@ class FourUnitTests(unittest.TestCase):
         self.assertEqual(w.units[4].texts(conv), ["Kl 18?"])
 
 
+class GroupSafetyTests(unittest.TestCase):
+    """What the review found: clashing key changes, removed members, restarts."""
+
+    def setUp(self):
+        self.w = World(names=("Arne", "Kari", "Ola", "Per"))
+        self.w.all_in_range()
+        self.w.begin()
+        self.w.run(5)
+
+    def tearDown(self):
+        self.w.close()
+
+    def group(self, unit, bits, name="G"):
+        conv = int(self.w.units[unit].cmd("group %d %s" % (bits, name))[0].split()[1])
+        self.w.run(20)
+        return conv
+
+    def state(self, unit, conv):
+        return self.w.units[unit].state()["groups"][str(conv)]
+
+    def test_two_removals_at_once_both_happen(self):
+        w = self.w
+        conv = self.group(1, 0b1110)
+        w.units[2].cmd("remove %d 4" % conv)  # Kari takes Per out ...
+        w.units[1].cmd("remove %d 3" % conv)  # ... while Arne takes Ola out
+        w.run(40)
+        for n in (1, 2):
+            self.assertEqual(self.state(n, conv)["members"], 0b0011, "unit %d" % n)
+        w.units[1].cmd("send %d Bare oss to" % conv)
+        w.run(20)
+        self.assertEqual(w.units[2].texts(conv), ["Bare oss to"])
+        self.assertEqual(w.units[3].texts(conv), [])
+        self.assertEqual(w.units[4].texts(conv), [])
+
+    def test_removed_member_cannot_write_or_take_over(self):
+        w = self.w
+        conv = self.group(1, 0b1110)
+        w.units[1].cmd("remove %d 4" % conv)
+        w.run(30)
+        # Per still has key 1 and can send under it, but nobody shows it as new.
+        w.units[4].cmd("send %d Hei, jeg er her fortsatt" % conv)
+        w.run(20)
+        for n in (1, 2, 3):
+            self.assertEqual(w.units[n].texts(conv), [], "unit %d" % n)
+            self.assertEqual(self.state(n, conv)["key"], 2)
+
+    def test_invitation_survives_a_restart(self):
+        w = self.w
+        w.units[3].stop()
+        conv = self.group(1, 0b0110, "Restart")  # Ola is off and misses it
+        w.run(200)  # Arne's retries run out
+        w.units[1].stop()
+        w.units[1].start()
+        w.units[1].cmd("time %d" % w.now)
+        w.begin(1)  # Arne's unit restarts, then checks: the invitation goes again
+        w.units[3].start()
+        w.units[3].cmd("time %d" % w.now)
+        w.begin(3)
+        w.run(20)
+        w.units[1].cmd("check")
+        w.run(20)
+        self.assertEqual(self.state(3, conv)["name"], "Restart")
+
+    def test_leaving_twice_and_stale_invitation_do_not_rejoin(self):
+        w = self.w
+        conv = self.group(1, 0b1110)
+        w.units[4].cmd("leave %d" % conv)
+        w.run(30)
+        self.assertTrue(self.state(4, conv)["left"])
+        w.units[1].cmd("check")  # resends nothing to Per: he is out
+        w.run(20)
+        self.assertTrue(self.state(4, conv)["left"])
+        self.assertEqual(self.state(1, conv)["members"], 0b0111)
+
+
 class CheckTests(unittest.TestCase):
     """The unit as a backup: the radio sleeps and wakes to check now and then."""
 

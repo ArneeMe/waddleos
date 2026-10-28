@@ -72,7 +72,9 @@ int outboxHead = 0;
 int outboxUsed = 0;
 uint32_t nextOwnSend = 0;
 
-bool standalone() { return millis() - lastFromPi > PI_TIMEOUT_MS; }
+// Only once a server has pinged it (and so told it the group): with a Pi
+// server too old to ping, the gateway keeps passing everything on as before.
+bool standalone() { return store && store->group() && millis() - lastFromPi > PI_TIMEOUT_MS; }
 
 void IRAM_ATTR onReceive() { received = true; }
 

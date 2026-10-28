@@ -98,6 +98,12 @@ Groups made on the unit (PR #35):
 - [ ] "Fjern" on a member (twice): the same, without their unit doing anything.
 - [ ] After updating from an older build: the log says "Moved the group from the
       SD card to flash" once, and /.mesh/group.json is gone from the SD card.
+- [ ] File Transfer on a T5 shows "Oppsettkode: 123 456" under the address, and
+      `waddle mesh setup` asks you to compare it before going on.
+- [ ] Two "Fjern" at once from two units (different people): both are out, and
+      neither of them can read or write in the group afterwards.
+- [ ] Make a group while one member is off, restart your own unit, switch the
+      member on: the group still reaches them (at your next check).
 - [ ] `waddle mesh reset-keys` with one unit switched off ("lost"): the others
       get new keys and setup runs; they still talk, and keep their numbers.
 - [ ] Lose one message on purpose (switch a unit off while the other sends two,
