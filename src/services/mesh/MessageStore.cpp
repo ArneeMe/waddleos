@@ -4,6 +4,7 @@
 #include <Logging.h>
 #include <MeshCrypto.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -157,10 +158,12 @@ void MessageStore::begin(const uint8_t me) {
       const ChatMessage& m = r.message;
       sum.count++;
       if (m.sender != me_) fromOthers++;
-      sum.lastTime = m.time;
-      sum.lastSender = m.sender;
-      sum.lastText = m.text.substr(0, PREVIEW);
-      if (isMember(m.sender)) messageHash(m, chain_[c][m.sender - 1]);
+      if (m.time >= sum.lastTime) {
+        sum.lastTime = m.time;
+        sum.lastSender = m.sender;
+        sum.lastText = m.text.substr(0, PREVIEW);
+      }
+      updateChain(c, m);
     }
     f.close();
     sum.unread = fromOthers > seen_[c] ? fromOthers - seen_[c] : 0;
@@ -215,10 +218,13 @@ void MessageStore::addMessage(const uint8_t conversation, const ChatMessage& m) 
   ConversationSummary& sum = summaries_[conversation];
   sum.count++;
   if (m.sender != me_) sum.unread++;
-  sum.lastTime = m.time;
-  sum.lastSender = m.sender;
-  sum.lastText = m.text.substr(0, PREVIEW);
-  if (isMember(m.sender)) messageHash(m, chain_[conversation][m.sender - 1]);
+  // A late message (caught up from others) does not replace the newest one.
+  if (m.time >= sum.lastTime) {
+    sum.lastTime = m.time;
+    sum.lastSender = m.sender;
+    sum.lastText = m.text.substr(0, PREVIEW);
+  }
+  updateChain(conversation, m);
 }
 
 void MessageStore::addState(const uint8_t conversation, const uint8_t sender, const uint32_t counter,
@@ -253,6 +259,13 @@ std::vector<ChatMessage> MessageStore::load(const uint8_t conversation, const si
     }
   }
   f.close();
+  // In the order they were written, not the order they arrived (catching up
+  // from several units mixes them).
+  std::stable_sort(all.begin(), all.end(), [](const ChatMessage& a, const ChatMessage& b) {
+    if (a.time != b.time) return a.time < b.time;
+    if (a.sender != b.sender) return a.sender < b.sender;
+    return a.counter < b.counter;
+  });
   if (all.size() > limit) all.erase(all.begin(), all.begin() + long(all.size() - limit));
   return all;
 }
@@ -275,6 +288,16 @@ void MessageStore::lastHash(const uint8_t conversation, const uint8_t sender, ui
     return;
   }
   memcpy(out, chain_[conversation][sender - 1], 4);
+}
+
+void MessageStore::updateChain(const uint8_t conversation, const ChatMessage& m) {
+  if (!isMember(m.sender) || m.counter < chainCounter_[conversation][m.sender - 1]) return;
+  chainCounter_[conversation][m.sender - 1] = m.counter;
+  messageHash(m, chain_[conversation][m.sender - 1]);
+}
+
+uint32_t MessageStore::lastChainCounter(const uint8_t conversation, const uint8_t sender) const {
+  return conversation < CONVERSATIONS && isMember(sender) ? chainCounter_[conversation][sender - 1] : 0;
 }
 
 uint32_t MessageStore::totalUnread() const {

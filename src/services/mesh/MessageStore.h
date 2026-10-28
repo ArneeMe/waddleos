@@ -65,8 +65,10 @@ class MessageStore {
   // The newest `limit` messages of a conversation, oldest first, with states applied.
   std::vector<ChatMessage> load(uint8_t conversation, size_t limit) const;
   bool hasMessage(uint8_t conversation, uint8_t sender, uint32_t counter) const;
-  // The hash of sender's newest message in the conversation (for the chain).
+  // The hash and counter of sender's newest message in the conversation (for
+  // the chain). An older message arriving later fills a gap and is not checked.
   void lastHash(uint8_t conversation, uint8_t sender, uint8_t out[4]) const;
+  uint32_t lastChainCounter(uint8_t conversation, uint8_t sender) const;
 
   const ConversationSummary& summary(uint8_t conversation) const { return summaries_[conversation]; }
   uint32_t totalUnread() const;
@@ -79,6 +81,8 @@ class MessageStore {
   uint32_t seen_[CONVERSATIONS] = {};  // read.txt
   // Newest message hash per conversation and sender.
   uint8_t chain_[CONVERSATIONS][MAX_MEMBERS][4] = {};
+  uint32_t chainCounter_[CONVERSATIONS][MAX_MEMBERS] = {};
+  void updateChain(uint8_t conversation, const ChatMessage& m);
 
   void saveSeen();
 };

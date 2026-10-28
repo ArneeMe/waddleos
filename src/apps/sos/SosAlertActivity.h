@@ -15,6 +15,7 @@ class SosActivity final : public Activity {
  private:
   int cancelY = 0;
   unsigned long drawnAt = 0;
+  uint32_t shownChanges = 0;
 };
 
 // An SOS from another member: takes over the screen until it is seen.

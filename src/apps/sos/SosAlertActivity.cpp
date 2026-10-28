@@ -46,18 +46,34 @@ void SosActivity::loop() {
     activityManager.goHome();
     return;
   }
-  if (millis() - drawnAt > 60000) requestUpdate();  // the position line
+  // Answers coming in, or once a minute for the position line.
+  if (node().changes() != shownChanges || millis() - drawnAt > 60000) requestUpdate();
 }
 
 void SosActivity::render(RenderLock&&) {
   const int width = renderer.getScreenWidth();
   const int height = renderer.getScreenHeight();
   drawnAt = millis();
+  shownChanges = node().changes();
   renderer.clearScreen();
   renderer.fillRect(0, 0, width, height, true);
   waddle::drawPixelText(renderer, (width - waddle::pixelTextWidth("SOS", 20)) / 2, 160, "SOS", 20);
-  renderer.drawCenteredText(UI_12_FONT_ID, 340, "Sendt til gruppen og serveren", false);
-  renderer.drawCenteredText(UI_12_FONT_ID, 380, "Sendes på nytt hvert minutt", false);
+  // Who has it: "Mottatt av Kari og serveren", then "Sett av Kari".
+  auto names = [](const uint8_t bits) {
+    std::string out;
+    int n = 0;
+    for (uint8_t m = 1; m <= mesh::MAX_MEMBERS; m++) {
+      if (bits & (1u << (m - 1))) out += std::string(n++ ? ", " : "") + node().group().name(m);
+    }
+    if (bits & mesh::Node::SERVER_BIT) out += std::string(n ? " og " : "") + "serveren";
+    return out;
+  };
+  const uint8_t received = node().sosReceivedBy();
+  const uint8_t seen = node().sosSeenBy();
+  const std::string got = received ? "Mottatt av " + names(received) : std::string("Ingen svar ennå");
+  renderer.drawCenteredText(UI_12_FONT_ID, 330, got.c_str(), false, EpdFontFamily::BOLD);
+  if (seen) renderer.drawCenteredText(UI_12_FONT_ID, 370, ("Sett av " + names(seen)).c_str(), false);
+  renderer.drawCenteredText(UI_12_FONT_ID, 410, "Sendes på nytt hvert minutt", false);
   const auto& fix = mesh::gps::lastFix();
   if (fix.valid) {
     mesh::Position p;
@@ -87,6 +103,8 @@ void SosAlertActivity::loop() {
   int x = 0, y = 0;
   if (mappedInput.wasReleased(Button::Confirm) || mappedInput.wasReleased(Button::Back) ||
       mappedInput.wasScreenTapped(x, y)) {
+    // "Sett" tells the sender someone has seen it.
+    node().acknowledgeSos(from);
     finish();
     return;
   }

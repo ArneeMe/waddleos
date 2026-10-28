@@ -517,7 +517,8 @@ void CrossPointWebServer::handleStatus() const {
   doc["freeHeap"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
   doc["device"] = BoardConfig::ACTIVE.name;
-  doc["board"] = board_tag::boardName();  // which firmware file fits (waddle update)
+  // Which firmware file fits (waddle update).
+  doc["board"] = std::string(board_tag::boardName(), board_tag::boardNameLen());
 
   String response;
   serializeJson(doc, response);

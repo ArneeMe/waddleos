@@ -28,6 +28,7 @@ struct MemberStatus {
   uint32_t positionAtMs = 0;
   bool sos = false;  // an SOS from this member is active
   Position sosPosition;
+  uint32_t sosCounter = 0;  // their newest SOS packet, for "seen"
 };
 
 class Node {
@@ -52,6 +53,12 @@ class Node {
   void startSos();
   void cancelSos();
   bool sosActive() const { return sosActive_; }
+  // Who has my active SOS: bit per member (bit n-1), and SERVER_BIT for the server.
+  static constexpr uint8_t SERVER_BIT = 0x80;
+  uint8_t sosReceivedBy() const { return sosReceivedBy_; }
+  uint8_t sosSeenBy() const { return sosSeenBy_; }
+  // The user saw another member's SOS alert: tell them.
+  void acknowledgeSos(uint8_t from);
   // A member whose SOS is active and not yet shown on screen, or 0.
   uint8_t takeNewSos();
   bool hasNewSos() const;
@@ -107,6 +114,9 @@ class Node {
   bool sosActive_ = false;
   uint32_t nextSosMs_ = 0;
   uint8_t newSos_ = 0;
+  std::vector<uint32_t> sosCounters_;  // my SOS packets of the current alarm
+  uint8_t sosReceivedBy_ = 0;
+  uint8_t sosSeenBy_ = 0;
 
   uint32_t nextCounter();
   Header header(Type type, uint8_t recipient);

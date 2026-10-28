@@ -8,6 +8,8 @@
 #include <cstring>
 #include <ctime>
 
+#include "MeshTime.h"
+
 namespace mesh::gps {
 
 namespace {
@@ -93,22 +95,8 @@ void handleSentence(const char* s) {
   field(s, 1, time, sizeof(time));
   field(s, 9, date, sizeof(date));
   if (strlen(time) < 6 || strlen(date) != 6) return;
-  struct tm t {};
-  t.tm_hour = (time[0] - '0') * 10 + (time[1] - '0');
-  t.tm_min = (time[2] - '0') * 10 + (time[3] - '0');
-  t.tm_sec = (time[4] - '0') * 10 + (time[5] - '0');
-  t.tm_mday = (date[0] - '0') * 10 + (date[1] - '0');
-  t.tm_mon = (date[2] - '0') * 10 + (date[3] - '0') - 1;
-  t.tm_year = 100 + (date[4] - '0') * 10 + (date[5] - '0');
-  // Days from civil date, so no timezone setting is involved.
-  const int y = t.tm_year + 1900 - (t.tm_mon < 2 ? 1 : 0);
-  const int era = y / 400;
-  const int yoe = y - era * 400;
-  const int mp = (t.tm_mon + 9) % 12;
-  const int doy = (153 * mp + 2) / 5 + t.tm_mday - 1;
-  const int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-  const long days = long(era) * 146097 + doe - 719468;
-  fix.time = uint32_t(days * 86400L + t.tm_hour * 3600L + t.tm_min * 60L + t.tm_sec);
+  const auto two = [](const char* s) { return (s[0] - '0') * 10 + (s[1] - '0'); };
+  fix.time = unixFromCivil(2000 + two(date + 4), two(date + 2), two(date), two(time), two(time + 2), two(time + 4));
   fix.latE7 = coordinate(field(s, 3, f, sizeof(f)), field(s, 4, g, sizeof(g)));
   fix.lonE7 = coordinate(field(s, 5, f, sizeof(f)), field(s, 6, g, sizeof(g)));
   fix.altitude = pendingAltitude;

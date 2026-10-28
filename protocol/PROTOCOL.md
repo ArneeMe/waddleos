@@ -87,6 +87,11 @@ stored MSG from member *n* with a counter above the given one.
 A unit in SOS sends an SOS packet every 60 seconds until the user cancels it;
 cancelling sends one more SOS with the "cancelled" bit set.
 
+Every SOS is answered: a unit that receives one sends an ACK "delivered" for that
+SOS packet's counter, and "read" when its user taps "Sett" on the alert; the
+server answers "stored". The sender's SOS screen shows who has it and who has
+seen it.
+
 ## Encryption (MSG, POS, SOS)
 
 ChaCha20-Poly1305 (RFC 8439), 256-bit key, 16-byte tag after the ciphertext.
@@ -112,7 +117,8 @@ The server stores packets exactly as received and can read none of them.
 A unit that hears a packet it has not seen (by type, sender, counter and
 fragment) and whose hops left is above 0 sends it again with hops − 1 after a
 random delay of 0.5–2.5 s, unless it heard another unit relay it first. Units
-never relay their own packets.
+never relay their own packets. The gateway relays too, without the delay: it sits at
+home with the best antenna, and units that hear its copy skip their own.
 
 ## Airtime
 

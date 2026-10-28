@@ -176,6 +176,13 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(len(self.server.handle(sync_req(2, {1: 0, 2: 0, 3: 0}), "lora")), 12)
         self.assertEqual(len(self.server.handle(sync_req(2, {1: 0, 2: 0, 3: 0}, 2), "wifi")), 29)
 
+    def test_sos_is_answered(self):
+        h = P.Header(type=P.SOS, group=GROUP, sender=2, recipient=P.GROUP, counter=40)
+        answers = self.server.handle(h.pack() + bytes(32), "lora")
+        self.assertEqual(len(answers), 1)
+        a = P.parse_ack(answers[0][P.HEADER_SIZE:])
+        self.assertEqual((a.sender, a.counter, a.state), (2, 40, P.STORED))
+
     def test_other_groups_and_server_packets_are_ignored(self):
         pkts, _ = packets("group message")
         other = bytearray(pkts[0])
@@ -183,6 +190,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.server.handle(bytes(other), "lora"), [])
         self.assertEqual(self.server.handle(bytes.fromhex(V["ack"]), "lora"), [])
         self.assertEqual(self.store.counts(), {})
+
+    def test_lora_packets_are_relayed_once(self):
+        sent = []
+
+        class Radio:
+            def send(self, raw):
+                sent.append(raw)
+
+        self.server.radio = Radio()
+        pkts, _ = packets("group message")
+        self.server.handle(pkts[0], "lora")
+        self.server.handle(pkts[0], "lora")
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(P.parse_header(sent[0]).hops, P.DEFAULT_HOPS - 1)
+        self.assertEqual(sent[0][4:], pkts[0][4:])  # only the hops changed
 
     def test_wifi_packets_go_out_over_lora(self):
         sent = []

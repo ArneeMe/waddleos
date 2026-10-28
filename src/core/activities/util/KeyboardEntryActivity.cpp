@@ -7,12 +7,16 @@
 #include <algorithm>
 #include <cstring>
 
+#include "NorwegianKeyboard.h"
 #include "core/HapticFeedback.h"
 #include "core/MappedInputManager.h"
 #include "core/components/UITheme.h"
 #include "core/fontIds.h"
 
 namespace fui = freeink::ui;
+
+// Norwegian first; the last choice holds for the next keyboard until restart.
+static bool norwegianLayout = true;
 
 namespace {
 
@@ -133,9 +137,9 @@ const fui::KeyboardLayout URL_SNIPPET_LAYOUT{URL_SNIP_ROWS, 4};
 void KeyboardEntryActivity::onEnter() {
   Activity::onEnter();
   cursorPos = text.length();
-  // WaddleOS has one keyboard layout, so there is no language key.
+  // Norwegian or English: the globe key switches, and the choice is remembered.
   layoutId = fui::KeyboardLayoutId::QwertyEn;
-  showLangKey = false;
+  showLangKey = true;
   shifted = false;
   symbols = false;
   urlPanel = false;
@@ -161,11 +165,12 @@ void KeyboardEntryActivity::onEnter() {
 void KeyboardEntryActivity::onExit() { Activity::onExit(); }
 
 const fui::KeyboardLayout& KeyboardEntryActivity::currentLayout() const {
-  if (symbols) return fui::builtinKeyboardLayout(layoutId, shifted, true);
+  if (symbols) return fui::builtinKeyboardLayout(layoutId, shifted, true, /*numberRow=*/false, showLangKey);
   if (inputType == InputType::Url) {
     if (urlPanel) return URL_SNIPPET_LAYOUT;
     return shifted ? URL_SHIFT_LAYOUT : URL_LAYOUT;
   }
+  if (norwegianLayout) return waddle::keyboard::norwegian(shifted);
   return fui::builtinKeyboardLayout(layoutId, shifted, false, /*numberRow=*/true, showLangKey);
 }
 
@@ -288,7 +293,13 @@ bool KeyboardEntryActivity::activateValue(const int16_t value, const bool longPr
       clampSelection();
       return true;
     case fui::QWERTY_KEY_LANG:
-      return false;  // one layout only
+      delPressCount = 0;
+      hintVisible = false;
+      norwegianLayout = !norwegianLayout;
+      symbols = false;
+      shifted = false;
+      clampSelection();
+      return true;
     case URL_PANEL_KEY:
       delPressCount = 0;
       hintVisible = false;
