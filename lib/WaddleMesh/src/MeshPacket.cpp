@@ -13,6 +13,7 @@ size_t writeHeader(const Header& h, uint8_t* out) {
   out[5] = h.recipient;
   put32(out + 6, h.counter);
   out[10] = uint8_t(((h.pieceIndex & 0x0F) << 4) | (h.pieceCount & 0x0F));
+  out[11] = h.key;
   return HEADER_SIZE;
 }
 
@@ -20,7 +21,7 @@ bool readHeader(const uint8_t* in, size_t len, Header& h) {
   if (len < HEADER_SIZE || len > MAX_PACKET) return false;
   if (in[0] != MAGIC || (in[1] >> 4) != VERSION) return false;
   const uint8_t type = in[1] & 0x0F;
-  if (type < uint8_t(Type::Msg) || type > uint8_t(Type::Sos)) return false;
+  if (type < uint8_t(Type::Msg) || type > uint8_t(Type::Fetch)) return false;
   h.type = Type(type);
   h.group = in[2];
   h.hops = in[3] & 0x0F;
@@ -30,10 +31,11 @@ bool readHeader(const uint8_t* in, size_t len, Header& h) {
   h.counter = get32(in + 6);
   h.pieceIndex = in[10] >> 4;
   h.pieceCount = in[10] & 0x0F;
+  h.key = in[11];
   if (h.pieceCount == 0 || h.pieceIndex >= h.pieceCount) return false;
   if (!h.fragmented && h.pieceCount != 1) return false;
   if (h.sender != SERVER && !isMember(h.sender)) return false;
-  if (h.recipient != GROUP && h.recipient != SERVER && !isMember(h.recipient) && !isSmallGroup(h.recipient)) return false;
+  if (h.recipient != GROUP && h.recipient != SERVER && !isMember(h.recipient) && !isGroup(h.recipient)) return false;
   return true;
 }
 
@@ -42,6 +44,7 @@ void associatedData(const Header& h, uint8_t out[AAD_SIZE]) {
   writeHeader(h, full);
   memcpy(out, full, 3);         // magic, version/type, group
   memcpy(out + 3, full + 4, 6);  // sender, recipient, counter
+  out[9] = full[11];             // key number
 }
 
 void nonce(const Header& h, uint8_t out[12]) {
@@ -92,6 +95,7 @@ void writeSyncReq(const SyncReq& s, uint8_t out[SYNC_REQ_SIZE]) {
   for (int i = 0; i < MAX_MEMBERS; i++) put32(out + 4 * i, s.lastCounter[i]);
   out[4 * MAX_MEMBERS] = s.battery;
   out[4 * MAX_MEMBERS + 1] = s.build;
+  out[4 * MAX_MEMBERS + 2] = s.flags;
 }
 
 bool readSyncReq(const uint8_t* in, size_t len, SyncReq& s) {
@@ -99,7 +103,22 @@ bool readSyncReq(const uint8_t* in, size_t len, SyncReq& s) {
   for (int i = 0; i < MAX_MEMBERS; i++) s.lastCounter[i] = get32(in + 4 * i);
   s.battery = in[4 * MAX_MEMBERS];
   s.build = in[4 * MAX_MEMBERS + 1];
+  s.flags = in[4 * MAX_MEMBERS + 2];
   return true;
+}
+
+void writeFetch(const Fetch& f, uint8_t out[FETCH_SIZE]) {
+  out[0] = f.sender;
+  put32(out + 1, f.after);
+  put32(out + 5, f.before);
+}
+
+bool readFetch(const uint8_t* in, size_t len, Fetch& f) {
+  if (len != FETCH_SIZE || !isMember(in[0])) return false;
+  f.sender = in[0];
+  f.after = get32(in + 1);
+  f.before = get32(in + 5);
+  return f.before > f.after;
 }
 
 }  // namespace mesh

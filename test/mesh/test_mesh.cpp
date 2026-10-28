@@ -102,34 +102,58 @@ static void testBodies() {
   s.lastCounter[2] = 900;
   s.battery = 40;
   s.build = 0xab;
+  s.flags = SYNC_ON_TRIP | SYNC_SOS;
   uint8_t sb[SYNC_REQ_SIZE];
   writeSyncReq(s, sb);
   SyncReq t;
   CHECK(readSyncReq(sb, sizeof(sb), t) && t.lastCounter[0] == 5 && t.lastCounter[1] == 0 &&
-        t.lastCounter[2] == 900 && t.battery == 40 && t.build == 0xab);
+        t.lastCounter[2] == 900 && t.battery == 40 && t.build == 0xab && t.flags == 3);
 }
 
-static void testSmallGroups() {
+static void testGroups() {
   // Member 4 exists; member 5 does not.
   uint8_t raw[HEADER_SIZE];
   Header h = msgHeader(4, GROUP, 1), r;
   writeHeader(h, raw);
-  CHECK(readHeader(raw, sizeof(raw), r) && r.sender == 4);
+  CHECK(readHeader(raw, sizeof(raw), r) && r.sender == 4 && r.key == 0);
   raw[4] = 5;
   CHECK(!readHeader(raw, sizeof(raw), r));
 
-  // Members 1, 2 and 4.
-  const uint8_t trio = SMALL_GROUP | 0x0B;
-  CHECK(isSmallGroup(trio) && !isSmallGroup(SMALL_GROUP | 0x03) && !isSmallGroup(SMALL_GROUP));
-  h = msgHeader(1, trio, 2);
+  // Kari's (member 2) third group, key number 4.
+  const uint8_t id = groupId(2, 3);
+  CHECK(id == 0x23 && groupCreator(id) == 2);
+  h = msgHeader(2, GROUP_FLAG | id, 7);
+  h.key = 4;
   writeHeader(h, raw);
-  CHECK(readHeader(raw, sizeof(raw), r) && r.recipient == trio);
-  raw[5] = SMALL_GROUP | 0x05;  // only two members: a DM, not a group
+  CHECK(readHeader(raw, sizeof(raw), r) && r.recipient == (GROUP_FLAG | id) && r.key == 4);
+  CHECK(isGroup(GROUP_FLAG | id) && !isGroup(GROUP) && !isGroup(GROUP_FLAG | groupId(6, 0)));
+  raw[5] = GROUP_FLAG | groupId(6, 0);  // made by member 6, who does not exist
   CHECK(!readHeader(raw, sizeof(raw), r));
 
-  CHECK(canRead(2, 1, trio) && canRead(4, 1, trio) && !canRead(3, 1, trio));
-  CHECK(canRead(3, 1, GROUP) && canRead(2, 1, 2) && canRead(1, 1, 2) && !canRead(3, 1, 2));
+  // Groups go to everyone; DMs only to the two.
+  CHECK(canRead(3, 1, GROUP_FLAG | id) && canRead(3, 1, GROUP) && canRead(2, 1, 2) && !canRead(3, 1, 2));
   CHECK(memberBit(4) == 8 && memberBit(0) == 0 && memberCount(0x0F) == 4);
+
+  // The key number is sealed with the header: changing it breaks the message.
+  uint8_t key[KEY_SIZE];
+  fill(key, KEY_SIZE, 9);
+  static Sealed sealed;
+  const char* text = "Hyttetur";
+  CHECK(seal(h, key, reinterpret_cast<const uint8_t*>(text), strlen(text), sealed));
+  Header got;
+  readHeader(sealed.packets[0], sealed.lengths[0], got);
+  uint8_t out[64];
+  CHECK(open(got, key, sealed.packets[0] + HEADER_SIZE, sealed.lengths[0] - HEADER_SIZE, out));
+  got.key = 5;
+  CHECK(!open(got, key, sealed.packets[0] + HEADER_SIZE, sealed.lengths[0] - HEADER_SIZE, out));
+
+  // Fetch.
+  uint8_t fb[FETCH_SIZE];
+  writeFetch(Fetch{3, 30, 41}, fb);
+  Fetch f;
+  CHECK(readFetch(fb, sizeof(fb), f) && f.sender == 3 && f.after == 30 && f.before == 41);
+  writeFetch(Fetch{3, 41, 30}, fb);
+  CHECK(!readFetch(fb, sizeof(fb), f));
 }
 
 // Seals, then receives the pieces in the given order and opens the result.
@@ -305,12 +329,13 @@ static void writeVectors(const char* path) {
   Header dh = msgHeader(1, 2, 11);
   Header ph = msgHeader(1, GROUP, 12);
   ph.type = Type::Pos;
-  // Members 1, 2 and 4, under the small group's own key.
-  Header sh = msgHeader(1, SMALL_GROUP | 0x0B, 13);
+  // A group made by member 1 (its first), under the group's key number 2.
+  Header sh = msgHeader(1, GROUP_FLAG | groupId(1, 0), 13);
+  sh.key = 2;
   const Case cases[] = {{"group message", gh, senderKey, groupPlain},
                         {"direct message in 3 pieces", dh, dmKey, dmPlain},
                         {"position", ph, senderKey, posPlain},
-                        {"small group message", sh, smallKey, groupPlain}};
+                        {"group message with key 2", sh, smallKey, groupPlain}};
   constexpr size_t CASES = sizeof(cases) / sizeof(cases[0]);
   for (size_t c = 0; c < CASES; c++) {
     const Case& k = cases[c];
@@ -339,6 +364,7 @@ static void writeVectors(const char* path) {
   s.lastCounter[1] = 0;
   s.lastCounter[2] = 7;
   s.lastCounter[3] = 2;
+  s.flags = SYNC_ON_TRIP | (4 << SYNC_CHECK_SHIFT);
   s.battery = 64;
   s.build = 0x2a;
   writeSyncReq(s, sb);
@@ -349,14 +375,21 @@ static void writeVectors(const char* path) {
   syncH.recipient = SERVER;
   syncH.counter = 4;
   writeHeader(syncH, hb);
-  std::fprintf(f, "  \"syncReq\": \"%s%s\"\n}\n", hex(hb, HEADER_SIZE).c_str(), hex(sb, SYNC_REQ_SIZE).c_str());
+  std::fprintf(f, "  \"syncReq\": \"%s%s\",\n", hex(hb, HEADER_SIZE).c_str(), hex(sb, SYNC_REQ_SIZE).c_str());
+  uint8_t fb[FETCH_SIZE];
+  writeFetch(Fetch{1, 10, 13}, fb);
+  Header fetchH = syncH;
+  fetchH.type = Type::Fetch;
+  fetchH.counter = 5;
+  writeHeader(fetchH, hb);
+  std::fprintf(f, "  \"fetch\": \"%s%s\"\n}\n", hex(hb, HEADER_SIZE).c_str(), hex(fb, FETCH_SIZE).c_str());
   std::fclose(f);
 }
 
 int main(int argc, char** argv) {
   testHeader();
   testBodies();
-  testSmallGroups();
+  testGroups();
   testSealOpen();
   testPairKey();
   testRadioRules();

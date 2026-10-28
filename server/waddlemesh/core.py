@@ -47,6 +47,7 @@ class Server:
             if new and via == "wifi" and self.radio:
                 self.radio.send(raw)
             if h.type == P.SOS:
+                self.store.sos_heard(h.sender)
                 if new:
                     log.warning("SOS from member %d", h.sender)
                 # The sender's SOS screen shows that the server has it.
@@ -71,8 +72,16 @@ class Server:
                 req = P.parse_sync_req(body)
             except P.BadPacket:
                 return []
-            self.store.seen_unit(h.sender, via, battery=req.battery, build="%02x" % req.build)
+            self.store.seen_unit(h.sender, via, battery=req.battery, build="%02x" % req.build, flags=req.flags)
             return self.sync_answer(h.sender, req, via)
+
+        if h.type == P.FETCH:
+            try:
+                f = P.parse_fetch(body)
+            except P.BadPacket:
+                return []
+            limit = LORA_SYNC_LIMIT if via == "lora" else None
+            return self.store.messages_between(f.sender, f.after, f.before, h.sender, limit)
         return []
 
     def _relay(self, h, raw):

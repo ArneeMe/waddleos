@@ -53,6 +53,12 @@ class PacketTests(unittest.TestCase):
         sync = bytes.fromhex(V["syncReq"])
         req = P.parse_sync_req(sync[P.HEADER_SIZE:])
         self.assertEqual(req.last_counter, {1: 10, 2: 0, 3: 7, 4: 2})
+        self.assertEqual(req.flags, P.SYNC_ON_TRIP | (4 << P.SYNC_CHECK_SHIFT))
+        fetch = bytes.fromhex(V["fetch"])
+        self.assertEqual(P.parse_header(fetch).type, P.FETCH)
+        f = P.parse_fetch(fetch[P.HEADER_SIZE:])
+        self.assertEqual((f.sender, f.after, f.before), (1, 10, 13))
+        self.assertEqual(f.pack(), fetch[P.HEADER_SIZE:])
         self.assertEqual((req.battery, req.build), (64, 0x2A))
         self.assertEqual(req.pack(), sync[P.HEADER_SIZE:])
 
@@ -116,13 +122,18 @@ class CryptoCrossCheck(unittest.TestCase):
         group_plain = packets("group message")[1]
         self.assertEqual(plain[4:8], hashlib.blake2b(group_plain, digest_size=32).digest()[:4])
 
-    def test_small_group_message(self):
-        pkts, plain = packets("small group message")
+    def test_group_message_with_key_number(self):
+        pkts, plain = packets("group message with key 2")
         h = P.parse_header(pkts[0])
-        self.assertEqual(h.recipient, P.SMALL_GROUP | 0x0B)
-        self.assertTrue(P.is_small_group(h.recipient))
-        self.assertEqual([P.can_read(m, 1, h.recipient) for m in P.MEMBERS], [True, True, False, True])
+        self.assertEqual((h.recipient, h.key), (P.GROUP_FLAG | 0x10, 2))
+        self.assertTrue(P.is_group(h.recipient))
+        self.assertTrue(all(P.can_read(m, 1, h.recipient) for m in P.MEMBERS))
         self.assertEqual(self.open(pkts, bytes.fromhex(V["smallGroupKey"])), plain)
+        # The key number is sealed: a changed one does not open.
+        bad = bytearray(pkts[0])
+        bad[11] = 3
+        with self.assertRaises(Exception):
+            self.open([bytes(bad)], bytes.fromhex(V["smallGroupKey"]))
 
     def test_tampering_is_caught(self):
         pkts, _ = packets("group message")
@@ -177,14 +188,23 @@ class ServerTests(unittest.TestCase):
         units = {u["member"]: u for u in self.store.units()}
         self.assertEqual((units[2]["battery"], units[2]["build"], units[2]["via"]), (50, "2a", "wifi"))
 
-    def test_small_group_only_to_its_members(self):
-        small, _ = packets("small group message")  # members 1, 2 and 4
-        for p in small:
-            self.server.handle(p, "lora")
-        empty = {m: 0 for m in P.MEMBERS}
-        for member, gets in ((2, True), (4, True), (3, False)):
-            answer = self.server.handle(sync_req(member, empty), "wifi")
-            self.assertEqual(small[0] in answer, gets, "member %d" % member)
+    def test_fetch_gives_the_missing_message(self):
+        for counter in (10, 11, 12, 13):
+            h = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=counter)
+            self.server.handle(h.pack() + bytes(20), "lora")
+        h = P.Header(type=P.FETCH, group=GROUP, sender=2, recipient=P.SERVER, counter=5)
+        answer = self.server.handle(h.pack() + P.Fetch(1, 10, 13).pack(), "lora")
+        self.assertEqual([P.parse_header(p).counter for p in answer], [11, 12])
+
+    def test_sync_flags_and_sos_for_the_status_page(self):
+        flags = P.SYNC_ON_TRIP | P.SYNC_SOS | (2 << P.SYNC_CHECK_SHIFT)
+        h = P.Header(type=P.SYNC_REQ, group=GROUP, sender=3, recipient=P.SERVER, counter=1)
+        self.server.handle(h.pack() + P.SyncReq({}, battery=61, build=1, flags=flags).pack(), "lora", -70, 4.0)
+        sos = P.Header(type=P.SOS, group=GROUP, sender=3, recipient=P.GROUP, counter=2)
+        self.server.handle(sos.pack() + bytes(32), "lora")
+        unit = {u["member"]: u for u in self.store.units()}[3]
+        self.assertEqual((unit["flags"], unit["battery"]), (flags, 61))
+        self.assertTrue(unit["sos_at"])
 
     def test_lora_sync_is_limited(self):
         for counter in range(1, 30):
