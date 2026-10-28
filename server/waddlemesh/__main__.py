@@ -1,8 +1,9 @@
 """Waddle mesh server.
 
   python3 -m waddlemesh serve [--config FILE]     run the server
-  python3 -m waddlemesh add-unit N [--config F]   make a key for member N (1-3)
-  python3 -m waddlemesh set-group ID N:HASH...    group id and unit key hashes (from `waddle mesh setup`)
+  python3 -m waddlemesh add-unit N [--config F]   make a key for member N (1-4)
+  python3 -m waddlemesh set-group ID N:HASH[:NAME]...
+                                                  group id, unit key hashes and names (from `waddle mesh setup`)
   python3 -m waddlemesh backup DEST [--config F]  copy the database to DEST
   python3 -m waddlemesh make-cert [--config F]    make the TLS certificate (needs openssl)
 
@@ -29,6 +30,7 @@ DEFAULTS = {
     "cert": "/var/lib/waddlemesh/cert.pem",
     "key": "/var/lib/waddlemesh/key.pem",
     "tokens": {},
+    "names": {},  # member -> name, only for the status page
 }
 
 
@@ -52,7 +54,8 @@ def serve(cfg):
     if cfg["group"] is None:
         sys.exit("No group id in the config yet: run `waddle mesh setup` first.")
     os.makedirs(os.path.dirname(cfg["db"]), exist_ok=True)
-    mesh = Server(Store(cfg["db"]), cfg["group"])
+    names = {int(k): v for k, v in cfg["names"].items()}
+    mesh = Server(Store(cfg["db"]), cfg["group"], names)
     gateway = Gateway(cfg["gateway"], mesh)
     gateway.start()
     host, port = cfg["listen"].rsplit(":", 1)
@@ -60,11 +63,8 @@ def serve(cfg):
     if not cert:
         logging.warning("No certificate at %s: serving plain HTTP. Run make-cert.", cfg["cert"])
 
-    def gateway_status():
-        return ("tilkoblet (%s)" % gateway.version) if gateway.connected else "ikke tilkoblet"
-
     tokens = {int(k): v for k, v in cfg["tokens"].items()}
-    web = WebServer((host, int(port)), mesh, tokens, gateway_status, cert, cfg["key"])
+    web = WebServer((host, int(port)), mesh, tokens, gateway.status, cert, cfg["key"])
     logging.info("listening on %s", cfg["listen"])
     web.serve_forever()
 
@@ -83,21 +83,24 @@ def main(argv):
     if cmd == "serve":
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
         serve(cfg)
-    elif cmd == "add-unit" and len(argv) == 2 and argv[1] in ("1", "2", "3"):
+    elif cmd == "add-unit" and len(argv) == 2 and argv[1] in ("1", "2", "3", "4"):
         token = secrets.token_hex(16)
         cfg["tokens"][argv[1]] = token_hash(token)
         save_config(path, cfg)
         print(token)
     elif cmd == "set-group" and len(argv) >= 3:
         cfg["group"] = int(argv[1])
-        tokens = {}
+        tokens, names = {}, {}
         for item in argv[2:]:
-            member, digest = item.split(":", 1)
-            if member not in ("1", "2", "3") or len(digest) != 64:
-                print("expected N:SHA256HEX, got %s" % item)
+            member, digest, *name = item.split(":", 2)
+            if member not in ("1", "2", "3", "4") or len(digest) != 64:
+                print("expected N:SHA256HEX[:NAME], got %s" % item)
                 return 1
             tokens[member] = digest
+            if name and name[0]:
+                names[member] = name[0]
         cfg["tokens"] = tokens
+        cfg["names"] = names
         save_config(path, cfg)
         print("Group %d with %d units saved. Restart: sudo systemctl restart waddlemesh" % (cfg["group"], len(tokens)))
     elif cmd == "backup" and len(argv) == 2:
