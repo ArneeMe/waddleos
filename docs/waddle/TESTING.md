@@ -123,3 +123,24 @@ gateway's HELLO. Install the server:
 - [ ] Two units out of range of each other but both near the gateway: a message
       goes straight through (the gateway passes it on), within seconds.
 - [ ] Next morning: a backup file in `/var/backups/waddlemesh/`.
+- [ ] Gateway: `pio device monitor -e heltec-gateway`, type `PING <group>`
+      (the "group" in `/etc/waddlemesh.json`; the gateway saves it): it
+      answers `PONG 0 2 gc1109` (or `kct8103l`).
+- [ ] Status page on a phone (home Wi-Fi): every unit by name, "Sist hørt",
+      battery, "Hjemme" or "På tur" with how often it checks; signal for a unit
+      last heard over LoRa. It reloads by itself every 30 s.
+- [ ] Switch a unit to "På tur": after its next sync the page says "På tur".
+- [ ] Start an SOS on a unit: a red "SOS fra <name>" at the top within a
+      minute; cancel it: gone within 5 minutes.
+- [ ] Standalone: stop the server (`sudo systemctl stop waddlemesh`). After
+      30 s, send a message from one unit while the other is off; turn the other
+      on: it gets the message from the gateway (the server is still off).
+- [ ] Standalone on a power bank: move the gateway to a USB power bank, send a
+      few messages and an SOS between units; the sender sees "lagret".
+- [ ] Unplug and replug the power bank: the gateway still has them (back on
+      the Pi, step below shows the count).
+- [ ] Handover: back on the Pi, start the server. Within 10 s the log says
+      "gateway handed over N packets" and the page says "leverte N pakker".
+      A unit that syncs over Wi-Fi gets the messages sent while the Pi was off.
+- [ ] The page says "Svarer ikke" for the gateway when it is plugged in but
+      silent (e.g. hold its RST button for a while).

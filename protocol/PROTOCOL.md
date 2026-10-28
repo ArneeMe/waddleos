@@ -178,4 +178,23 @@ packets it missed.
 
 - Gateway → Pi: `RX <rssi> <snr> <hex packet>`
 - Pi → gateway: `TX <hex packet>`, answered with `OK` or `ERR <reason>`
-- Gateway → Pi on start: `HELLO waddle-gateway <version>`
+- Gateway → Pi on start: `HELLO waddle-gateway <version> <front end>`
+- Pi → gateway every 10 s: `PING <group id>`, answered with
+  `PONG <kept packets> <version> <front end>`. The gateway saves the group id.
+
+**Standalone.** When the gateway hears no line from the Pi for 30 s (a power
+cut; the gateway on a power bank) it carries on alone, and stops sending `RX`
+lines. It keeps every MSG, POS, SOS and ACK packet it hears in flash (by type,
+sender, counter and piece; 192 at most, the oldest makes room; of POS and SOS
+only each member's newest), relays like a unit (no delay), sends ACK "stored"
+for a whole MSG or an SOS, and answers SYNC_REQ and FETCH like the server: at
+most 12 packets, hops 0, half a second apart. Its own packets use sender 0 with
+counters from `0x80000001` up (saved ahead in flash), so they never meet the
+server's.
+
+**Handover.** When the Pi is back, the `PONG` shows kept packets. The Pi sends
+`DUMP`; the gateway answers `STORED <hex packet>` for each, oldest first, then
+`DUMPED <n>`. The Pi stores them (not relayed or answered again: that was done)
+and, when all *n* came, sends `CLEAR`; the gateway forgets them and answers
+`OK`. When some are missing the Pi does not clear, and asks again at the next
+`PONG`.

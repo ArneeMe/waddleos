@@ -194,6 +194,12 @@ Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOC
   backup mode) instead of switched off. Which GPS ships is not known yet.
 - **Server** (`server/`): `python3 -m waddlemesh serve`, systemd units and
   `install.sh` in `server/`. Status page from the home network only.
+- **Two modes:** *full*, the Pi on: it stores and answers, and shows a status
+  page (`https://<pi>:8443/`, Norwegian, no keys: SOS, each unit's last
+  contact, signal, battery, "Hjemme"/"På tur", the gateway); *low power*, the
+  Pi off: after 30 s without a `PING` the gateway keeps packets in flash and
+  answers syncs itself (`lib/WaddleMesh/src/GatewayStore.*`), and hands them
+  over when the Pi is back (protocol/PROTOCOL.md, "Gateway serial link").
 
 ## How a screen works
 

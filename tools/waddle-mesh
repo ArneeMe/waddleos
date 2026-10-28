@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -110,7 +111,10 @@ def setup():
         if "BEGIN CERTIFICATE" not in cert:
             raise RuntimeError("no certificate on the Pi: run server/install.sh there first")
         tokens = {m["number"]: secrets.token_hex(16) for m in members}
-        hashes = " ".join(f"{n}:{hashlib.sha256(t.encode()).hexdigest()}" for n, t in tokens.items())
+        # Each unit as number:key hash:name (the name only shows on the server's status page).
+        names = {m["number"]: m["name"] for m in members}
+        hashes = " ".join(shlex.quote(f"{n}:{hashlib.sha256(t.encode()).hexdigest()}:{names[n]}")
+                          for n, t in tokens.items())
         ssh(pi, f"cd /opt/waddlemesh && sudo python3 -m waddlemesh set-group --config /etc/waddlemesh.json "
                 f"{group} {hashes} && sudo systemctl restart waddlemesh")
         say(f"  {G}✓{N} Server knows group {group} and {count} units")
@@ -296,7 +300,9 @@ def server_update(args):
     say(f"  {G}✓{N} Installed")
     time.sleep(3)
     status = json.loads(ssh(pi, "curl -sk https://localhost:8443/api/status"))
-    say(f"  {G}✓{N} Running · gateway {status.get('gateway')} · {len(status.get('units', []))} units seen")
+    gw = status.get("gateway") or {}
+    gw_text = f"answering, version {gw.get('version')}" if gw.get("answering") else "not answering"
+    say(f"  {G}✓{N} Running · gateway {gw_text} · {len(status.get('units', []))} units")
     say()
     return 0
 

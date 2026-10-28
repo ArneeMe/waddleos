@@ -2,6 +2,7 @@
 // With an output path as argument it also writes the shared test vectors
 // (protocol/vectors.json) that the Python server tests check against.
 
+#include <GatewayStore.h>
 #include <MeshCrypto.h>
 #include <MeshPacket.h>
 #include <MeshRadioRules.h>
@@ -270,6 +271,165 @@ static void testRadioRules() {
   CHECK(rebooted.take(&save) == CounterReserve::STEP + 1 && save == 2 * CounterReserve::STEP);
 }
 
+// A packet as a unit sends it: header and a body of n bytes.
+static RawPacket unitPacket(Header h, const uint8_t* body, size_t n) {
+  RawPacket p;
+  writeHeader(h, p.data);
+  memcpy(p.data + HEADER_SIZE, body, n);
+  p.len = uint8_t(HEADER_SIZE + n);
+  return p;
+}
+
+static RawPacket msgPacket(uint8_t sender, uint8_t recipient, uint32_t counter, uint8_t piece = 0, uint8_t pieces = 1) {
+  Header h = msgHeader(sender, recipient, counter);
+  h.fragmented = pieces > 1;
+  h.pieceIndex = piece;
+  h.pieceCount = pieces;
+  uint8_t body[20] = {};
+  return unitPacket(h, body, sizeof(body));
+}
+
+static RawPacket syncPacket(uint8_t sender, uint32_t counter, const SyncReq& s) {
+  Header h = msgHeader(sender, SERVER, counter);
+  h.type = Type::SyncReq;
+  uint8_t body[SYNC_REQ_SIZE];
+  writeSyncReq(s, body);
+  return unitPacket(h, body, sizeof(body));
+}
+
+static void testGatewayStore() {
+  static GatewayStore store(0x42, 0);
+  static GatewayStore::Result r;
+  auto feed = [&](const RawPacket& p) { store.handle(p.data, p.len, r); };
+  auto header = [](const RawPacket& p) {
+    Header h;
+    readHeader(p.data, p.len, h);
+    return h;
+  };
+
+  // A whole message is kept and answered with "stored", from counter 0x80000001.
+  feed(msgPacket(1, GROUP, 10));
+  CHECK(r.savedSlot >= 0 && r.count == 1 && store.count() == 1);
+  CHECK(r.saveCounter == GatewayStore::FIRST_COUNTER + CounterReserve::STEP);
+  Header ah = header(r.packets[0]);
+  Ack a;
+  CHECK(ah.type == Type::Ack && ah.sender == SERVER && ah.recipient == 1 && ah.counter == 0x80000001u);
+  CHECK(readAck(r.packets[0].data + HEADER_SIZE, ACK_SIZE, a) && a.sender == 1 && a.counter == 10 &&
+        a.state == AckState::Stored);
+  // The same packet again: not kept twice.
+  feed(msgPacket(1, GROUP, 10));
+  CHECK(r.savedSlot == -1 && store.count() == 1 && r.saveCounter == 0);
+
+  // A message in two pieces is acked once both are here.
+  feed(msgPacket(2, 3, 20, 1, 2));
+  CHECK(r.count == 0 && r.savedSlot >= 0);
+  feed(msgPacket(2, 3, 20, 0, 2));
+  CHECK(r.count == 1);
+
+  // Other meshes, the server's own packets and unknown groups are ignored.
+  RawPacket other = msgPacket(1, GROUP, 11);
+  other.data[2] = 0x43;
+  feed(other);
+  CHECK(r.savedSlot == -1 && r.count == 0);
+  RawPacket server = msgPacket(1, GROUP, 12);
+  server.data[4] = SERVER;
+  feed(server);
+  CHECK(r.savedSlot == -1);
+  GatewayStore unknown(0, 0);
+  unknown.handle(msgPacket(1, GROUP, 13).data, msgPacket(1, GROUP, 13).len, r);
+  CHECK(r.savedSlot == -1 && unknown.count() == 0);
+
+  // A sync from member 3: member 1's group message and member 2's DM to 3, in
+  // order, with hops 0. Member 4 does not get the DM.
+  feed(msgPacket(1, GROUP_FLAG | groupId(1, 0), 11));
+  SyncReq s;
+  feed(syncPacket(3, 5, s));
+  CHECK(r.count == 4);
+  CHECK(header(r.packets[0]).counter == 10 && header(r.packets[1]).counter == 11);
+  CHECK(header(r.packets[2]).sender == 2 && header(r.packets[2]).pieceIndex == 0);
+  CHECK(header(r.packets[3]).pieceIndex == 1 && header(r.packets[3]).hops == 0);
+  feed(syncPacket(4, 5, s));
+  CHECK(r.count == 2);
+  s.lastCounter[0] = 10;
+  feed(syncPacket(4, 6, s));
+  CHECK(r.count == 1 && header(r.packets[0]).counter == 11);
+
+  // At most 12 packets per answer.
+  for (uint32_t c = 100; c < 130; c++) feed(msgPacket(4, GROUP, c));
+  SyncReq none;
+  feed(syncPacket(3, 7, none));
+  CHECK(r.count == GatewayStore::MAX_ANSWER);
+
+  // A fetch gives only the range asked for.
+  Header fh = msgHeader(3, SERVER, 8);
+  fh.type = Type::Fetch;
+  uint8_t fb[FETCH_SIZE];
+  writeFetch(Fetch{4, 100, 104}, fb);
+  feed(unitPacket(fh, fb, sizeof(fb)));
+  CHECK(r.count == 3 && header(r.packets[0]).counter == 101 && header(r.packets[2]).counter == 103);
+
+  // Positions: only each member's newest is kept, and it comes with a sync.
+  Header ph = msgHeader(2, GROUP, 50);
+  ph.type = Type::Pos;
+  uint8_t pb[POS_SIZE + TAG_SIZE] = {};
+  const int before = store.count();
+  feed(unitPacket(ph, pb, sizeof(pb)));
+  ph.counter = 51;
+  feed(unitPacket(ph, pb, sizeof(pb)));
+  ph.counter = 49;  // an older one, heard late
+  feed(unitPacket(ph, pb, sizeof(pb)));
+  CHECK(r.savedSlot == -1 && store.count() == before + 1);
+  SyncReq caughtUp;
+  for (uint32_t& c : caughtUp.lastCounter) c = 1000;
+  feed(syncPacket(1, 9, caughtUp));
+  CHECK(r.count == 1 && header(r.packets[0]).type == Type::Pos && header(r.packets[0]).counter == 51);
+
+  // An SOS is always answered; an ACK for member 1's message comes with its sync.
+  Header sh = msgHeader(2, GROUP, 60);
+  sh.type = Type::Sos;
+  feed(unitPacket(sh, pb, sizeof(pb)));
+  CHECK(r.count == 1 && r.savedSlot >= 0);
+  Header kh = msgHeader(3, 1, 70);
+  kh.type = Type::Ack;
+  uint8_t kb[ACK_SIZE];
+  writeAck(Ack{1, 10, AckState::Read}, kb);
+  feed(unitPacket(kh, kb, sizeof(kb)));
+  CHECK(r.savedSlot >= 0 && r.count == 0);
+  feed(syncPacket(1, 10, caughtUp));
+  CHECK(r.count == 2);  // member 2's position and SOS
+  caughtUp.lastCounter[0] = 10;
+  feed(syncPacket(1, 11, caughtUp));
+  CHECK(r.count == 3 && header(r.packets[2]).type == Type::Ack);
+
+  // Relaying: once, with one hop less; never a sync request.
+  RawPacket out;
+  const RawPacket m = msgPacket(1, GROUP, 200);
+  CHECK(store.relay(m.data, m.len, out) && header(out).hops == DEFAULT_HOPS - 1);
+  CHECK(memcmp(out.data + 4, m.data + 4, m.len - 4) == 0);
+  CHECK(!store.relay(m.data, m.len, out));
+  const RawPacket sync = syncPacket(1, 12, s);
+  CHECK(!store.relay(sync.data, sync.len, out));
+
+  // After a restart: the slots come back from flash, counters go on past the saved limit.
+  static GatewayStore again(0x42, GatewayStore::FIRST_COUNTER + CounterReserve::STEP);
+  for (int i = 0; i < GatewayStore::SLOTS; i++) again.restore(i, store.slot(i));
+  CHECK(again.count() == store.count());
+  GatewayStore::Slot broken = store.slot(0);
+  broken.packet.data[0] = 0;
+  again.restore(0, broken);  // a half-written slot is skipped
+  again.handle(msgPacket(1, GROUP, 300).data, msgPacket(1, GROUP, 300).len, r);
+  CHECK(r.count == 1 && header(r.packets[0]).counter == GatewayStore::FIRST_COUNTER + CounterReserve::STEP + 1);
+  CHECK(r.saveCounter == GatewayStore::FIRST_COUNTER + 2 * CounterReserve::STEP);
+
+  // Full: the oldest makes room. Cleared: empty.
+  for (uint32_t c = 1000; c < 1000 + GatewayStore::SLOTS; c++) feed(msgPacket(3, GROUP, c));
+  CHECK(store.count() == GatewayStore::SLOTS);
+  feed(syncPacket(2, 13, none));
+  CHECK(header(r.packets[0]).sender == 3);  // member 1's old messages are gone
+  store.clear();
+  CHECK(store.count() == 0);
+}
+
 // Fixed inputs and the packets they give, for the Python side.
 static void writeVectors(const char* path) {
   FILE* f = std::fopen(path, "w");
@@ -394,6 +554,7 @@ int main(int argc, char** argv) {
   testPairKey();
   testRadioRules();
   testCivilTime();
+  testGatewayStore();
   if (argc > 1) writeVectors(argv[1]);
   std::printf(failures ? "%d FAILED\n" : "all mesh tests passed\n", failures);
   return failures ? 1 : 0;

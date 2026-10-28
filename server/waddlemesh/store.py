@@ -175,8 +175,13 @@ class Store:
         return [dict(zip(keys, r)) for r in rows]
 
     def counts(self):
+        """Stored packets by type (ACKs too, when there are any)."""
         with self.lock:
-            return dict(self.db.execute("SELECT type, COUNT(*) FROM packets GROUP BY type").fetchall())
+            counts = dict(self.db.execute("SELECT type, COUNT(*) FROM packets GROUP BY type").fetchall())
+            (acks,) = self.db.execute("SELECT COUNT(*) FROM acks").fetchone()
+        if acks:
+            counts[2] = acks
+        return counts
 
     def backup(self, path):
         """A consistent copy of the database, safe while the server runs."""
