@@ -13,6 +13,7 @@ import pty
 import select
 import shutil
 import ssl
+import struct
 import subprocess
 import tempfile
 import threading
@@ -21,17 +22,47 @@ import unittest
 import urllib.error
 import urllib.request
 
+from waddlemesh import ed25519
 from waddlemesh import packet as P
+from waddlemesh import roster as R
+from waddlemesh.__main__ import load_config, main
 from waddlemesh.core import Server
 from waddlemesh.gateway import Gateway
 from waddlemesh.store import Store
-from waddlemesh.web import WebServer, status_page, token_hash
+from waddlemesh.web import WebServer, status_page
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 with open(os.path.join(ROOT, "protocol", "vectors.json")) as f:
     V = json.load(f)
 
 GROUP = 0x42
+ADMIN_SEED = bytes.fromhex(V["roster"]["adminSeed"])
+ADMIN_SIGN = bytes.fromhex(V["roster"]["adminSign"])
+TOKEN_1 = "11" * 16
+
+
+def token_hash(token):
+    return hashlib.sha256(token.encode()).digest()[:16]
+
+
+def make_roster(version, members, network=GROUP, seed=ADMIN_SEED):
+    """A signed roster like the admin's tool makes. members: (number, name, token)."""
+    out = struct.pack("<BBHB", 1, network, version, len(members))
+    for number, name, token in members:
+        raw = name.encode()
+        out += bytes([number, 1 if number == 1 else 0, len(raw)]) + raw + bytes([number]) * 32 + token_hash(token)
+    return out + ed25519.sign(seed, out)
+
+
+def roster_packets(version, pieces, network=GROUP):
+    """Stand-ins for the ROSTER packets (the server cannot open them anyway)."""
+    return [P.Header(type=P.ROSTER, group=network, sender=P.SERVER, recipient=P.GROUP, counter=0x40000000 + version,
+                     fragmented=pieces > 1, piece_index=i, piece_count=pieces).pack() + bytes([i]) * 186
+            for i in range(pieces)]
+
+
+def set_roster(store, version, members, pieces=2):
+    store.set_roster(version, make_roster(version, members), roster_packets(version, pieces))
 
 
 def packets(name):
@@ -58,7 +89,9 @@ class PacketTests(unittest.TestCase):
         self.assertEqual((a.sender, a.counter, a.state), (1, 10, P.STORED))
         sync = bytes.fromhex(V["syncReq"])
         req = P.parse_sync_req(sync[P.HEADER_SIZE:])
-        self.assertEqual(req.last_counter, {1: 10, 2: 0, 3: 7, 4: 2})
+        self.assertEqual({m: c for m, c in req.last_counter.items() if c}, {1: 10, 3: 7, 4: 2})
+        self.assertEqual(len(req.last_counter), 32)
+        self.assertEqual(req.roster_version, 3)
         self.assertEqual(req.flags, P.SYNC_ON_TRIP | (4 << P.SYNC_CHECK_SHIFT))
         fetch = bytes.fromhex(V["fetch"])
         self.assertEqual(P.parse_header(fetch).type, P.FETCH)
@@ -70,7 +103,7 @@ class PacketTests(unittest.TestCase):
 
     def test_bad_packets(self):
         good = packets("group message")[0][0]
-        for bad in (b"", good[:5], b"\x00" + good[1:], good[:4] + b"\x09" + good[5:], good + bytes(200)):
+        for bad in (b"", good[:5], b"\x00" + good[1:], good[:4] + b"\x21" + good[5:], good + bytes(200)):
             with self.assertRaises(P.BadPacket):
                 P.parse_header(bad)
 
@@ -131,13 +164,13 @@ class CryptoCrossCheck(unittest.TestCase):
     def test_group_message_with_key_number(self):
         pkts, plain = packets("group message with key 2")
         h = P.parse_header(pkts[0])
-        self.assertEqual((h.recipient, h.key), (P.GROUP_FLAG | 0x10, 2))
+        self.assertEqual((h.recipient, h.group_id, h.key), (P.GROUP_TO, 0x100, 2))
         self.assertTrue(P.is_group(h.recipient))
         self.assertTrue(all(P.can_read(m, 1, h.recipient) for m in P.MEMBERS))
         self.assertEqual(self.open(pkts, bytes.fromhex(V["groupKey"])), plain)
         # The key number is sealed: a changed one does not open.
         bad = bytearray(pkts[0])
-        bad[11] = 3
+        bad[13] = 3
         with self.assertRaises(Exception):
             self.open([bytes(bad)], bytes.fromhex(V["groupKey"]))
 
@@ -365,24 +398,14 @@ class GatewayLinkTests(unittest.TestCase):
         link.last_heard -= 31
         self.assertFalse(link.status()["answering"])
 
-    def test_names_from_set_group(self):
-        from waddlemesh.__main__ import main, load_config
-        path = os.path.join(self.dir, "cfg.json")
-        h = "ab" * 32
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(main(["--config", path, "set-group", "66", "1:%s:Arne" % h, "2:%s" % h,
-                                   "4:%s:Kari Nord" % h]), 0)
-        cfg = load_config(path)
-        self.assertEqual((cfg["group"], sorted(cfg["tokens"])), (66, ["1", "2", "4"]))
-        self.assertEqual(cfg["names"], {"1": "Arne", "4": "Kari Nord"})
-
 
 class StatusPageTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
         self.store = Store(os.path.join(self.dir, "mesh.db"))
-        self.server = Server(self.store, GROUP, {1: "Arne", 2: "Kari <3"})
+        self.server = Server(self.store, GROUP, ADMIN_SIGN)
+        set_roster(self.store, 1, [(1, "Arne", TOKEN_1), (2, "Kari <3", "22" * 16)])
 
     def page(self):
         status = self.server.status()
@@ -409,6 +432,7 @@ class StatusPageTests(unittest.TestCase):
         self.assertIn("via Wi-Fi", page)
         self.assertNotIn("SOS fra", page)
         self.assertIn("ingenting ennå", page)  # sync requests are not stored
+        self.assertIn("versjon 1", page)  # the roster
 
     def test_sos_banner(self):
         sos = P.Header(type=P.SOS, group=GROUP, sender=2, recipient=P.GROUP, counter=5)
@@ -440,9 +464,9 @@ class WebTests(unittest.TestCase):
     def start(self, cert=None, key=None):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
-        self.mesh = Server(Store(os.path.join(self.dir, "mesh.db")), GROUP)
-        self.web = WebServer(("127.0.0.1", 0), self.mesh, {1: token_hash("secret-1")}, lambda: dict(GATEWAY),
-                             cert, key)
+        self.mesh = Server(Store(os.path.join(self.dir, "mesh.db")), GROUP, ADMIN_SIGN)
+        set_roster(self.mesh.store, 1, [(1, "Arne", TOKEN_1)])
+        self.web = WebServer(("127.0.0.1", 0), self.mesh, lambda: dict(GATEWAY), cert, key)
         threading.Thread(target=self.web.serve_forever, daemon=True).start()
         self.addCleanup(self.web.server_close)
         self.addCleanup(self.web.shutdown)
@@ -457,7 +481,7 @@ class WebTests(unittest.TestCase):
     def test_packets_over_http(self):
         base = self.start()
         pkts, _ = packets("group message")
-        answers = P.unframe(self.post(base, P.frame([pkts[0]]), "secret-1"))
+        answers = P.unframe(self.post(base, P.frame([pkts[0]]), TOKEN_1))
         self.assertEqual(P.parse_ack(answers[0][P.HEADER_SIZE:]).state, P.STORED)
         with self.assertRaises(urllib.error.HTTPError) as e:
             self.post(base, P.frame([pkts[0]]), "wrong")
@@ -467,8 +491,8 @@ class WebTests(unittest.TestCase):
         base = self.start()
         dm, _ = packets("direct message in 3 pieces")
         h = P.parse_header(dm[0])
-        forged = P.Header(type=P.MSG, group=GROUP, sender=2, recipient=1, counter=h.counter).pack() + dm[0][11:]
-        self.assertEqual(self.post(base, P.frame([forged]), "secret-1"), b"")
+        forged = P.Header(type=P.MSG, group=GROUP, sender=2, recipient=1, counter=h.counter).pack() + dm[0][P.HEADER_SIZE:]
+        self.assertEqual(self.post(base, P.frame([forged]), TOKEN_1), b"")
         self.assertEqual(self.mesh.store.counts(), {})
 
     def test_status_page(self):
@@ -493,8 +517,228 @@ class WebTests(unittest.TestCase):
         ctx = ssl.create_default_context(cafile=cert)
         ctx.check_hostname = False
         pkts, _ = packets("group message")
-        answers = P.unframe(self.post(base, P.frame([pkts[0]]), "secret-1", ctx))
+        answers = P.unframe(self.post(base, P.frame([pkts[0]]), TOKEN_1, ctx))
         self.assertEqual(len(answers), 1)
+
+
+# RFC 8032 section 7.1, tests 1 to 3: (secret seed, public key, message, signature).
+RFC8032 = [
+    ("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+     "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a", "",
+     "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"),
+    ("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+     "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c", "72",
+     "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"),
+    ("c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
+     "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025", "af82",
+     "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a"),
+]
+
+
+class RosterTests(unittest.TestCase):
+    def test_ed25519_rfc8032(self):
+        for seed, public, msg, sig in RFC8032:
+            seed, public, msg, sig = map(bytes.fromhex, (seed, public, msg, sig))
+            self.assertEqual(ed25519.public_key(seed), public)
+            self.assertEqual(ed25519.sign(seed, msg), sig)
+            self.assertTrue(ed25519.verify(public, msg, sig))
+            self.assertFalse(ed25519.verify(public, msg + b"x", sig))
+            self.assertFalse(ed25519.verify(public, msg, sig[:63] + bytes([sig[63] ^ 1])))
+
+    def test_cpp_roster(self):
+        signed = bytes.fromhex(V["roster"]["signed"])
+        self.assertEqual(ed25519.public_key(ADMIN_SEED), ADMIN_SIGN)
+        self.assertEqual(ed25519.sign(ADMIN_SEED, signed[:-64]), signed[-64:])  # the same signature as the C++
+        r = R.parse(signed, ADMIN_SIGN)
+        self.assertEqual((r.network, r.version), (GROUP, 3))
+        self.assertEqual([(m.number, m.admin, m.name) for m in r.members], [(1, True, "Arne"), (7, False, "Kåre")])
+        self.assertEqual(r.member(7).public.hex(), V["memberB"]["public"])
+        self.assertEqual(r.member(1).token_hash, bytes(range(0xA0, 0xB0)))
+        with self.assertRaises(R.BadRoster):
+            R.parse(signed, ed25519.public_key(bytes(32)))  # another admin
+        bad = bytearray(signed)
+        bad[8] ^= 1
+        with self.assertRaises(R.BadRoster):
+            R.parse(bytes(bad), ADMIN_SIGN)
+
+
+class RosterServerTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.store = Store(os.path.join(self.dir, "mesh.db"))
+        self.server = Server(self.store, GROUP, ADMIN_SIGN)
+
+    def sync(self, version, via="wifi", counter=1):
+        h = P.Header(type=P.SYNC_REQ, group=GROUP, sender=2, recipient=P.SERVER, counter=counter)
+        return self.server.handle(h.pack() + P.SyncReq({}, roster_version=version).pack(), via)
+
+    def test_older_roster_gets_the_new_one_first(self):
+        set_roster(self.store, 4, [(1, "Arne", TOKEN_1), (2, "Kari", "22" * 16)], pieces=3)
+        msg = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=5).pack() + bytes(20)
+        self.server.handle(msg, "lora")
+        answer = self.sync(3)
+        self.assertEqual([P.parse_header(p).type for p in answer[:3]], [P.ROSTER] * 3)
+        self.assertIn(msg, answer)
+        self.assertFalse(any(P.parse_header(p).type == P.ROSTER for p in self.sync(4, counter=2)))
+
+    def test_whole_roster_over_lora(self):
+        for counter in range(1, 30):
+            h = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=counter)
+            self.server.handle(h.pack() + bytes(20), "lora")
+        set_roster(self.store, 1, [(1, "Arne", TOKEN_1)], pieces=3)
+        answer = self.sync(0, "lora")
+        self.assertEqual([P.parse_header(p).type for p in answer], [P.ROSTER] * 3 + [P.MSG] * 9)
+        # 32 members make 13 pieces, more than the usual 12: still sent whole.
+        set_roster(self.store, 2, [(1, "Arne", TOKEN_1)], pieces=13)
+        self.assertEqual([P.parse_header(p).type for p in self.sync(1, "lora", 2)], [P.ROSTER] * 13)
+
+    def test_roster_goes_out_over_lora_once(self):
+        set_roster(self.store, 1, [(1, "Arne", TOKEN_1)], pieces=2)
+        link = Gateway("/nonexistent", self.server)
+        written = []
+        link._write = written.append
+        link._ping()
+        self.assertEqual(written, ["PING %d" % GROUP])
+        self.assertEqual(list(link.outbox.queue), self.store.roster()[2])
+        link.last_ping = 0
+        link._ping()
+        self.assertEqual(link.outbox.qsize(), 2)
+        set_roster(self.store, 2, [(1, "Arne", TOKEN_1)], pieces=1)
+        link.last_ping = 0
+        link._ping()
+        self.assertEqual(link.outbox.qsize(), 3)
+
+    def test_tokens_and_names_come_from_the_roster(self):
+        self.assertIsNone(self.server.member_for_token(TOKEN_1))
+        set_roster(self.store, 1, [(1, "Arne", TOKEN_1), (5, "Ola", "55" * 16)])
+        self.assertEqual(self.server.member_for_token("55" * 16), 5)
+        self.assertIsNone(self.server.member_for_token("56" * 16))
+        self.assertEqual([(u["member"], u["name"]) for u in self.server.status()["units"]], [(1, "Arne"), (5, "Ola")])
+        set_roster(self.store, 2, [(1, "Arne", TOKEN_1)])  # Ola is out
+        self.assertIsNone(self.server.member_for_token("55" * 16))
+
+    def test_roster_not_signed_by_the_admin_is_not_used(self):
+        self.store.set_roster(1, make_roster(1, [(1, "Arne", TOKEN_1)], seed=bytes(32)), roster_packets(1, 1))
+        with self.assertLogs("waddlemesh", "ERROR"):
+            self.assertIsNone(self.server.member_for_token(TOKEN_1))
+
+    def test_joins_are_kept_a_week(self):
+        old = time.time() - 8 * 86400
+        self.assertEqual(self.store.add_join("01" * 8, "aa" * 32, "bb", now=old), "ok")
+        self.assertEqual(self.store.joins(), [])
+        self.store.add_welcome("02" * 8, "cc", now=old)
+        self.assertIsNone(self.store.take_welcome("02" * 8))
+
+
+def cli(*args):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = main(list(args))
+    return code, out.getvalue()
+
+
+class CommandTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.path = os.path.join(self.dir, "cfg.json")
+        with open(self.path, "w") as f:
+            json.dump({"db": os.path.join(self.dir, "mesh.db")}, f)
+
+    def run_cli(self, *args):
+        return cli("--config", self.path, *args)
+
+    def test_set_network_and_roster(self):
+        self.assertEqual(self.run_cli("set-network", str(GROUP), ADMIN_SIGN.hex())[0], 0)
+        cfg = load_config(self.path)
+        self.assertEqual((cfg["network"], cfg["adminSign"]), (GROUP, ADMIN_SIGN.hex()))
+        signed = V["roster"]["signed"]
+        pkts = [p.hex() for p in roster_packets(3, 2)]
+        code, out = self.run_cli("set-roster", signed, *pkts)
+        self.assertEqual(code, 0, out)
+        self.assertIn("version 3 with 2 members", out)
+        self.assertEqual(Store(cfg["db"]).roster()[1].hex(), signed)
+        # The same version again, or older: not taken.
+        self.assertEqual(self.run_cli("set-roster", signed, *pkts)[0], 1)
+        # Not the admin's signature.
+        forged = make_roster(4, [(1, "Arne", TOKEN_1)], seed=bytes(32)).hex()
+        self.assertEqual(self.run_cli("set-roster", forged, *[p.hex() for p in roster_packets(4, 1)])[0], 1)
+        # Packets of another version.
+        newer = make_roster(4, [(1, "Arne", TOKEN_1)]).hex()
+        self.assertEqual(self.run_cli("set-roster", newer, *pkts)[0], 1)
+        self.assertEqual(self.run_cli("set-roster", newer, *[p.hex() for p in roster_packets(4, 1)])[0], 0)
+        # A new network (other admin key): its roster replaces the old one even at version 1.
+        other = bytes(range(32))
+        self.assertEqual(self.run_cli("set-network", "9", ed25519.public_key(other).hex())[0], 0)
+        first = make_roster(1, [(1, "Arne", TOKEN_1)], network=9, seed=other).hex()
+        self.assertEqual(self.run_cli("set-roster", first, *[p.hex() for p in roster_packets(1, 1, 9)])[0], 0)
+
+    def test_joins_and_welcome(self):
+        store = Store(os.path.join(self.dir, "mesh.db"))
+        store.add_join("01" * 8, "aa" * 32, "bbbb")
+        code, out = self.run_cli("joins")
+        self.assertEqual(json.loads(out)[0]["from"], "aa" * 32)
+        self.assertEqual(self.run_cli("welcome", "01" * 8, "cafe")[0], 0)
+        self.assertEqual(json.loads(self.run_cli("joins")[1]), [])
+        self.assertEqual(store.take_welcome("01" * 8), "cafe")
+        store.add_join("02" * 8, "aa" * 32, "bbbb")
+        self.assertEqual(self.run_cli("forget", "02" * 8)[0], 0)
+        self.assertEqual(store.joins(), [])
+
+
+class JoinWebTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.mesh = Server(Store(os.path.join(self.dir, "mesh.db")), GROUP, ADMIN_SIGN)
+        self.web = WebServer(("127.0.0.1", 0), self.mesh, lambda: dict(GATEWAY))
+        threading.Thread(target=self.web.serve_forever, daemon=True).start()
+        self.addCleanup(self.web.server_close)
+        self.addCleanup(self.web.shutdown)
+        self.base = "http://127.0.0.1:%d" % self.web.server_address[1]
+
+    def request(self, path, doc=None, token=None):
+        headers = {"Authorization": "Bearer " + token} if token else {}
+        data = json.dumps(doc).encode() if doc is not None else None
+        req = urllib.request.Request(self.base + path, data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    def test_join_and_welcome(self):
+        req = {"invite": "01" * 8, "from": "aa" * 32, "box": "bb" * 40}
+        self.assertEqual(self.request("/api/join", req)[0], 200)
+        self.assertEqual(self.request("/api/join", req)[0], 409)  # an invitation is used once
+        self.assertEqual(self.request("/api/join/" + "01" * 8)[0], 404)  # not approved yet
+        self.assertEqual(self.mesh.store.joins()[0]["box"], "bb" * 40)
+        self.mesh.store.add_welcome("01" * 8, "cc" * 50)
+        self.assertEqual(self.request("/api/join/" + "01" * 8), (200, json.dumps({"box": "cc" * 50}).encode()))
+        self.assertEqual(self.request("/api/join/" + "01" * 8)[0], 404)  # given once
+        self.assertEqual(self.request("/api/join/nothex")[0], 404)
+
+    def test_bad_requests(self):
+        good = {"invite": "01" * 8, "from": "aa" * 32, "box": "bb" * 40}
+        for bad in ({**good, "invite": "01" * 9}, {**good, "from": "aa"}, {**good, "box": "bb" * 1025},
+                    {**good, "box": ""}, {**good, "box": "zz"}, ["x"]):
+            self.assertEqual(self.request("/api/join", bad)[0], 400, bad)
+        self.assertEqual(self.mesh.store.joins(), [])
+
+    def test_at_most_20_waiting(self):
+        for i in range(20):
+            self.assertEqual(self.request("/api/join", {"invite": "%016x" % i, "from": "aa" * 32, "box": "bb"})[0],
+                             200)
+        self.assertEqual(self.request("/api/join", {"invite": "ff" * 8, "from": "aa" * 32, "box": "bb"})[0], 429)
+
+    def test_roster_for_members_only(self):
+        self.assertEqual(self.request("/api/roster", token=TOKEN_1)[0], 401)
+        set_roster(self.mesh.store, 1, [(1, "Arne", TOKEN_1)])
+        code, body = self.request("/api/roster", token=TOKEN_1)
+        self.assertEqual(code, 200)
+        self.assertEqual(R.parse(body, ADMIN_SIGN).members[0].name, "Arne")
+        self.assertEqual(self.request("/api/roster", token="22" * 16)[0], 401)
 
 
 if __name__ == "__main__":

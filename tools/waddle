@@ -6,9 +6,12 @@
   waddle add [-d /folder] <file>...    upload files as they are
   waddle dict get [--ip IP]            put the English dictionary on the reader
   waddle mesh new-unit [gateway]       put WaddleOS on a new mesh unit (or the gateway) over USB
-  waddle mesh setup                    set up the mesh units (T5) as one group
+  waddle mesh setup                    make the mesh network and add your own units (T5)
+  waddle mesh invite NAME              a link for someone new; they run `waddle mesh join LINK`
+  waddle mesh approve                  let in those who asked to join
+  waddle mesh remove NAME              take someone out of the mesh network
+  waddle mesh members                  who is in the mesh network
   waddle mesh check                    ask every mesh unit how it is
-  waddle mesh reset-keys               shut a lost mesh unit out (new keys for the rest)
   waddle mesh server                   update the Pi server over SSH
 
 The reader must be on File Transfer -> Join a Network. Its IP is $WADDLE_IP
