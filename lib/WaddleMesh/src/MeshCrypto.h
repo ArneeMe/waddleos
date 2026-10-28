@@ -19,6 +19,20 @@ void pairKey(const uint8_t mySecret[KEY_SIZE], const uint8_t myPublic[KEY_SIZE],
 // First 4 bytes of BLAKE2b-256: the "previous hash" in MSG.
 void shortHash(const uint8_t* data, size_t len, uint8_t out[4]);
 
+// Setup over the home Wi-Fi (`waddle mesh setup`): the tool sends a one-time
+// public key, and both sides derive BLAKE2b-256(X25519 || tool public || unit
+// public). What travels is sealed with ChaCha20-Poly1305 under that key, with
+// nonce = the given byte and 11 zeros (1: the unit's sender key, 2: the group).
+void setupKey(const uint8_t unitSecret[KEY_SIZE], const uint8_t unitPublic[KEY_SIZE],
+              const uint8_t toolPublic[KEY_SIZE], uint8_t keyOut[KEY_SIZE]);
+// out gets len + TAG_SIZE bytes.
+void setupSeal(const uint8_t key[KEY_SIZE], uint8_t nonceByte, const uint8_t* plain, size_t len, uint8_t* out);
+// plainOut gets len - TAG_SIZE bytes. False when it was changed or the key is wrong.
+bool setupOpen(const uint8_t key[KEY_SIZE], uint8_t nonceByte, const uint8_t* sealed, size_t len, uint8_t* plainOut);
+// The six digits a unit shows during setup, from its public key, so the tool
+// can tell it is talking to that unit: "482 913".
+void setupCode(const uint8_t unitPublic[KEY_SIZE], char out[8]);
+
 // The packets one message becomes: pieces back to back, MAX_PACKET apart.
 struct Sealed {
   uint8_t packets[MAX_PIECES][MAX_PACKET];

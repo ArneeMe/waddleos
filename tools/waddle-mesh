@@ -18,11 +18,13 @@ private DM key never leaves it. Uses only the Python standard library.
 """
 
 import hashlib
+import hmac
 import json
 import os
 import secrets
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -38,6 +40,108 @@ FULL_IMAGES = {"t5": "waddleos-t5-full.bin", "gateway": "waddle-gateway-full.bin
 TTY = sys.stdout.isatty()
 B, G, R, Y, C, DIM, N = (("\033[1m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m")
                          if TTY else ("",) * 7)
+
+
+# --- Setup handover crypto -----------------------------------------------------
+# The units' keys travel over the home Wi-Fi sealed with a one-time key
+# (lib/WaddleMesh/src/MeshCrypto.h, "Setup"). Plain Python, so the tool needs
+# nothing installed: X25519 (RFC 7748) and ChaCha20-Poly1305 (RFC 8439).
+
+_P = 2**255 - 19
+
+
+def x25519(scalar, point):
+    k = bytearray(scalar)
+    k[0] &= 248
+    k[31] = (k[31] & 127) | 64
+    k = int.from_bytes(k, "little")
+    x1 = int.from_bytes(point, "little") & ((1 << 255) - 1)
+    x2, z2, x3, z3, swap = 1, 0, x1, 1, 0
+    for t in reversed(range(255)):
+        bit = (k >> t) & 1
+        if swap ^ bit:
+            x2, x3, z2, z3 = x3, x2, z3, z2
+        swap = bit
+        a, b, c, d = x2 + z2, x2 - z2, x3 + z3, x3 - z3
+        aa, bb, da, cb = a * a % _P, b * b % _P, d * a % _P, c * b % _P
+        e = aa - bb
+        x3, z3 = (da + cb) ** 2 % _P, x1 * (da - cb) ** 2 % _P
+        x2, z2 = aa * bb % _P, e * (aa + 121665 * e) % _P
+    if swap:
+        x2, z2 = x3, z3
+    return (x2 * pow(z2, _P - 2, _P) % _P).to_bytes(32, "little")
+
+
+def x25519_public(secret):
+    return x25519(secret, (9).to_bytes(32, "little"))
+
+
+def _chacha_block(key, counter, nonce):
+    state = [0x61707865, 0x3320646E, 0x79622D32, 0x6B206574, *struct.unpack("<8I", key), counter,
+             *struct.unpack("<3I", nonce)]
+    w = list(state)
+
+    def quarter(a, b, c, d):
+        for x, y, z, r in ((a, b, d, 16), (c, d, b, 12), (a, b, d, 8), (c, d, b, 7)):
+            w[x] = (w[x] + w[y]) & 0xFFFFFFFF
+            v = w[z] ^ w[x]
+            w[z] = ((v << r) | (v >> (32 - r))) & 0xFFFFFFFF
+
+    for _ in range(10):
+        for q in ((0, 4, 8, 12), (1, 5, 9, 13), (2, 6, 10, 14), (3, 7, 11, 15),
+                  (0, 5, 10, 15), (1, 6, 11, 12), (2, 7, 8, 13), (3, 4, 9, 14)):
+            quarter(*q)
+    return struct.pack("<16I", *((w[i] + state[i]) & 0xFFFFFFFF for i in range(16)))
+
+
+def _chacha(key, counter, nonce, data):
+    out = bytearray()
+    for i in range(0, len(data), 64):
+        block = _chacha_block(key, counter + i // 64, nonce)
+        out += bytes(a ^ b for a, b in zip(data[i:i + 64], block))
+    return bytes(out)
+
+
+def _poly1305(key, msg):
+    r = int.from_bytes(key[:16], "little") & 0x0FFFFFFC0FFFFFFC0FFFFFFC0FFFFFFF
+    acc = 0
+    for i in range(0, len(msg), 16):
+        acc = (acc + int.from_bytes(msg[i:i + 16] + b"\x01", "little")) * r % (2**130 - 5)
+    return ((acc + int.from_bytes(key[16:], "little")) % 2**128).to_bytes(16, "little")
+
+
+def _mac(key, nonce, aad, cipher):
+    def pad(b):
+        return b"\x00" * (-len(b) % 16)
+    data = aad + pad(aad) + cipher + pad(cipher) + struct.pack("<QQ", len(aad), len(cipher))
+    return _poly1305(_chacha_block(key, 0, nonce)[:32], data)
+
+
+def aead_seal(key, nonce, plain, aad=b""):
+    cipher = _chacha(key, 1, nonce, plain)
+    return cipher + _mac(key, nonce, aad, cipher)
+
+
+def aead_open(key, nonce, sealed, aad=b""):
+    cipher, tag = sealed[:-16], sealed[-16:]
+    if not hmac.compare_digest(_mac(key, nonce, aad, cipher), tag):
+        raise RuntimeError("the unit's answer did not check out (changed on the way, or not a WaddleOS unit)")
+    return _chacha(key, 1, nonce, cipher)
+
+
+def setup_key(tool_secret, tool_public, unit_public):
+    shared = x25519(tool_secret, unit_public)
+    return hashlib.blake2b(shared + tool_public + unit_public, digest_size=32).digest()
+
+
+def setup_nonce(n):
+    return bytes([n]) + bytes(11)
+
+
+def setup_code(unit_public):
+    """The six digits the unit shows on its File Transfer screen."""
+    n = int.from_bytes(hashlib.blake2b(unit_public, digest_size=32).digest()[:3], "big") % 1000000
+    return "%03d %03d" % (n // 1000, n % 1000)
 
 
 def say(text=""):
@@ -69,6 +173,21 @@ def ssh(host, command):
     return subprocess.run(["ssh", host, command], check=True, capture_output=True, text=True).stdout
 
 
+def fetch_keys(ip):
+    """The unit's public key, and its sender key sealed for this setup only.
+    Returns (public key, sender key, setup key, tool public key): the last two
+    seal the group sent to the unit."""
+    tool_secret = secrets.token_bytes(32)
+    tool_public = x25519_public(tool_secret)
+    ident = unit_get(ip, "/api/mesh/identity?tool=" + tool_public.hex())
+    if "senderKeyBox" not in ident:
+        raise RuntimeError(f"{ip} runs an older WaddleOS: update it first (waddle update)")
+    unit_public = bytes.fromhex(ident["publicKey"])
+    key = setup_key(tool_secret, tool_public, unit_public)
+    sender = aead_open(key, setup_nonce(1), bytes.fromhex(ident["senderKeyBox"]))
+    return unit_public, sender, key, tool_public.hex()
+
+
 def setup():
     say(f"\n{B}🐧 waddle mesh setup{N}\n")
     old = {}
@@ -94,10 +213,15 @@ def setup():
         name = ask(f"Unit {i + 1}: name", prev.get("name", ""))
         ip = ask(f"Unit {i + 1}: address shown on its screen", prev.get("ip", ""))
         say(f"{C}▸{N} Asking {name} for its keys")
-        ident = unit_get(ip, "/api/mesh/identity")
-        say(f"  {G}✓{N} {name}: key {ident['publicKey'][:16]}…")
-        members.append({"number": n, "name": name, "ip": ip,
-                        "publicKey": ident["publicKey"], "senderKey": ident["senderKey"]})
+        unit_public, sender_key, box_key, tool = fetch_keys(ip)
+        code = setup_code(unit_public)
+        # Someone on the Wi-Fi could pretend to be the unit: the code on its own
+        # screen shows it is the real one.
+        if ask(f"  Does {name}'s screen show the code {B}{code}{N}? (y/n)", "y").lower() != "y":
+            raise RuntimeError(f"the code does not match: something else answered at {ip}. Stopped")
+        say(f"  {G}✓{N} {name}: key {unit_public.hex()[:16]}…")
+        members.append({"number": n, "name": name, "ip": ip, "publicKey": unit_public.hex(),
+                        "senderKey": sender_key.hex(), "boxKey": box_key, "tool": tool})
 
     group = old.get("group") or (secrets.randbelow(254) + 1)
 
@@ -126,7 +250,8 @@ def setup():
         doc = {"group": group, "me": m["number"], "members": public}
         if server:
             doc["server"] = {"url": server["url"], "token": server["tokens"][m["number"]], "cert": server["cert"]}
-        unit_post(m["ip"], "/api/mesh/group", doc)
+        sealed = aead_seal(m["boxKey"], setup_nonce(2), json.dumps(doc).encode())
+        unit_post(m["ip"], "/api/mesh/group", {"tool": m["tool"], "box": sealed.hex()})
         say(f"  {G}✓{N} {m['name']}")
 
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)

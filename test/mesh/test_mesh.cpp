@@ -6,6 +6,7 @@
 #include <MeshCrypto.h>
 #include <MeshPacket.h>
 #include <MeshRadioRules.h>
+#include <monocypher.h>
 
 #include "../../src/services/mesh/MeshTime.h"
 
@@ -109,6 +110,33 @@ static void testBodies() {
   SyncReq t;
   CHECK(readSyncReq(sb, sizeof(sb), t) && t.lastCounter[0] == 5 && t.lastCounter[1] == 0 &&
         t.lastCounter[2] == 900 && t.battery == 40 && t.build == 0xab && t.flags == 3);
+}
+
+static void testSetupBox() {
+  uint8_t unitSecret[KEY_SIZE], unitPublic[KEY_SIZE], toolSecret[KEY_SIZE], toolPublic[KEY_SIZE];
+  fill(unitSecret, KEY_SIZE, 5);
+  fill(toolSecret, KEY_SIZE, 50);
+  publicKey(unitSecret, unitPublic);
+  publicKey(toolSecret, toolPublic);
+  uint8_t k1[KEY_SIZE], k2[KEY_SIZE];
+  setupKey(unitSecret, unitPublic, toolPublic, k1);
+  // The tool's side: X25519(tool secret, unit public) gives the same shared secret.
+  uint8_t input[3 * KEY_SIZE];
+  crypto_x25519(input, toolSecret, unitPublic);
+  memcpy(input + KEY_SIZE, toolPublic, KEY_SIZE);
+  memcpy(input + 2 * KEY_SIZE, unitPublic, KEY_SIZE);
+  crypto_blake2b(k2, KEY_SIZE, input, sizeof(input));
+  CHECK(memcmp(k1, k2, KEY_SIZE) == 0);
+  const char* json = "{\"group\":66}";
+  uint8_t box[64], back[64];
+  setupSeal(k1, 2, reinterpret_cast<const uint8_t*>(json), strlen(json), box);
+  CHECK(setupOpen(k1, 2, box, strlen(json) + TAG_SIZE, back) && memcmp(back, json, strlen(json)) == 0);
+  CHECK(!setupOpen(k1, 1, box, strlen(json) + TAG_SIZE, back));  // other nonce
+  box[0] ^= 1;
+  CHECK(!setupOpen(k1, 2, box, strlen(json) + TAG_SIZE, back));
+  char code[8];
+  setupCode(unitPublic, code);
+  CHECK(strlen(code) == 7 && code[3] == ' ');
 }
 
 static void testGroups() {
@@ -453,6 +481,17 @@ static void writeVectors(const char* path) {
   std::fprintf(f, "  \"memberB\": {\"secret\": \"%s\", \"public\": \"%s\"},\n", hex(bSecret, KEY_SIZE).c_str(),
                hex(bPublic, KEY_SIZE).c_str());
   std::fprintf(f, "  \"pairKey\": \"%s\",\n", hex(dmKey, KEY_SIZE).c_str());
+  // Setup handover: member A's unit and a tool with a fixed one-time key.
+  uint8_t toolSecret[KEY_SIZE], toolPublic[KEY_SIZE], boxKey[KEY_SIZE];
+  fill(toolSecret, KEY_SIZE, 77);
+  publicKey(toolSecret, toolPublic);
+  setupKey(aSecret, aPublic, toolPublic, boxKey);
+  uint8_t box[KEY_SIZE + TAG_SIZE];
+  setupSeal(boxKey, 1, senderKey, KEY_SIZE, box);
+  char code[8];
+  setupCode(aPublic, code);
+  std::fprintf(f, "  \"setup\": {\"toolSecret\": \"%s\", \"key\": \"%s\", \"senderKeyBox\": \"%s\", \"code\": \"%s\"},\n",
+               hex(toolSecret, KEY_SIZE).c_str(), hex(boxKey, KEY_SIZE).c_str(), hex(box, sizeof(box)).c_str(), code);
 
   uint8_t groupKey[KEY_SIZE];
   fill(groupKey, KEY_SIZE, 3);
@@ -550,6 +589,7 @@ int main(int argc, char** argv) {
   testHeader();
   testBodies();
   testGroups();
+  testSetupBox();
   testSealOpen();
   testPairKey();
   testRadioRules();

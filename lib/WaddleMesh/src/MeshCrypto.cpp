@@ -2,6 +2,7 @@
 
 #include <monocypher.h>
 
+#include <cstdio>
 #include <cstring>
 
 namespace mesh {
@@ -25,6 +26,52 @@ void shortHash(const uint8_t* data, const size_t len, uint8_t out[4]) {
   uint8_t full[32];
   crypto_blake2b(full, sizeof(full), data, len);
   memcpy(out, full, 4);
+}
+
+void setupKey(const uint8_t unitSecret[KEY_SIZE], const uint8_t unitPublic[KEY_SIZE],
+              const uint8_t toolPublic[KEY_SIZE], uint8_t keyOut[KEY_SIZE]) {
+  uint8_t input[3 * KEY_SIZE];
+  crypto_x25519(input, unitSecret, toolPublic);
+  memcpy(input + KEY_SIZE, toolPublic, KEY_SIZE);
+  memcpy(input + 2 * KEY_SIZE, unitPublic, KEY_SIZE);
+  crypto_blake2b(keyOut, KEY_SIZE, input, sizeof(input));
+  crypto_wipe(input, sizeof(input));
+}
+
+namespace {
+void setupNonce(const uint8_t nonceByte, uint8_t iv[12]) {
+  memset(iv, 0, 12);
+  iv[0] = nonceByte;
+}
+}  // namespace
+
+void setupSeal(const uint8_t key[KEY_SIZE], const uint8_t nonceByte, const uint8_t* plain, const size_t len,
+               uint8_t* out) {
+  uint8_t iv[12];
+  setupNonce(nonceByte, iv);
+  crypto_aead_ctx ctx;
+  crypto_aead_init_ietf(&ctx, key, iv);
+  crypto_aead_write(&ctx, out, out + len, nullptr, 0, plain, len);
+  crypto_wipe(&ctx, sizeof(ctx));
+}
+
+bool setupOpen(const uint8_t key[KEY_SIZE], const uint8_t nonceByte, const uint8_t* sealed, const size_t len,
+               uint8_t* plainOut) {
+  if (len < TAG_SIZE) return false;
+  uint8_t iv[12];
+  setupNonce(nonceByte, iv);
+  crypto_aead_ctx ctx;
+  crypto_aead_init_ietf(&ctx, key, iv);
+  const int bad = crypto_aead_read(&ctx, plainOut, sealed + len - TAG_SIZE, nullptr, 0, sealed, len - TAG_SIZE);
+  crypto_wipe(&ctx, sizeof(ctx));
+  return bad == 0;
+}
+
+void setupCode(const uint8_t unitPublic[KEY_SIZE], char out[8]) {
+  uint8_t h[32];
+  crypto_blake2b(h, sizeof(h), unitPublic, KEY_SIZE);
+  const uint32_t n = ((uint32_t(h[0]) << 16) | (uint32_t(h[1]) << 8) | h[2]) % 1000000;
+  snprintf(out, 8, "%03u %03u", unsigned(n / 1000), unsigned(n % 1000));
 }
 
 bool seal(const Header& base, const uint8_t key[KEY_SIZE], const uint8_t* plain, const size_t plainLen, Sealed& out) {
