@@ -127,14 +127,15 @@ int pixelTextWidth(const char* text, const int scale) {
   return width > 0 ? width - scale : 0;
 }
 
-void drawPixelText(const GfxRenderer& renderer, int x, const int y, const char* text, const int scale) {
+void drawPixelText(const GfxRenderer& renderer, int x, const int y, const char* text, const int scale,
+                   const bool black) {
   for (const char* p = text; *p; p++) {
     const PixelGlyph* glyph = pixelGlyph(*p);
     if (!glyph) continue;
     const int glyphW = static_cast<int>(strlen(glyph->rows[0]));
     for (int row = 0; row < 7; row++) {
       for (int col = 0; col < glyphW; col++) {
-        if (glyph->rows[row][col] == '#') renderer.fillRect(x + col * scale, y + row * scale, scale, scale);
+        if (glyph->rows[row][col] == '#') renderer.fillRect(x + col * scale, y + row * scale, scale, scale, black);
       }
     }
     x += (glyphW + 1) * scale;

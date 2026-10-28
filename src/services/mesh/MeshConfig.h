@@ -31,8 +31,12 @@ struct Member {
 struct Group {
   bool configured = false;
   uint8_t id = 0;
-  uint8_t me = 0;  // my member number, 1-3
+  uint8_t me = 0;  // my member number, 1-4
   Member members[MAX_MEMBERS];
+  // Keys of the small groups I am in (some of the members, at least three),
+  // made by `waddle mesh setup`. Index = member bits (bit 0 = member 1).
+  uint16_t smallGroups = 0;
+  uint8_t smallGroupKeys[16][KEY_SIZE] = {};
   std::string serverUrl;    // "https://home.example:8443", empty = no Wi-Fi server
   std::string serverToken;  // this unit's key for the server
   std::string serverCert;   // the server's certificate (PEM), the only one trusted
@@ -40,6 +44,10 @@ struct Group {
   Member* member(uint8_t number) { return isMember(number) ? &members[number - 1] : nullptr; }
   const Member* member(uint8_t number) const { return isMember(number) ? &members[number - 1] : nullptr; }
   const char* name(uint8_t number) const;
+  // The key of the small group with these member bits, or nullptr.
+  const uint8_t* smallGroupKey(uint8_t members) const {
+    return members < 16 && (smallGroups >> members & 1) ? smallGroupKeys[members] : nullptr;
+  }
 };
 
 constexpr const char* GROUP_PATH = "/.mesh/group.json";

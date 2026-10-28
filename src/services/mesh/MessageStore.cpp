@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace mesh {
@@ -144,7 +145,13 @@ void MessageStore::begin(const uint8_t me) {
   }
   if (Storage.exists(READ_PATH)) {
     const String text = Storage.readFile(READ_PATH);
-    sscanf(text.c_str(), "%u %u %u %u", &seen_[0], &seen_[1], &seen_[2], &seen_[3]);
+    const char* p = text.c_str();
+    for (int c = 0; c < CONVERSATIONS && *p; c++) {
+      char* end = nullptr;
+      seen_[c] = uint32_t(strtoul(p, &end, 10));
+      if (end == p) break;
+      p = end;
+    }
   }
   for (uint8_t c = 0; c < CONVERSATIONS; c++) {
     ConversationSummary& sum = summaries_[c];
@@ -196,7 +203,7 @@ std::vector<std::vector<uint8_t>> MessageStore::packetsAfter(const uint8_t sende
   std::vector<std::vector<uint8_t>> out;
   forEachPacket(sender, [&](const Header& h, const uint8_t* raw, const size_t len) {
     if (out.size() >= limit || h.type != Type::Msg || h.counter <= after) return;
-    if (h.recipient != GROUP && h.recipient != readableBy && h.sender != readableBy) return;
+    if (!canRead(readableBy, h.sender, h.recipient)) return;
     out.emplace_back(raw, raw + len);
   });
   return out;
@@ -314,9 +321,13 @@ void MessageStore::markRead(const uint8_t conversation) {
 }
 
 void MessageStore::saveSeen() {
-  char text[64];
-  snprintf(text, sizeof(text), "%u %u %u %u", seen_[0], seen_[1], seen_[2], seen_[3]);
-  Storage.writeFile(READ_PATH, String(text));
+  std::string text;
+  char n[12];
+  for (const uint32_t s : seen_) {
+    snprintf(n, sizeof(n), "%u ", unsigned(s));
+    text += n;
+  }
+  Storage.writeFile(READ_PATH, String(text.c_str()));
 }
 
 }  // namespace mesh

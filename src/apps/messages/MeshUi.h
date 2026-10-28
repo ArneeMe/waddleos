@@ -31,4 +31,17 @@ const char* directionText(double degrees);
 // "59,9139 N  10,7522 Ø".
 std::string coordinatesText(const mesh::Position& p);
 
+// "Alle", "Kari", or a small group: "Du, Kari og Per".
+std::string conversationName(uint8_t conversation);
+// About a contact: "hørt 5 min siden · 82 % · 1,2 km nordøst".
+std::string contactText(uint8_t member);
+// "Hjemme · sjekker en gang i døgnet" or "På tur · lytter hele tiden".
+std::string modeText();
+// "sist sjekket 08:12", or "" before the first check.
+std::string lastCheckText();
+
+// The line at the bottom of the sleep screen: "2 nye meldinger · sist fra Kari".
+// Draws only; the caller refreshes the display.
+void drawUnreadLine(const GfxRenderer& renderer, uint32_t unread);
+
 }  // namespace meshui

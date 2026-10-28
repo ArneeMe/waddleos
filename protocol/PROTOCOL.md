@@ -10,9 +10,10 @@ allows 255; the margin keeps airtime short).
 
 ## Members
 
-A group has up to 3 members, numbered 1 to 3 at setup. Number 0 is the server
+A group has up to 4 members, numbered 1 to 4 at setup. Number 0 is the server
 (it speaks through the gateway or over Wi-Fi). `0xFF` as a recipient means
-the whole group. Each group has a random 1-byte group id; units drop packets
+the whole group. `0x80` + a bit per member (bit 0 = member 1) means a *small
+group*: some of the members, at least three (two would be a DM). Each group has a random 1-byte group id; units drop packets
 from other groups without reading them.
 
 ## Header (11 bytes, never encrypted)
@@ -23,8 +24,8 @@ from other groups without reading them.
 | 1 | version and type | high 4 bits = 1, low 4 bits = type (below) |
 | 2 | group id | set at setup |
 | 3 | hops | low 4 bits: hops left (starts at 3); bit 4: fragmented |
-| 4 | sender | 1–3, or 0 = server |
-| 5 | recipient | 1–3, 0 = server, `0xFF` = group |
+| 4 | sender | 1–4, or 0 = server |
+| 5 | recipient | 1–4, 0 = server, `0xFF` = group, `0x80`+bits = small group |
 | 6–9 | counter | per sender, see below |
 | 10 | fragment | high 4 bits: index, low 4 bits: count (1 when not split) |
 
@@ -78,11 +79,12 @@ shown. The server sends "stored" when it has every piece of a message, and again
 for a unit's 10 newest stored messages when that unit syncs. Units send ACKs
 with hops 3 like other packets.
 
-### SYNC_REQ body (14 bytes)
+### SYNC_REQ body (18 bytes)
 
-last MSG counter the sender has from member 1, 2 and 3 (3 × u32), battery %
+last MSG counter the sender has from member 1, 2, 3 and 4 (4 × u32), battery %
 (u8), firmware build (first byte of the short git hash). The answer is every
-stored MSG from member *n* with a counter above the given one.
+stored MSG from member *n* with a counter above the given one that the asking
+member can read (not DMs between two others, not small groups without them).
 
 A unit in SOS sends an SOS packet every 60 seconds until the user cancels it;
 cancelling sends one more SOS with the "cancelled" bit set.
@@ -97,8 +99,9 @@ seen it.
 ChaCha20-Poly1305 (RFC 8439), 256-bit key, 16-byte tag after the ciphertext.
 
 - **Key:** group packets use the sender's own *sender key* (32 random bytes,
-  made by that unit and given to the other members at setup). DMs use the pair
-  key: BLAKE2b-256 of `X25519(my secret, their public) || lower public key ||
+  made by that unit and given to the other members at setup). Small groups use
+  the group's own key (32 random bytes made by `waddle mesh setup`, given only
+  to the members of that group). DMs use the pair key: BLAKE2b-256 of `X25519(my secret, their public) || lower public key ||
   higher public key`, the same in both directions.
 - **Nonce (12 bytes):** sender, recipient, counter (u32), type, then 5 zero
   bytes. Unique because the counter is.

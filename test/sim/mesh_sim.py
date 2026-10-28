@@ -1,4 +1,4 @@
-"""Three mesh units and the Pi server, on this computer.
+"""Mesh units and the Pi server, on this computer.
 
 Each unit is test/sim/sim_node (the real firmware mesh code with the hardware
 replaced); the server is the real server/waddlemesh code. This file plays the
@@ -8,6 +8,7 @@ Run: bash test/sim/run.sh   (builds sim_node, then runs these tests)
 """
 
 import email.utils
+import itertools
 import json
 import os
 import shutil
@@ -105,8 +106,12 @@ class World:
         for n, u in self.units.items():
             pub, sender = u.cmd("identity")[0].split()[1:]
             members.append({"number": n, "name": u.name, "publicKey": pub, "senderKey": sender})
+        # Small groups, as `waddle mesh setup` makes them: some members, at least three.
+        groups = [{"members": list(c), "key": os.urandom(32).hex()}
+                  for size in range(3, len(names)) for c in itertools.combinations(self.units, size)]
         for n, u in self.units.items():
-            doc = {"group": GROUP, "me": n, "members": members}
+            doc = {"group": GROUP, "me": n, "members": members,
+                   "groups": [g for g in groups if n in g["members"]]}
             if server_wifi:
                 doc["server"] = {"url": "https://pi.example:8443", "token": "t%d" % n,
                                  "cert": "-----BEGIN CERTIFICATE-----"}
@@ -174,6 +179,87 @@ class World:
 
 def packet_type(raw):
     return P.parse_header(raw).type
+
+
+class FourUnitTests(unittest.TestCase):
+    def setUp(self):
+        self.w = World(names=("Arne", "Kari", "Ola", "Per"))
+
+    def tearDown(self):
+        self.w.close()
+
+    def test_fourth_member(self):
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(5)
+        w.units[4].cmd("send 0 Per her")
+        w.units[1].cmd("send 4 Hei Per")
+        w.run(15)
+        for n in (1, 2, 3):
+            self.assertEqual(w.units[n].texts(0), ["Per her"])
+        self.assertEqual(w.units[4].texts(1), ["Hei Per"])
+        self.assertEqual(w.units[4].chat(0)[0]["delivered"], 0b0111)
+
+    def test_small_group(self):
+        w = self.w
+        w.link(1, 2)
+        w.link(1, 3)
+        w.link(3, 4)  # Per hears only Ola, who is not in the group
+        w.begin()
+        w.run(5)
+        conv = 5 + 0b1011  # Arne, Kari and Per
+        self.assertEqual(w.units[1].cmd("send %d Uten Ola" % conv), ["sent"])
+        w.run(20)
+        self.assertEqual(w.units[2].texts(conv), ["Uten Ola"])
+        self.assertEqual(w.units[4].texts(conv), ["Uten Ola"])  # relayed by Ola
+        self.assertTrue(all(not msgs for msgs in w.units[3].state()["chats"].values()))
+        self.assertEqual(w.units[1].chat(conv)[0]["delivered"], 0b1010)
+        # Per answers in the same group.
+        self.assertEqual(w.units[4].cmd("send %d Fint" % conv), ["sent"])
+        w.run(20)
+        self.assertEqual(w.units[1].texts(conv), ["Uten Ola", "Fint"])
+        # Ola has no key for it and cannot write there.
+        self.assertEqual(w.units[3].cmd("send %d Hallo?" % conv), ["refused"])
+
+
+class CheckTests(unittest.TestCase):
+    """The unit as a backup: the radio sleeps and wakes to check now and then."""
+
+    def setUp(self):
+        self.w = World(names=("Arne", "Kari"), server_wifi=False)
+
+    def tearDown(self):
+        self.w.close()
+
+    def test_default_checks_once_a_day_at_home(self):
+        w = self.w
+        w.begin()
+        kari = w.units[2].state()
+        self.assertFalse(kari["listensAlways"])
+        self.assertGreater(kari["msUntilCheck"], 23 * 3600 * 1000)
+        w.units[2].cmd("checks 0 2")  # "Lytt hele tiden" at home
+        self.assertTrue(w.units[2].state()["listensAlways"])
+        w.units[2].cmd("trip 1")  # on a trip: every hour
+        self.assertFalse(w.units[2].state()["listensAlways"])
+
+    def test_message_waits_on_the_server_until_the_check(self):
+        w = self.w
+        w.all_in_range(gateway=True)
+        w.begin()
+        w.run(25)
+        w.units[2].cmd("pause")  # Kari's unit sleeps between checks
+        w.units[1].cmd("send 0 Ring meg")
+        w.run(10)
+        self.assertEqual(w.units[2].texts(0), [])
+        self.assertTrue(w.units[1].chat(0)[0]["stored"])  # the server has it
+        w.units[2].cmd("resume")
+        w.units[2].cmd("check")  # the check (or a press of the button)
+        w.run(10)
+        self.assertEqual(w.units[2].texts(0), ["Ring meg"])
+        self.assertTrue(w.units[2].state()["lastCheck"])
+        w.run(10)
+        self.assertEqual(w.units[1].chat(0)[0]["delivered"], 0b10)
 
 
 class MeshTests(unittest.TestCase):
@@ -362,7 +448,7 @@ class MeshTests(unittest.TestCase):
         w.all_in_range()
         w.begin()
         w.units[2].cmd("gps 60.0 10.8")
-        w.units[2].cmd("offgrid 1")
+        w.units[2].cmd("trip 1")
         w.run(10)
         kari = w.units[1].state()["members"]["2"]
         self.assertTrue(kari["hasPosition"])

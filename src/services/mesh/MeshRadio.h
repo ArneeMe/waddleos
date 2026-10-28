@@ -32,6 +32,11 @@ bool send(const uint8_t* data, size_t len);
 int irqPin();
 // Sets the packet interrupt again (light sleep's wake setup changes the pin).
 void rearm();
+// Stops listening, keeping its settings (about 1 µA), and starts again. The
+// GPS on the same power switch is not touched.
+void pause();
+void resume();
+bool paused();
 // Powers the radio and the GPS down.
 void end();
 

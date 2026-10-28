@@ -8,7 +8,8 @@
 //                                 delivery states, as appended records
 //   /.mesh/read.txt               how many messages of each conversation were seen
 //
-// A conversation is the group (0) or a DM with member 1-3.
+// A conversation is the whole group (0), a DM with member 1-4, or a small
+// group (CONV_SMALL + its member bits).
 
 #include <MeshPacket.h>
 
@@ -19,7 +20,24 @@
 namespace mesh {
 
 constexpr uint8_t CONV_GROUP = 0;
-constexpr int CONVERSATIONS = 1 + MAX_MEMBERS;
+constexpr uint8_t CONV_SMALL = 1 + MAX_MEMBERS;
+constexpr int CONVERSATIONS = CONV_SMALL + 16;
+
+// The conversation a packet from sender to recipient belongs to, seen by me.
+inline uint8_t conversationOf(uint8_t me, uint8_t sender, uint8_t recipient) {
+  if (recipient == GROUP) return CONV_GROUP;
+  if (isSmallGroup(recipient)) return uint8_t(CONV_SMALL + (recipient & 0x0F));
+  return sender == me ? recipient : sender;
+}
+// The recipient byte for a conversation.
+inline uint8_t recipientOf(uint8_t conversation) {
+  if (conversation == CONV_GROUP) return GROUP;
+  if (conversation >= CONV_SMALL) return uint8_t(SMALL_GROUP | (conversation - CONV_SMALL));
+  return conversation;
+}
+inline bool isSmallConversation(uint8_t conversation) {
+  return conversation >= CONV_SMALL && conversation < CONVERSATIONS;
+}
 
 enum class Delivery : uint8_t { Sending = 0, Sent = 1, Stored = 2, Delivered = 3, Read = 4 };
 

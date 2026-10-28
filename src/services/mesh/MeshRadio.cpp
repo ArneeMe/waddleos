@@ -14,6 +14,7 @@ constexpr float TCXO_VOLTAGE = 2.4f;
 
 SX1262* chip = nullptr;
 bool up = false;
+bool sleeping = false;
 volatile bool packetWaiting = false;
 
 void IRAM_ATTR onPacket() { packetWaiting = true; }
@@ -48,7 +49,7 @@ bool isUp() { return up; }
 bool receive(Received& out) {
   // The pin is checked too: a packet that woke the unit from light sleep may
   // have arrived while the interrupt was not armed.
-  if (!up || !(packetWaiting || digitalRead(T5S3_LORA_IRQ) == HIGH)) return false;
+  if (!up || sleeping || !(packetWaiting || digitalRead(T5S3_LORA_IRQ) == HIGH)) return false;
   packetWaiting = false;
   out.len = chip->getPacketLength();
   if (out.len > sizeof(out.data)) out.len = sizeof(out.data);
@@ -61,6 +62,7 @@ bool receive(Received& out) {
 
 bool send(const uint8_t* data, const size_t len) {
   if (!up) return false;
+  resume();
   const int state = chip->transmit(data, len);
   packetWaiting = false;
   chip->startReceive();
@@ -74,9 +76,25 @@ void rearm() {
   if (up) chip->setPacketReceivedAction(onPacket);
 }
 
+void pause() {
+  if (!up || sleeping) return;
+  chip->sleep(true);
+  sleeping = true;
+}
+
+void resume() {
+  if (!up || !sleeping) return;
+  chip->standby();
+  chip->startReceive();
+  sleeping = false;
+}
+
+bool paused() { return sleeping; }
+
 void end() {
   if (!up) return;
   chip->sleep();
+  sleeping = false;
   BoardT5S3::writePca9535Pin(PCA9535_IO00_LORA_GPS_EN, false);
   up = false;
 }

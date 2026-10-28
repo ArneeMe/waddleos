@@ -19,13 +19,16 @@ constexpr uint8_t DEFAULT_HOPS = 3;
 
 constexpr uint8_t SERVER = 0;
 constexpr uint8_t GROUP = 0xFF;
-constexpr uint8_t MAX_MEMBERS = 3;
+constexpr uint8_t MAX_MEMBERS = 4;
+// A small group: some of the members, at least three. The recipient byte is
+// SMALL_GROUP | a bit per member (bit 0 = member 1).
+constexpr uint8_t SMALL_GROUP = 0x80;
 
 constexpr size_t MSG_PREFIX = 8;  // time + previous hash, before the text
 constexpr size_t MAX_TEXT = 1000;
 constexpr size_t POS_SIZE = 16;
 constexpr size_t ACK_SIZE = 6;
-constexpr size_t SYNC_REQ_SIZE = 14;
+constexpr size_t SYNC_REQ_SIZE = 4 * MAX_MEMBERS + 2;
 
 enum class Type : uint8_t { Msg = 1, Ack = 2, SyncReq = 3, Pos = 4, Sos = 5 };
 
@@ -33,6 +36,21 @@ enum class AckState : uint8_t { Delivered = 1, Stored = 2, Read = 3 };
 
 inline bool isEncrypted(Type t) { return t == Type::Msg || t == Type::Pos || t == Type::Sos; }
 inline bool isMember(uint8_t id) { return id >= 1 && id <= MAX_MEMBERS; }
+inline uint8_t memberBit(uint8_t id) { return isMember(id) ? uint8_t(1u << (id - 1)) : 0; }
+inline int memberCount(uint8_t mask) {
+  int n = 0;
+  for (uint8_t m = mask & 0x0F; m; m &= m - 1) n++;
+  return n;
+}
+// SMALL_GROUP | members, at least three of them.
+inline bool isSmallGroup(uint8_t recipient) {
+  return (recipient & 0xF0) == SMALL_GROUP && memberCount(recipient & 0x0F) >= 3;
+}
+// Whether member can read a packet to recipient that sender sent.
+inline bool canRead(uint8_t member, uint8_t sender, uint8_t recipient) {
+  if (recipient == 0xFF || recipient == member || sender == member) return true;
+  return isSmallGroup(recipient) && (recipient & memberBit(member));
+}
 
 struct Header {
   Type type = Type::Msg;
@@ -83,7 +101,7 @@ void writeAck(const Ack& a, uint8_t out[ACK_SIZE]);
 bool readAck(const uint8_t* in, size_t len, Ack& a);
 
 struct SyncReq {
-  uint32_t lastCounter[MAX_MEMBERS] = {0, 0, 0};  // index 0 = member 1
+  uint32_t lastCounter[MAX_MEMBERS] = {};  // index 0 = member 1
   uint8_t battery = 0;
   uint8_t build = 0;
 };

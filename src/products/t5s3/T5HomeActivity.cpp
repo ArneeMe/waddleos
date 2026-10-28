@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "apps/map/MapActivity.h"
+#include "apps/messages/MeshUi.h"
 #include "apps/messages/MessagesActivity.h"
 #include "apps/notes/NotesActivity.h"
 #include "apps/sos/SosAlertActivity.h"
@@ -15,7 +16,9 @@
 #include "core/components/themes/BaseTheme.h"
 #include "core/fontIds.h"
 #include "core/waddle/WaddleDraw.h"
+#include "core/CrossPointSettings.h"
 #include "services/mesh/MeshNode.h"
+#include "services/mesh/MeshSettings.h"
 
 namespace {
 
@@ -27,20 +30,6 @@ constexpr const char* APP_LABELS[] = {"Meldinger", "Kart", "Notater", "Bøker", 
 
 mesh::Node& node() { return mesh::Node::get(); }
 
-// "Kari og Ola i nærheten": members heard over LoRa in the last 15 minutes.
-std::string nearbyText() {
-  const auto& group = node().group();
-  std::string names;
-  int count = 0;
-  for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
-    const auto& st = node().member(n);
-    if (n == group.me || !st.heardAtMs || millis() - st.heardAtMs > 15UL * 60 * 1000) continue;
-    names += std::string(count ? " og " : "") + group.name(n);
-    count++;
-  }
-  return count ? names + " i nærheten" : "Ingen i nærheten";
-}
-
 }  // namespace
 
 T5HomeActivity::T5HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const bool cleanInitialRefresh)
@@ -48,19 +37,13 @@ T5HomeActivity::T5HomeActivity(GfxRenderer& renderer, MappedInputManager& mapped
 
 void T5HomeActivity::onEnter() {
   Activity::onEnter();
-  // The group first, then members; conversations with unread messages first.
+  // "Alle", then each contact in member order, so they stay in place.
   chatCount = 0;
   if (node().configured()) {
-    uint8_t all[4] = {mesh::CONV_GROUP};
-    int n = 1;
-    for (uint8_t m = 1; m <= mesh::MAX_MEMBERS; m++) {
-      if (m != node().group().me && node().group().member(m)->present) all[n++] = m;
+    chats[chatCount++] = mesh::CONV_GROUP;
+    for (uint8_t m = 1; m <= mesh::MAX_MEMBERS && chatCount < 4; m++) {
+      if (m != node().group().me && node().group().member(m)->present) chats[chatCount++] = m;
     }
-    std::stable_sort(all, all + n, [](const uint8_t a, const uint8_t b) {
-      return node().store().summary(a).unread > 0 && node().store().summary(b).unread == 0;
-    });
-    std::copy(all, all + n, chats);
-    chatCount = n;
   }
   if (!available(focus)) focus = T_MESSAGES;
   requestUpdate();
@@ -68,6 +51,7 @@ void T5HomeActivity::onEnter() {
 
 bool T5HomeActivity::available(const int target) const {
   if (target >= T_CHAT_1 && target <= T_CHAT_4) return target - T_CHAT_1 < chatCount;
+  if (target == T_MODE) return node().configured();
   return target >= 0 && target < T_COUNT;
 }
 
@@ -77,6 +61,13 @@ void T5HomeActivity::activate(const int target) {
     return;
   }
   switch (target) {
+    case T_MODE:
+      // Going out, or home again: GPS, position sharing and checks follow.
+      MESH_SETTINGS.onTrip = MESH_SETTINGS.onTrip ? 0 : 1;
+      SETTINGS.saveToFile();
+      node().startCheck();
+      requestUpdate();
+      break;
     case T_MESSAGES:
       activityManager.replaceActivity(std::make_unique<MessagesActivity>(renderer, mappedInput));
       break;
@@ -168,21 +159,30 @@ void T5HomeActivity::render(RenderLock&&) {
                               EpdFontFamily::BOLD);
     y += 54;
   }
+  // The mode, as a wide button: tap to switch.
   if (node().configured()) {
-    const char* server = node().serverState() == mesh::ServerState::Online    ? "Server: tilkoblet"
-                         : node().serverState() == mesh::ServerState::Offline ? "Server: ikke nådd"
-                                                                              : "Server: ukjent";
-    const std::string status = std::string(server) + "   " + nearbyText();
-    renderer.drawText(SMALL_FONT_ID, SIDE, y, status.c_str());
+    Box& b = boxes[T_MODE];
+    b = {SIDE, y - 6, width - 2 * SIDE, 64};
+    if (focus == T_MODE) {
+      renderer.fillRoundedRect(b.x, b.y, b.w, b.h, 12, Color::Black);
+    } else {
+      renderer.drawRoundedRect(b.x, b.y, b.w, b.h, 2, 12, true);
+    }
+    const bool dark = focus == T_MODE;
+    renderer.drawText(UI_10_FONT_ID, b.x + 16, b.y + 6, meshui::modeText().c_str(), !dark, EpdFontFamily::BOLD);
+    std::string under = meshui::lastCheckText();
+    under += std::string(under.empty() ? "" : " · ") + (MESH_SETTINGS.onTrip ? "trykk når du er hjemme" : "trykk når du drar på tur");
+    renderer.drawText(SMALL_FONT_ID, b.x + 16, b.y + 36, under.c_str(), !dark);
+    y += 70;
   } else {
     renderer.drawText(SMALL_FONT_ID, SIDE, y, "Ikke satt opp: kjør \"waddle mesh setup\"");
+    y += 30;
   }
-  y += 30;
   renderer.drawLine(SIDE, y, width - SIDE, y, 2, true);
   y += 12;
 
-  // Conversations.
-  renderer.drawText(SMALL_FONT_ID, SIDE, y, "MELDINGER", true, EpdFontFamily::BOLD);
+  // Everyone, then each contact.
+  renderer.drawText(SMALL_FONT_ID, SIDE, y, "KONTAKTER", true, EpdFontFamily::BOLD);
   y += 30;
   const auto& group = node().group();
   for (int i = 0; i < chatCount; i++) {
@@ -190,15 +190,22 @@ void T5HomeActivity::render(RenderLock&&) {
     const auto& sum = node().store().summary(c);
     boxes[T_CHAT_1 + i] = {0, y, width, 74};
     if (focus == T_CHAT_1 + i) renderer.fillRect(0, y + 1, 6, 72);
-    renderer.drawText(UI_12_FONT_ID, SIDE, y + 4, c == mesh::CONV_GROUP ? "Gruppe" : group.name(c), true,
-                      EpdFontFamily::BOLD);
+    const std::string name = meshui::conversationName(c);
+    renderer.drawText(UI_12_FONT_ID, SIDE, y + 4, name.c_str(), true, EpdFontFamily::BOLD);
+    if (c != mesh::CONV_GROUP) {
+      // How they are: heard, battery, distance.
+      const int nameW = renderer.getTextWidth(UI_12_FONT_ID, name.c_str(), EpdFontFamily::BOLD);
+      const int maxW = width - 2 * SIDE - nameW - 16 - 60;
+      renderer.drawText(SMALL_FONT_ID, SIDE + nameW + 16, y + 10,
+                        renderer.truncatedText(SMALL_FONT_ID, meshui::contactText(c).c_str(), maxW).c_str());
+    }
     std::string preview = "Ingen meldinger ennå";
     if (sum.count) {
       const char* who = sum.lastSender == group.me ? "Du" : group.name(sum.lastSender);
       preview = (c == mesh::CONV_GROUP || sum.lastSender == group.me) ? std::string(who) + ": " + sum.lastText
                                                                        : sum.lastText;
     }
-    renderer.drawText(UI_10_FONT_ID, SIDE, y + 36,
+    renderer.drawText(UI_10_FONT_ID, SIDE, y + 38,
                       renderer.truncatedText(UI_10_FONT_ID, preview.c_str(), width - 2 * SIDE - 70).c_str());
     if (sum.unread) {
       char n[8];
@@ -231,8 +238,13 @@ void T5HomeActivity::render(RenderLock&&) {
     renderer.drawText(UI_12_FONT_ID, b.x + (b.w - lw) / 2, b.y + 36, APP_LABELS[i], !filled, EpdFontFamily::BOLD);
   }
 
-  // The penguin and a reminder of the SOS button.
+  // The penguin and a reminder of the SOS button, when there is room.
   const int py = renderer.getScreenHeight() - 96;
+  if (gridY + 2 * (bh + 14) > py) {
+    renderer.displayBuffer(cleanInitialRefresh ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH);
+    cleanInitialRefresh = false;
+    return;
+  }
   waddle::drawPenguin(renderer, SIDE, py, 2);
   // Each unit greets its own member; before setup, the device's owner.
   char hello[40];

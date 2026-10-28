@@ -36,6 +36,8 @@ constexpr uint32_t WIFI_FALLBACK_GAP_MS = 15UL * 60 * 1000;
 constexpr uint32_t SERVER_FRESH_MS = 30UL * 60 * 1000;
 constexpr uint32_t SOS_REPEAT_MS = 60000;
 constexpr uint8_t LOW_BATTERY = 20;
+constexpr uint32_t CHECK_LISTEN_MS = 20000;  // how long a check listens for answers
+constexpr uint32_t CHECK_WIFI_GAP_MS = 10UL * 60 * 1000;
 
 uint32_t randomBetween(const uint32_t lo, const uint32_t hi) { return lo + esp_random() % (hi - lo + 1); }
 
@@ -87,7 +89,7 @@ void Node::begin() {
   if (group_.configured) {
     // My messages nobody confirmed before the restart: try them again.
     for (uint8_t c = 0; c < CONVERSATIONS; c++) {
-      if (c != CONV_GROUP && (!group_.member(c) || !group_.member(c)->present || c == group_.me)) continue;
+      if (!canWrite(c)) continue;
       for (const auto& m : store_.load(c, 20)) {
         if (m.sender != group_.me || m.stored || m.deliveredTo) continue;
         if (pending_.size() >= MAX_PENDING) pending_.erase(pending_.begin());
@@ -101,15 +103,47 @@ void Node::begin() {
   }
   LOG_INF("MESH", "Member %u of group %u", group_.me, group_.id);
   if (radio::begin(params_)) {
-    if (MESH_SETTINGS.offGrid) {
+    if (MESH_SETTINGS.onTrip) {
       gps::wake();
     } else {
       gps::sleep();
     }
-    requestSync();
   }
-  // On power-on, also ask the server over Wi-Fi when a network is saved.
-  if (!group_.serverUrl.empty() && battery() >= LOW_BATTERY) startWifiSync();
+  // On power-on, check for messages (over Wi-Fi too when a network is saved).
+  startCheck();
+}
+
+void Node::startCheck() {
+  if (!group_.configured) return;
+  const uint32_t now = millis();
+  radio::resume();
+  requestSync();
+  // At home the server is one Wi-Fi hop away; on a trip Wi-Fi is rarely there.
+  // Retries of unanswered messages still try Wi-Fi in both modes.
+  if (!MESH_SETTINGS.onTrip && MESH_SETTINGS.homeWifi && !group_.serverUrl.empty() && battery() >= LOW_BATTERY &&
+      (!lastWifiSyncMs_ || now - lastWifiSyncMs_ > CHECK_WIFI_GAP_MS)) {
+    startWifiSync();
+  }
+  checkUntilMs_ = now + CHECK_LISTEN_MS;
+  const uint32_t interval = MESH_SETTINGS.checkIntervalMs();
+  nextCheckMs_ = interval && interval != UINT32_MAX ? now + interval : 0;
+  changes_++;
+}
+
+bool Node::listensAlways() const {
+  if (MESH_SETTINGS.checkIntervalMs() == 0 || sosActive_) return true;
+  for (const auto& m : members_) {
+    if (m.sos) return true;  // keep hearing a member's SOS until it ends
+  }
+  return false;
+}
+
+uint32_t Node::msUntilCheck() const {
+  const uint32_t interval = MESH_SETTINGS.checkIntervalMs();
+  if (interval == UINT32_MAX) return UINT32_MAX;
+  if (!nextCheckMs_) return interval;
+  const int32_t left = int32_t(nextCheckMs_ - millis());
+  return left > 0 ? uint32_t(left) : 0;
 }
 
 uint32_t Node::nextCounter() {
@@ -160,16 +194,23 @@ void Node::sendAck(const uint8_t toMember, const uint8_t ackedSender, const uint
   queue(raw, sizeof(raw), randomBetween(200, 1200), false);
 }
 
-bool Node::sendText(const uint8_t conversation, const std::string& text) {
-  if (!group_.configured || text.empty() || text.size() > MAX_TEXT) return false;
-  const uint8_t* key = identity().senderKey;
-  uint8_t recipient = GROUP;
-  if (conversation != CONV_GROUP) {
-    const Member* m = group_.member(conversation);
-    if (!m || !m->present || conversation == group_.me) return false;
-    key = m->pairKey;
-    recipient = conversation;
+const uint8_t* Node::sendingKey(const uint8_t conversation) const {
+  if (!group_.configured) return nullptr;
+  if (conversation == CONV_GROUP) return identity().senderKey;
+  if (isSmallConversation(conversation)) {
+    const uint8_t bits = conversation - CONV_SMALL;
+    return bits & memberBit(group_.me) ? group_.smallGroupKey(bits) : nullptr;
   }
+  const Member* m = group_.member(conversation);
+  return m && m->present && conversation != group_.me ? m->pairKey : nullptr;
+}
+
+bool Node::canWrite(const uint8_t conversation) const { return sendingKey(conversation) != nullptr; }
+
+bool Node::sendText(const uint8_t conversation, const std::string& text) {
+  const uint8_t* key = sendingKey(conversation);
+  if (!key || text.empty() || text.size() > MAX_TEXT) return false;
+  const uint8_t recipient = recipientOf(conversation);
   ChatMessage msg;
   msg.sender = group_.me;
   msg.time = unixNow();
@@ -242,7 +283,7 @@ void Node::cancelSos() {
   if (!sosActive_) return;
   sosActive_ = false;
   sendPosition(Type::Sos, true);
-  if (!MESH_SETTINGS.offGrid) gps::sleep();
+  if (!MESH_SETTINGS.onTrip) gps::sleep();
   changes_++;
 }
 
@@ -286,7 +327,9 @@ ServerState Node::serverState() const {
   return ServerState::Unknown;
 }
 
-bool Node::busy() const { return !outbox_.empty() || wifi_ != WifiStep::Idle; }
+bool Node::busy() const {
+  return !outbox_.empty() || wifi_ != WifiStep::Idle || int32_t(checkUntilMs_ - millis()) > 0;
+}
 
 uint32_t Node::msUntilWork() const {
   const uint32_t now = millis();
@@ -296,7 +339,7 @@ uint32_t Node::msUntilWork() const {
   for (const auto& p : pending_) {
     if (p.tries < 3) consider(p.nextTryMs);
   }
-  if (MESH_SETTINGS.offGrid) consider(nextPositionMs_);
+  if (MESH_SETTINGS.onTrip) consider(nextPositionMs_);
   if (sosActive_) consider(nextSosMs_);
   return next;
 }
@@ -308,18 +351,21 @@ const uint8_t* Node::keyFor(const Header& h) const {
   if (!from || !from->present) return nullptr;
   if (h.recipient == GROUP) return from->senderKey;
   if (h.recipient == group_.me) return from->pairKey;
-  return nullptr;  // a DM between two other members
+  if (isSmallGroup(h.recipient) && (h.recipient & memberBit(group_.me))) return group_.smallGroupKey(h.recipient & 0x0F);
+  return nullptr;  // a DM between two others, or a small group without me
 }
 
 void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bool viaWifi) {
   Header h;
   if (!readHeader(raw, len, h) || h.group != group_.id || h.sender == group_.me) return;
   const uint32_t now = millis();
+  if (int32_t(checkUntilMs_ - now) > 0 || viaWifi) lastCheckUnix_ = unixNow();
   if (h.sender == SERVER) {
     serverAtMs_ = now;
-  } else {
+  } else if (!viaWifi && (h.hops == DEFAULT_HOPS || h.type == Type::SyncReq)) {
+    // Straight from their radio (not relayed, not a stored copy): they are near.
     members_[h.sender - 1].heardAtMs = now;
-    if (!viaWifi) members_[h.sender - 1].rssi = rssi;
+    members_[h.sender - 1].rssi = rssi;
   }
 
   // Someone else already sent a relay or sync answer we had queued: skip ours.
@@ -329,7 +375,7 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
 
   if (!seen_.remember(h)) {
     // A message we already have came again: the sender missed our ACK.
-    if (h.type == Type::Msg && h.pieceIndex == h.pieceCount - 1 && (h.recipient == group_.me || h.recipient == GROUP) &&
+    if (h.type == Type::Msg && h.pieceIndex == h.pieceCount - 1 && canRead(group_.me, h.sender, h.recipient) &&
         isMember(h.sender)) {
       sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
     }
@@ -376,7 +422,7 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
     LOG_ERR("MESH", "Message %u/%lu failed its check (wrong key or changed)", h.sender, (unsigned long)h.counter);
     return;
   }
-  const uint8_t conversation = h.recipient == GROUP ? CONV_GROUP : h.sender;
+  const uint8_t conversation = conversationOf(group_.me, h.sender, h.recipient);
   ChatMessage m;
   m.sender = h.sender;
   m.counter = h.counter;
@@ -404,6 +450,7 @@ void Node::handlePosition(const Header& h, const uint8_t* cipher, const size_t l
   Position p;
   if (!readPosition(plain, sizeof(plain), p)) return;
   MemberStatus& st = members_[h.sender - 1];
+  if (p.battery) st.battery = p.battery;
   if (!p.noFix) {
     st.hasPosition = true;
     st.position = p;
@@ -432,7 +479,7 @@ uint8_t Node::conversationOfMine(const uint32_t counter) {
   const auto raw = store_.packetsAfter(group_.me, counter - 1, group_.me, 1);
   Header h;
   if (!raw.empty() && readHeader(raw[0].data(), raw[0].size(), h) && h.counter == counter) {
-    return h.recipient == GROUP ? CONV_GROUP : h.recipient;
+    return conversationOf(group_.me, group_.me, h.recipient);
   }
   return CONV_GROUP;
 }
@@ -460,6 +507,7 @@ void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
 void Node::handleSyncReq(const Header& h, const uint8_t* body, const size_t len) {
   SyncReq req;
   if (!isMember(h.sender) || !readSyncReq(body, len, req)) return;
+  if (req.battery) members_[h.sender - 1].battery = req.battery;
   size_t sent = 0;
   for (uint8_t s = 1; s <= MAX_MEMBERS && sent < MAX_SYNC_ANSWER; s++) {
     if (s == h.sender) continue;
@@ -571,6 +619,7 @@ void Node::runWifiSync() {
   }
   wifiServerFailed_ = false;
   serverAtMs_ = millis();
+  lastCheckUnix_ = unixNow();
   // The server's clock, for a unit that has none (or one that drifted).
   const uint32_t serverTime = httpDate(http.getHeader("Date"));
   if (serverTime && (!unixNow() || std::abs(int64_t(serverTime) - int64_t(unixNow())) > 60)) {
@@ -594,6 +643,7 @@ void Node::loop() {
 
   Received rx;
   while (radio::receive(rx)) handle(rx.data, rx.len, rx.rssi, false);
+  if (nextCheckMs_ && int32_t(now - nextCheckMs_) >= 0) startCheck();
 
   if (wifi_ == WifiStep::Joining) {
     if (WiFi.status() == WL_CONNECTED) {
@@ -610,7 +660,7 @@ void Node::loop() {
   }
 
   // Off-grid: the GPS runs and the position goes out every few minutes.
-  if (MESH_SETTINGS.offGrid || sosActive_) {
+  if (MESH_SETTINGS.onTrip || sosActive_) {
     gps::wake();
     gps::poll();
     const gps::Fix& fix = gps::lastFix();
@@ -618,7 +668,7 @@ void Node::loop() {
   } else if (gps::awake()) {
     gps::sleep();
   }
-  if (MESH_SETTINGS.offGrid && int32_t(now - nextPositionMs_) >= 0) {
+  if (MESH_SETTINGS.onTrip && int32_t(now - nextPositionMs_) >= 0) {
     sendPosition(Type::Pos, false);
     uint32_t minutes = std::max<uint8_t>(MESH_SETTINGS.positionMinutes, 5);
     if (battery() < LOW_BATTERY) minutes *= 2;

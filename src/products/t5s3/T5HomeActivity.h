@@ -2,9 +2,10 @@
 
 #include "core/activities/Activity.h"
 
-// Hjem on the mesh unit (docs/waddle/mockups/t5-screens.png): clock, date and
-// mesh status, the conversations with their newest message and unread count,
-// six app buttons, and the penguin.
+// Hjem on the mesh unit (docs/waddle/mockups/t5-hjem.png): clock and date, the
+// mode (tap to switch between Hjemme and På tur), "Alle" and one row per
+// contact with how they are and the newest message, six app buttons, and the
+// penguin.
 class T5HomeActivity final : public Activity {
  public:
   T5HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool cleanInitialRefresh = false);
@@ -20,13 +21,13 @@ class T5HomeActivity final : public Activity {
     bool contains(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; }
   };
   // Things that can be selected, in Up/Down order.
-  enum Target { T_CHAT_1, T_CHAT_2, T_CHAT_3, T_CHAT_4, T_MESSAGES, T_MAP, T_NOTES, T_BOOKS, T_SETTINGS, T_SOS, T_COUNT };
+  enum Target { T_MODE, T_CHAT_1, T_CHAT_2, T_CHAT_3, T_CHAT_4, T_MESSAGES, T_MAP, T_NOTES, T_BOOKS, T_SETTINGS, T_SOS, T_COUNT };
 
   bool cleanInitialRefresh;
   int shownMinute = -1;
   uint32_t shownChanges = 0;
   int focus = T_MESSAGES;
-  uint8_t chats[4] = {};  // conversations shown in the rows
+  uint8_t chats[4] = {};  // "Alle", then each contact
   int chatCount = 0;
   Box boxes[T_COUNT];
 

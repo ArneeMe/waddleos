@@ -71,11 +71,14 @@ class Store:
     def messages_after(self, sender, counter, for_member, limit=None):
         """Stored MSG pieces from sender with a higher counter, oldest first.
 
-        DMs between two other members are left out: for_member could not read them.
+        Messages for_member could not read (DMs between two others, small groups
+        without them) are left out.
         """
+        bit = 1 << (for_member - 1)
         sql = ("SELECT raw FROM packets WHERE type = 1 AND sender = ? AND counter > ?"
-               " AND (recipient = 255 OR recipient = ? OR sender = ?) ORDER BY counter, piece_index")
-        args = [sender, counter, for_member, for_member]
+               " AND (recipient = 255 OR recipient = ? OR sender = ? OR (recipient & 240 = 128 AND recipient & ?))"
+               " ORDER BY counter, piece_index")
+        args = [sender, counter, for_member, for_member, bit]
         if limit:
             sql += " LIMIT ?"
             args.append(limit)

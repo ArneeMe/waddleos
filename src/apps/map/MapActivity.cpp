@@ -38,8 +38,9 @@ void MapActivity::loop() {
   }
   int x = 0, y = 0;
   if (mappedInput.wasReleased(Button::Confirm) || (mappedInput.wasScreenTapped(x, y) && y >= toggleY)) {
-    MESH_SETTINGS.offGrid = MESH_SETTINGS.offGrid ? 0 : 1;
+    MESH_SETTINGS.onTrip = MESH_SETTINGS.onTrip ? 0 : 1;
     SETTINGS.saveToFile();
+    node().startCheck();
     requestUpdate();
     return;
   }
@@ -130,9 +131,9 @@ void MapActivity::render(RenderLock&&) {
   renderer.drawText(UI_10_FONT_ID, SIDE, listY + 4, self.c_str());
 
   toggleY = height - 90;
-  const bool on = MESH_SETTINGS.offGrid;
+  const bool on = MESH_SETTINGS.onTrip;
   char label[48];
-  snprintf(label, sizeof(label), on ? "Offline-modus: på (hvert %u. min)" : "Offline-modus: av",
+  snprintf(label, sizeof(label), on ? "På tur: deler posisjon hvert %u. min" : "Hjemme: deler ikke posisjon",
            static_cast<unsigned>(MESH_SETTINGS.positionMinutes));
   if (on) {
     renderer.fillRoundedRect(SIDE, toggleY + 10, width - 2 * SIDE, 64, 14, Color::Black);

@@ -16,8 +16,9 @@ void drawSpeakerIcon(const GfxRenderer& renderer, int x, int y);
 
 // Big pixel text for the clock and temperature: digits, ':', '-', 'd' (the
 // degree sign), and 'S' and 'O' for SOS. Each glyph is 5x7 pixels (':' is 2 wide), drawn scale x scale.
-// Other characters are skipped. y is the top of the glyphs.
-void drawPixelText(const GfxRenderer& renderer, int x, int y, const char* text, int scale);
+// Other characters are skipped. y is the top of the glyphs. black = false draws
+// white, for black backgrounds.
+void drawPixelText(const GfxRenderer& renderer, int x, int y, const char* text, int scale, bool black = true);
 int pixelTextWidth(const char* text, int scale);
 
 // Boot and default sleep screen: big penguin centered on the screen, then

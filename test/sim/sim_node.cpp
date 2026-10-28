@@ -8,13 +8,16 @@
 //   time <ms>              set the simulated millis()
 //   rx <hex>               a packet arrives over the radio
 //   loop                   run the node once; radio sends come out as "tx <hex>"
-//   send <conv> <text>     write a message (conv 0 = group, 1-3 = DM)
+//   send <conv> <text>     write a message (conv 0 = group, 1-4 = DM, 5+bits = small group)
 //   read <conv>            the user opened the conversation
 //   sos | cancel | seen <member>
 //   wifi <0|1>             a known Wi-Fi network is (not) in range
 //   wifisync               start a sync over Wi-Fi (HTTP goes to the driver)
 //   gps <lat> <lon>        give the GPS a fix
-//   offgrid <0|1>          off-grid mode (position sharing)
+//   trip <0|1>             mode: 0 = Hjemme, 1 = På tur (GPS on, position sharing)
+//   checks <home> <trip>   check intervals (MeshSettings::Check)
+//   check                  check for messages now (as when woken)
+//   pause | resume         the radio sleeps (hears nothing) or listens
 //   dump                   print the unit's state as one JSON line
 
 #include <ArduinoJson.h>
@@ -67,7 +70,11 @@ mesh::gps::Fix simFix;
 
 namespace mesh::radio {
 static bool up = false;
+static bool sleeping = false;
 bool begin(const LoraParams&) { return up = true; }
+void pause() { sleeping = true; }
+void resume() { sleeping = false; }
+bool paused() { return sleeping; }
 bool isUp() { return up; }
 bool receive(Received& out) {
   if (sim::rxQueue.empty()) return false;
@@ -80,6 +87,7 @@ bool receive(Received& out) {
   return true;
 }
 bool send(const uint8_t* data, size_t len) {
+  sleeping = false;
   std::cout << "tx " << hex(data, len) << "\n";
   return true;
 }
@@ -126,6 +134,9 @@ static void dump() {
   doc["sosReceivedBy"] = node.sosReceivedBy();
   doc["sosSeenBy"] = node.sosSeenBy();
   doc["busy"] = node.busy();
+  doc["listensAlways"] = node.listensAlways();
+  doc["msUntilCheck"] = node.msUntilCheck();
+  doc["lastCheck"] = node.lastCheckUnix();
   for (uint8_t c = 0; c < mesh::CONVERSATIONS; c++) {
     JsonArray msgs = doc["chats"][std::to_string(c)].to<JsonArray>();
     for (const auto& m : node.store().load(c, 100)) {
@@ -176,7 +187,7 @@ int main(int argc, char** argv) {
     } else if (cmd == "rx") {
       std::string h;
       in >> h;
-      sim::rxQueue.push_back(unhex(h));
+      if (!mesh::radio::paused()) sim::rxQueue.push_back(unhex(h));  // a sleeping radio hears nothing
     } else if (cmd == "loop") {
       node.loop();
     } else if (cmd == "send") {
@@ -212,10 +223,21 @@ int main(int argc, char** argv) {
       simFix.latE7 = int32_t(lat * 1e7);
       simFix.lonE7 = int32_t(lon * 1e7);
       simFix.time = uint32_t(time(nullptr));
-    } else if (cmd == "offgrid") {
+    } else if (cmd == "trip") {
       int on = 0;
       in >> on;
-      MESH_SETTINGS.offGrid = on ? 1 : 0;
+      MESH_SETTINGS.onTrip = on ? 1 : 0;
+    } else if (cmd == "checks") {
+      int home = 0, trip = 0;
+      in >> home >> trip;
+      MESH_SETTINGS.homeCheck = uint8_t(home);
+      MESH_SETTINGS.tripCheck = uint8_t(trip);
+    } else if (cmd == "check") {
+      node.startCheck();
+    } else if (cmd == "pause") {
+      mesh::radio::pause();
+    } else if (cmd == "resume") {
+      mesh::radio::resume();
     } else if (cmd == "dump") {
       dump();
     } else if (cmd == "quit") {
