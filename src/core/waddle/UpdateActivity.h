@@ -31,6 +31,7 @@ class UpdateActivity final : public Activity {
   std::string latestDate;   // "26. okt kl 21:22"
   std::string latestNote;   // its commit message
   std::string error;
+  bool rolledBack = false;  // the last update crashed and was undone
   int percent = 0;
 
   // The one button on screen, filled by render() for touch input.

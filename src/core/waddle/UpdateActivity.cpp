@@ -16,6 +16,7 @@
 #include "core/fontIds.h"
 #include "core/network/FirmwareBoardTag.h"
 #include "core/network/HttpDownloader.h"
+#include "core/network/UpdateTrial.h"
 
 namespace {
 
@@ -43,6 +44,7 @@ UpdateActivity::UpdateActivity(GfxRenderer& renderer, MappedInputManager& mapped
 
 void UpdateActivity::onEnter() {
   Activity::onEnter();
+  rolledBack = update_trial::rolledBack();
   requestUpdate();
 }
 
@@ -179,7 +181,13 @@ void UpdateActivity::render(RenderLock&&) {
   char line[96];
   snprintf(line, sizeof(line), "Installert: %s", waddle::version());
   renderer.drawCenteredText(SMALL_FONT_ID, y, line);
-  y += smallH + 24;
+  y += smallH + 4;
+  if (rolledBack) {
+    renderer.drawCenteredText(SMALL_FONT_ID, y, "Forrige oppdatering krasjet, så den gamle ble satt tilbake", true,
+                              EpdFontFamily::BOLD);
+    y += smallH;
+  }
+  y += 20;
 
   const char* title = "";
   const char* buttonLabel = nullptr;

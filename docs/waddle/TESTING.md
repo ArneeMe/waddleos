@@ -30,8 +30,9 @@ From PR #32 (keyboard, one version per device):
 
 ## Mesh unit (T5 S3 Pro)
 
-Flash the first time over USB: `pio run -e t5s3-waddle -t upload` (hold BOOT
-while plugging in if it is not found). Watch the log with `pio device monitor`.
+Flash the first time over USB: `waddle mesh new-unit` (needs esptool; hold
+BOOT while plugging in if it is not found). It downloads the full image, flashes
+it and checks the unit. Watch the log with `pio device monitor` if needed.
 After that, `waddle update` and Innstillinger → Oppdater fastvare pick the T5
 file by themselves.
 
@@ -98,10 +99,19 @@ Battery (the spec asks for 3 days):
       unit asleep in a pocket, Modus "Hjemme" (checks once a day). Tell Claude the numbers.
 - [ ] The same on "På tur" (GPS on, checks every hour), and with "Lytt hele tiden".
 
+Deploy (PR #34):
+- [ ] `waddle mesh new-unit` on a new unit: flashes, then after File Transfer
+      says "radio OK · GPS …".
+- [ ] `waddle mesh check` lists every unit with version, radio, GPS and battery.
+- [ ] Update a unit with Oppdater fastvare: after a minute the log says
+      `UPDATE New build confirmed`.
+- [ ] `waddle mesh server` updates the Pi and prints "Running · gateway tilkoblet".
+
 ## Gateway (Heltec V4) and server (Pi)
 
-Flash the gateway: plug it into the computer, `pio run -e heltec-gateway -t upload`
-(hold BOOT while plugging in if it is not found). Install the server:
+Flash the gateway: plug it into the computer, `waddle mesh new-unit gateway`
+(hold BOOT while plugging in if it is not found). It flashes and waits for the
+gateway's HELLO. Install the server:
 `sudo bash server/install.sh` on the Pi (see server/README.md).
 
 - [ ] Gateway: `pio device monitor -e heltec-gateway` prints

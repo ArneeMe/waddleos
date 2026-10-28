@@ -5,7 +5,10 @@
   waddle book <url|file>...            get an EPUB, clean it and send it
   waddle add [-d /folder] <file>...    upload files as they are
   waddle dict get [--ip IP]            put the English dictionary on the reader
+  waddle mesh new-unit [gateway]       put WaddleOS on a new mesh unit (or the gateway) over USB
   waddle mesh setup                    set up the mesh units (T5) as one group
+  waddle mesh check                    ask every mesh unit how it is
+  waddle mesh server                   update the Pi server over SSH
 
 The reader must be on File Transfer -> Join a Network. Its IP is $WADDLE_IP
 (default 192.168.50.185). Uses only the Python standard library (and bash for

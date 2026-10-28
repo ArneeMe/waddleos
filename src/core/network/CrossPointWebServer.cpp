@@ -54,6 +54,7 @@
 #include "core/util/TaskWatchdog.h"
 #include "core/Product.h"
 #include "FirmwareBoardTag.h"
+#include "UpdateTrial.h"
 #include "core/waddle/WaddleFirmwareApi.h"
 
 static void sendStaticContent(WebServer* server, const char* data, size_t len, const char* etag,
@@ -519,6 +520,7 @@ void CrossPointWebServer::handleStatus() const {
   doc["device"] = BoardConfig::ACTIVE.name;
   // Which firmware file fits (waddle update).
   doc["board"] = std::string(board_tag::boardName(), board_tag::boardNameLen());
+  doc["rolledBack"] = update_trial::rolledBack();  // the last update crashed and was undone
 
   String response;
   serializeJson(doc, response);

@@ -27,9 +27,11 @@ together (firmware, arnee.me, the `waddle` command) and
 - Write short, factual PR descriptions with a "test on the reader" list.
 - Compile before pushing: in a cloud session run `bash scripts/cloud-setup.sh`
   once (a few minutes), then `pio run -e x4pro-waddle -e t5s3-waddle -e heltec-gateway`
-  and, for mesh changes, `bash test/mesh/run.sh` and the server tests. The PR build in GitHub
-  Actions (`.github/workflows/waddle-build.yml`) checks again; its compiler
-  errors show up as annotations on the `build` check run.
+  and, for mesh changes, `bash test/mesh/run.sh`, `bash test/sim/run.sh` and the
+  server tests. The PR build in GitHub Actions (`.github/workflows/waddle-build.yml`)
+  checks again, one job per device; compiler errors show up as annotations on
+  the `build (<device>)` check runs. Each PR's firmware is published as a
+  `pr-<n>` pre-release that Arne installs with `waddle update --pr <n>`.
 - Only Arne can flash and look at the devices. Every firmware change adds its
   "how to check it on the device" items to `docs/waddle/TESTING.md` in the same PR.
 - Show a preview (image mockup) before changing anything visual.
@@ -56,6 +58,8 @@ together (firmware, arnee.me, the `waddle` command) and
 - `waddle-update` (`waddle update`): download the latest build and install it over Wi-Fi.
 - `waddlebook` (`waddle book`): get an EPUB from a link or file, clean it, send it to the reader.
 - `addwaddle` (`waddle add`): upload any file as it is.
-- `waddle-mesh` (`waddle mesh setup`): set up the mesh units and the Pi server as one group.
+- `waddle-mesh` (`waddle mesh new-unit`, `setup`, `check`): flash a new mesh unit or
+  the gateway over USB, set up the units and the Pi server as one group, and
+  check that every unit is well.
 
 All use only the Python standard library or plain bash and work on Linux and macOS.

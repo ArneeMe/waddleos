@@ -62,15 +62,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # file: the app, for updates. full: the whole flash, for a new device
+          # (`waddle mesh new-unit`); the reader came with its own bootloader.
           - board: x4pro
             env: x4pro-waddle
             file: waddleos-x4pro.bin
           - board: t5s3
             env: t5s3-waddle
             file: waddleos-t5.bin
+            full: waddleos-t5-full.bin
           - board: gateway
             env: heltec-gateway
             file: waddle-gateway.bin
+            full: waddle-gateway-full.bin
     name: build (${{ matrix.board }})
     steps:
       - uses: actions/checkout@v6
@@ -159,6 +163,7 @@ jobs:
           set -o pipefail
           pio run -e "${{ matrix.env }}" -j"$(nproc)" 2>&1 | tee build.log
           cp ".pio/build/${{ matrix.env }}/firmware.bin" "${{ matrix.file }}"
+          if [ -n "${{ matrix.full }}" ]; then cp ".pio/build/${{ matrix.env }}/firmware.factory.bin" "${{ matrix.full }}"; fi
 
       # Compiler errors as annotations, readable through the checks API.
       - name: Report build errors
@@ -173,6 +178,7 @@ jobs:
           name: firmware-${{ matrix.board }}
           path: |
             ${{ matrix.file }}
+            ${{ matrix.full }}
             version-${{ matrix.board }}.json
           retention-days: 14
 
