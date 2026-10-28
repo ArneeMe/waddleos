@@ -43,7 +43,7 @@ What is done and what is next. How the system fits together:
 ## Mesh unit
 
 WaddleOS grows a second device: a LilyGO T5 E-Paper S3 Pro (868 MHz LoRa,
-GPS) as an off-grid messenger for up to four people. Full spec: "Off-Grid Mesh
+GPS) as an off-grid messenger for a network of up to 32 people. Full spec: "Off-Grid Mesh
 Messenger – Software Spec" (Claude Docs,
 https://claude.ai/artifact/VugwyP8RmFDMwqKaB2qPCX).
 
@@ -61,7 +61,9 @@ Decided:
   back to the one before by itself.
 - Mostly a backup for when other ways to talk are gone: "Hjemme" it checks for
   messages once a day; "På tur" every hour, with GPS and position sharing.
-- Up to four people (Arne and three), plus small groups of three.
+- A network of up to 32 people, which Arne lets in (invite link by Signal,
+  approval on his computer); groups made on the units. People in a group can
+  pose as each other: accepted, there is no room for a signature per message.
 
 Phases:
 
@@ -77,13 +79,19 @@ that is "Arne" on the mesh too, through the Pi: the phone talks to
 `POST /api/packets` over the internet exactly as a unit does over Wi-Fi, and the
 gateway sends what it writes out over LoRa. The Pi still reads nothing; the app
 does the encryption. What it needs:
-- The phone gets a copy of its unit's keys at setup (`waddle mesh setup`, over
-  the home Wi-Fi), so DMs and group messages for Arne open on both.
+- The phone joins like a unit (`waddle mesh join`), but as a second device of
+  an existing member: it gets a copy of that unit's keys over the home Wi-Fi, so
+  DMs and group messages for Arne open on both.
 - Its own counter range (top bit set), so the unit and the phone never reuse a
   message id; the "previous message" chain is kept per device.
 - Its own server token, so a lost phone can be shut out on the Pi alone.
 - The app: write and read the conversations, sync on open and now and then.
   The server needs almost nothing new.
+
+Before calling it done: **a screen-by-screen look** (the units, the reader and
+the Pi's status page) by Arne, to check that everything reads well for a person,
+once the technical work has settled. The screen simulator
+(`bash test/screens/run.sh`) gives the T5 screens without a device.
 
 Later, maybe: a small piezo buzzer on the T5's free QWIIC port for a sound on
 SOS or a new message (the board has no speaker or vibration motor).

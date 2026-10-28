@@ -2,7 +2,9 @@
 
 #include <GfxRenderer.h>
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include "apps/messages/MeshUi.h"
 #include "core/CrossPointSettings.h"
@@ -101,9 +103,22 @@ void MapActivity::render(RenderLock&&) {
   renderer.drawText(SMALL_FONT_ID, cx + r - renderer.getTextWidth(SMALL_FONT_ID, scaleText.c_str()), cy + r - 4,
                     scaleText.c_str());
 
-  int listY = cy + r + 30;
+  // Everyone on the compass; in the list the nearest first, as many as fit.
+  std::vector<uint8_t> people;
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
-    if (n == group.me || !group.member(n)->present) continue;
+    if (n != group.me && group.member(n)->present) people.push_back(n);
+  }
+  auto distance = [&](const uint8_t n) {
+    const auto& st = node().member(n);
+    return st.hasPosition && haveMine ? meshui::distanceM(mine, st.position) : 1e12;
+  };
+  std::stable_sort(people.begin(), people.end(), [&](const uint8_t a, const uint8_t b) {
+    return node().member(a).sos != node().member(b).sos ? node().member(a).sos : distance(a) < distance(b);
+  });
+  int listY = cy + r + 30;
+  const int listEnd = height - 90 - 40;
+  size_t shown = 0;
+  for (const uint8_t n : people) {
     const auto& st = node().member(n);
     std::string line;
     if (!st.hasPosition) {
@@ -121,9 +136,16 @@ void MapActivity::render(RenderLock&&) {
       renderer.drawText(UI_12_FONT_ID, px + 14, py - 14, group.name(n), true, EpdFontFamily::BOLD);
     }
     if (st.sos) line = "SOS! " + line;
+    if (listY + 72 + 30 > listEnd) continue;  // still on the compass, not in the list
     renderer.drawText(UI_12_FONT_ID, SIDE, listY, group.name(n), true, EpdFontFamily::BOLD);
     renderer.drawText(UI_10_FONT_ID, SIDE, listY + 32, line.c_str());
     listY += 72;
+    shown++;
+  }
+  if (shown < people.size()) {
+    const std::string more = "og " + std::to_string(people.size() - shown) + " til";
+    renderer.drawText(UI_10_FONT_ID, SIDE, listY - 4, more.c_str());
+    listY += 26;
   }
 
   std::string self = haveMine ? "Du: " + meshui::coordinatesText(mine) : std::string("Du: ingen posisjon");

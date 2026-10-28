@@ -46,11 +46,12 @@ class NewGroupActivity final : public Activity {
     int x = 0, y = 0, w = 0, h = 0;
     bool contains(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; }
   };
-  std::vector<uint8_t> members;  // the others
-  std::vector<Box> rows;
-  Box doneBox;
-  uint8_t chosen = 0;  // member bits
-  int focus = 0;       // a member row, or members.size() for the button
+  std::vector<uint8_t> members;  // the others, by name
+  std::vector<Box> rows;         // per member; empty when not on screen
+  Box doneBox, upBox, downBox;
+  mesh::Members chosen = 0;
+  int focus = 0;  // a member row, or members.size() for the button
+  int first = 0;  // first member shown, when they do not all fit
   const char* problem = nullptr;
 
   void toggle(int index);
@@ -74,7 +75,8 @@ class GroupInfoActivity final : public Activity {
   static constexpr uint8_t LEAVE = 0xFF;
   uint8_t conversation;
   std::vector<std::pair<uint8_t, Box>> removeBoxes;  // member, its "Fjern" button
-  Box leaveBox;
+  Box leaveBox, moreBox;
+  int page = 0;  // of the member list, in a large group
   uint8_t armed = 0;  // the button tapped once (member, or LEAVE), waiting for "Sikker?"
   uint32_t shownChanges = 0;
 };

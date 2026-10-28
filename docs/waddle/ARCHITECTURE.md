@@ -179,16 +179,23 @@ Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOC
   a key per group, with a key number in the header).
   The server stores packets as received and has no keys. Units talk only to each
   other, the Pi and arnee.me (updates).
-- **Keys:** each unit makes its own on first start (NVS flash). `waddle mesh setup`
-  (`tools/waddle-mesh`) collects public keys and sender keys over the file
-  transfer web server (`/api/mesh/identity`, `/api/mesh/group`), gives every
-  unit the group (kept in NVS flash, not on the SD card), and gives the Pi the
-  group id, names and unit token hashes over SSH. Member numbers stay the same
-  between setups. `waddle mesh reset-keys` makes the others take new keys after
-  a unit is lost.
+- **The network** (protocol/PROTOCOL.md, "The roster", "Joining"): up to 32
+  members and one admin (Arne), whose keys and the network key live on his
+  computer (`~/.config/waddle/admin.json`). Who is in is the *roster*, signed by
+  the admin; units and the Pi trust only that signature. Joining: `waddle mesh
+  invite <name>` makes a link sent by Signal; the newcomer runs `waddle mesh
+  join <link>` with their unit on File Transfer; Arne runs `waddle mesh approve`.
+  The unit gets a sealed welcome (its number, the network key, the server, the
+  roster). `waddle mesh remove <name>` takes someone out.
+- **Keys on the unit:** its own secret and sender key in NVS flash; the network,
+  the roster, groups and the others' sender keys on the SD card in files sealed
+  with a key derived from that secret (`MeshConfig.cpp`, `saveSealed`). Sender
+  keys travel to every member as DMs, sent again until confirmed. When someone
+  leaves the roster, every unit makes a new sender key.
 - **Groups** (`services/mesh/MeshGroups.cpp`): made on a unit; the key goes to
   each member in an invitation DM. Leaving or "Fjern" makes the next key number
-  for those left; every unit keeps the old ones for the history.
+  for those left (only the lowest member makes it); every unit keeps the old
+  ones for the history.
 - **Node** (`services/mesh/MeshNode.cpp`): one loop for radio and Wi-Fi alike:
   decrypt, store (`/.mesh/`), ACK (delivered, read), relay with a random delay,
   retry after 30 s, 2 min, 8 min, then try the server over Wi-Fi. SYNC_REQ on

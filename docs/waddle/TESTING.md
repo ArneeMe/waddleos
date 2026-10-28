@@ -98,8 +98,8 @@ Groups made on the unit (PR #35):
       the others keep writing and reading, Per still sees the old messages but
       no new ones.
 - [ ] "Fjern" on a member (twice): the same, without their unit doing anything.
-- [ ] After updating from an older build: the log says "Moved the group from the
-      SD card to flash" once, and /.mesh/group.json is gone from the SD card.
+- [ ] After updating from an older build: the log says "Removed the old group
+      setup", and the unit asks to be joined (`waddle mesh join`).
 - [ ] File Transfer on a T5 shows "Oppsettkode: 123 456" under the address, and
       `waddle mesh setup` asks you to compare it before going on.
 - [ ] Two "Fjern" at once from two units (different people): both are out, and
@@ -126,6 +126,13 @@ Joining (protocol 3: up to 32 members):
 - [ ] The same link a second time: the server says it is used; approve forgets it.
 - [ ] The status page shows Ola by name and "Medlemsliste versjon N".
 - [ ] `waddle mesh check` on Ola's computer asks his unit how it is.
+- [ ] Messages to "Alle" from Ola open on every unit (his sender key reached them;
+      a message that came first opens when the key comes).
+- [ ] With 6+ members: Hjem shows "Alle" and the three most recent contacts;
+      Meldinger lists everyone, newest first; Ny gruppe scrolls ("Vis flere").
+- [ ] Kart lists the nearest first and "og N til" when they do not fit.
+- [ ] Taking out a SD card and reading it on a computer: /.mesh/*.bin are
+      unreadable (sealed), and no group.json.
 
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
