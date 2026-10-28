@@ -7,6 +7,8 @@
   waddle mesh setup      ask each unit for its keys, give every unit the group,
                          and tell the Pi server about the units
   waddle mesh check      ask every unit how it is (radio, GPS, battery, version)
+  waddle mesh reset-keys after a unit is lost: the others make new keys and are
+                         set up again without it
   waddle mesh server [--pr N]
                          update the Pi server over SSH and check it came back
 
@@ -16,7 +18,6 @@ private DM key never leaves it. Uses only the Python standard library.
 """
 
 import hashlib
-import itertools
 import json
 import os
 import secrets
@@ -67,16 +68,6 @@ def ssh(host, command):
     return subprocess.run(["ssh", host, command], check=True, capture_output=True, text=True).stdout
 
 
-def small_groups(numbers):
-    """A key for every small group: some of the members, at least three.
-
-    With four units that is the four groups of three. Each unit gets only the
-    keys of the groups it is in, so the one left out cannot read them.
-    """
-    return [{"members": list(c), "key": secrets.token_hex(32)}
-            for size in range(3, len(numbers)) for c in itertools.combinations(numbers, size)]
-
-
 def setup():
     say(f"\n{B}🐧 waddle mesh setup{N}\n")
     old = {}
@@ -91,10 +82,16 @@ def setup():
         raise RuntimeError("2 to 4 units")
     say(f"\nOn every unit: {B}Meldinger{N} (or File Transfer) -> Join a Network. Each shows its address.\n")
     members = []
-    for n in range(1, count + 1):
-        prev = old.get("members", [])[n - 1] if n <= len(old.get("members", [])) else {}
-        name = ask(f"Unit {n}: name", prev.get("name", ""))
-        ip = ask(f"Unit {n}: address shown on its screen", prev.get("ip", ""))
+    # A person keeps their member number from setup to setup, even when someone
+    # before them is gone: the units' history and groups go by number.
+    previous = old.get("members", [])
+    taken = {m.get("number", i + 1) for i, m in enumerate(previous)}
+    free = [n for n in range(1, 5) if n not in taken]
+    for i in range(count):
+        prev = previous[i] if i < len(previous) else {}
+        n = prev.get("number", i + 1) if prev else free.pop(0)
+        name = ask(f"Unit {i + 1}: name", prev.get("name", ""))
+        ip = ask(f"Unit {i + 1}: address shown on its screen", prev.get("ip", ""))
         say(f"{C}▸{N} Asking {name} for its keys")
         ident = unit_get(ip, "/api/mesh/identity")
         say(f"  {G}✓{N} {name}: key {ident['publicKey'][:16]}…")
@@ -121,10 +118,8 @@ def setup():
 
     say(f"\n{C}▸{N} Giving every unit the group")
     public = [{k: m[k] for k in ("number", "name", "publicKey", "senderKey")} for m in members]
-    groups = small_groups([m["number"] for m in members])
     for m in members:
-        doc = {"group": group, "me": m["number"], "members": public,
-               "groups": [g for g in groups if m["number"] in g["members"]]}
+        doc = {"group": group, "me": m["number"], "members": public}
         if server:
             doc["server"] = {"url": server["url"], "token": server["tokens"][m["number"]], "cert": server["cert"]}
         unit_post(m["ip"], "/api/mesh/group", doc)
@@ -133,7 +128,7 @@ def setup():
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
     with open(CONFIG, "w") as f:
         json.dump({"group": group, "pi": pi, "url": server.get("url", ""),
-                   "members": [{k: m[k] for k in ("name", "ip")} for m in members]}, f, indent=2)
+                   "members": [{k: m[k] for k in ("number", "name", "ip")} for m in members]}, f, indent=2)
     say(f"\n{G}{B}🐧 Done!{N} Close File Transfer on each unit; they find each other over LoRa.\n")
     return 0
 
@@ -306,7 +301,37 @@ def server_update(args):
     return 0
 
 
+def reset_keys(args):
+    """A unit is lost: the others make new keys, then setup runs without it."""
+    if not os.path.exists(CONFIG):
+        raise RuntimeError("no setup yet")
+    with open(CONFIG) as f:
+        cfg = json.load(f)
+    say(f"\n{B}🐧 waddle mesh reset-keys{N}\n")
+    names = [m["name"] for m in cfg.get("members", [])]
+    lost = ask(f"Which unit is lost ({', '.join(names)})")
+    keep = [m for m in cfg.get("members", []) if m["name"] != lost]
+    if len(keep) == len(names):
+        raise RuntimeError(f"no unit called {lost!r}")
+    say(f"\nOn {', '.join(m['name'] for m in keep)}: File Transfer → Join a Network.")
+    say("They make new keys, so nothing the lost unit has opens new messages.")
+    if ask("Go on? (y/n)", "y").lower() != "y":
+        return 1
+    for m in keep:
+        ip = ask(f"{m['name']}: address", m["ip"])
+        unit_post(ip, "/api/mesh/reset-keys", {})
+        m["ip"] = ip
+        say(f"  {G}✓{N} {m['name']} has new keys")
+    cfg["members"] = keep
+    with open(CONFIG, "w") as f:
+        json.dump(cfg, f, indent=2)
+    say(f"\nNow the setup, with {len(keep)} units. Groups the lost unit was in get a new key by themselves.")
+    return setup()
+
+
 def main(argv):
+    if argv[:1] == ["reset-keys"]:
+        return reset_keys(argv[1:])
     if argv[:1] == ["server"]:
         return server_update(argv[1:])
     if argv[:1] == ["setup"]:

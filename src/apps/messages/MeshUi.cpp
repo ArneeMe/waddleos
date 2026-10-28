@@ -116,8 +116,10 @@ std::string coordinatesText(const mesh::Position& p) {
 std::string conversationName(const uint8_t conversation) {
   const auto& group = mesh::Node::get().group();
   if (conversation == mesh::CONV_GROUP) return "Alle";
-  if (!mesh::isSmallConversation(conversation)) return group.name(conversation);
-  const uint8_t bits = conversation - mesh::CONV_SMALL;
+  if (!mesh::isGroupConversation(conversation)) return group.name(conversation);
+  const auto& g = mesh::Node::get().groups().at(conversation - mesh::CONV_GROUPS);
+  if (g.name[0]) return g.name;
+  const uint8_t bits = g.members;
   std::vector<std::string> names;
   if (bits & mesh::memberBit(group.me)) names.push_back("Du");
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {

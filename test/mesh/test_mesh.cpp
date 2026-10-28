@@ -294,9 +294,9 @@ static void writeVectors(const char* path) {
                hex(bPublic, KEY_SIZE).c_str());
   std::fprintf(f, "  \"pairKey\": \"%s\",\n", hex(dmKey, KEY_SIZE).c_str());
 
-  uint8_t smallKey[KEY_SIZE];
-  fill(smallKey, KEY_SIZE, 3);
-  std::fprintf(f, "  \"smallGroupKey\": \"%s\",\n", hex(smallKey, KEY_SIZE).c_str());
+  uint8_t groupKey[KEY_SIZE];
+  fill(groupKey, KEY_SIZE, 3);
+  std::fprintf(f, "  \"groupKey\": \"%s\",\n", hex(groupKey, KEY_SIZE).c_str());
 
   static Sealed sealed;
   std::fprintf(f, "  \"messages\": [\n");
@@ -335,7 +335,7 @@ static void writeVectors(const char* path) {
   const Case cases[] = {{"group message", gh, senderKey, groupPlain},
                         {"direct message in 3 pieces", dh, dmKey, dmPlain},
                         {"position", ph, senderKey, posPlain},
-                        {"group message with key 2", sh, smallKey, groupPlain}};
+                        {"group message with key 2", sh, groupKey, groupPlain}};
   constexpr size_t CASES = sizeof(cases) / sizeof(cases[0]);
   for (size_t c = 0; c < CASES; c++) {
     const Case& k = cases[c];

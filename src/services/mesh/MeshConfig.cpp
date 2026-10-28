@@ -22,6 +22,14 @@ bool isZero(const uint8_t* data, const size_t len) {
 
 }  // namespace
 
+uint8_t Group::everyone() const {
+  uint8_t bits = 0;
+  for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
+    if (members[n - 1].present) bits |= memberBit(n);
+  }
+  return bits;
+}
+
 const char* Group::name(const uint8_t number) const {
   if (number == SERVER) return "Server";
   const Member* m = member(number);
@@ -56,9 +64,23 @@ bool fromHex(const char* hex, uint8_t* out, const size_t len) {
   return true;
 }
 
+namespace {
+Identity id;
+bool loaded = false;
+}  // namespace
+
+void resetIdentity() {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.remove("secret");
+  prefs.remove("sender");
+  prefs.remove("group");
+  prefs.end();
+  loaded = false;
+  identity();
+}
+
 const Identity& identity() {
-  static Identity id;
-  static bool loaded = false;
   if (loaded) return id;
   Preferences prefs;
   prefs.begin(NVS_NAMESPACE, false);
@@ -123,13 +145,6 @@ const char* parseGroup(const JsonDocument& doc, Group& group) {
   for (auto& m : group.members) {
     if (m.present && &m != self) pairKey(mine.secret, mine.publicKey, m.publicKey, m.pairKey);
   }
-  for (JsonObjectConst g : doc["groups"].as<JsonArrayConst>()) {
-    uint8_t bits = 0;
-    for (JsonVariantConst n : g["members"].as<JsonArrayConst>()) bits |= memberBit(n.as<uint8_t>());
-    if (!isSmallGroup(SMALL_GROUP | bits) || !(bits & memberBit(group.me))) return "en gruppe er feil";
-    if (!fromHex(g["key"] | "", group.smallGroupKeys[bits], KEY_SIZE)) return "gruppenøkkel er feil";
-    group.smallGroups |= uint16_t(1u << bits);
-  }
   group.serverUrl = doc["server"]["url"] | "";
   group.serverToken = doc["server"]["token"] | "";
   group.serverCert = doc["server"]["cert"] | "";
@@ -139,17 +154,46 @@ const char* parseGroup(const JsonDocument& doc, Group& group) {
 
 }  // namespace
 
+namespace {
+
+bool saveToFlash(const char* json, const size_t len) {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  const bool ok = prefs.putBytes("group", json, len) == len;
+  prefs.end();
+  return ok;
+}
+
+std::string readFromFlash() {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, true);
+  std::string json(prefs.getBytesLength("group"), '\0');
+  if (!json.empty()) prefs.getBytes("group", &json[0], json.size());
+  prefs.end();
+  return json;
+}
+
+}  // namespace
+
 bool loadGroup(Group& group) {
   group = Group{};
-  if (!Storage.exists(GROUP_PATH)) return false;
-  const String text = Storage.readFile(GROUP_PATH);
+  // Set up before keys moved to flash: move the file off the SD card.
+  if (Storage.exists(OLD_GROUP_PATH)) {
+    const String old = Storage.readFile(OLD_GROUP_PATH);
+    if (saveToFlash(old.c_str(), old.length())) {
+      Storage.remove(OLD_GROUP_PATH);
+      LOG_INF("MESH", "Moved the group from the SD card to flash");
+    }
+  }
+  const std::string text = readFromFlash();
+  if (text.empty()) return false;
   JsonDocument doc;
-  if (deserializeJson(doc, text.c_str(), text.length())) {
-    LOG_ERR("MESH", "group.json is not valid JSON");
+  if (deserializeJson(doc, text.data(), text.size())) {
+    LOG_ERR("MESH", "group is not valid JSON");
     return false;
   }
   if (const char* err = parseGroup(doc, group)) {
-    LOG_ERR("MESH", "group.json: %s", err);
+    LOG_ERR("MESH", "group: %s", err);
     group = Group{};
     return false;
   }
@@ -161,8 +205,7 @@ const char* saveGroupJson(const char* json, const size_t len) {
   if (deserializeJson(doc, json, len)) return "ikke gyldig JSON";
   Group check;
   if (const char* err = parseGroup(doc, check)) return err;
-  Storage.mkdir("/.mesh");
-  if (!Storage.writeFile(GROUP_PATH, String(json, len))) return "kunne ikke skrive til SD-kortet";
+  if (!saveToFlash(json, len)) return "kunne ikke lagre i flash";
   return nullptr;
 }
 

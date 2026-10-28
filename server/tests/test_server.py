@@ -128,12 +128,12 @@ class CryptoCrossCheck(unittest.TestCase):
         self.assertEqual((h.recipient, h.key), (P.GROUP_FLAG | 0x10, 2))
         self.assertTrue(P.is_group(h.recipient))
         self.assertTrue(all(P.can_read(m, 1, h.recipient) for m in P.MEMBERS))
-        self.assertEqual(self.open(pkts, bytes.fromhex(V["smallGroupKey"])), plain)
+        self.assertEqual(self.open(pkts, bytes.fromhex(V["groupKey"])), plain)
         # The key number is sealed: a changed one does not open.
         bad = bytearray(pkts[0])
         bad[11] = 3
         with self.assertRaises(Exception):
-            self.open([bytes(bad)], bytes.fromhex(V["smallGroupKey"]))
+            self.open([bytes(bad)], bytes.fromhex(V["groupKey"]))
 
     def test_tampering_is_caught(self):
         pkts, _ = packets("group message")

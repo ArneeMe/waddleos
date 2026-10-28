@@ -46,6 +46,15 @@ void registerRoutes(WebServer& server) {
     server.send(200, "application/json", out);
   });
 
+  // `waddle mesh reset-keys`: new keys, no group. Used after a unit is lost,
+  // then everyone is set up again without it.
+  server.on("/api/mesh/reset-keys", HTTP_POST, [&server] {
+    resetIdentity();
+    groupChanged = true;
+    LOG_INF("MESH", "Made new keys; waiting for setup");
+    server.send(200, "text/plain", "OK");
+  });
+
   server.on("/api/mesh/group", HTTP_POST, [&server] {
     const String& body = server.arg("plain");
     if (body.length() == 0 || body.length() > MAX_GROUP_JSON) {

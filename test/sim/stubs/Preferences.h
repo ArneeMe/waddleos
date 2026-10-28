@@ -28,6 +28,15 @@ class Preferences {
     f.write(static_cast<const char*>(buf), std::streamsize(len));
     return len;
   }
+  size_t getBytesLength(const char* key) {
+    std::error_code ec;
+    const auto n = std::filesystem::file_size(dir_ + "/" + key, ec);
+    return ec ? 0 : size_t(n);
+  }
+  bool remove(const char* key) {
+    std::error_code ec;
+    return std::filesystem::remove(dir_ + "/" + key, ec);
+  }
   uint32_t getUInt(const char* key, uint32_t def) {
     uint32_t v = def;
     return getBytes(key, &v, sizeof(v)) == sizeof(v) ? v : def;

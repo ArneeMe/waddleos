@@ -8,10 +8,12 @@
 //                                 delivery states, as appended records
 //   /.mesh/read.txt               how many messages of each conversation were seen
 //
-// A conversation is the whole group (0), a DM with member 1-4, or a small
-// group (CONV_SMALL + its member bits).
+// A conversation is everyone (0), a DM with member 1-4, or a group made on a
+// unit (CONV_GROUPS + its slot in ChatGroups, MeshGroups.h).
 
 #include <MeshPacket.h>
+
+#include "MeshGroups.h"
 
 #include <cstdint>
 #include <string>
@@ -20,24 +22,13 @@
 namespace mesh {
 
 constexpr uint8_t CONV_GROUP = 0;
-constexpr uint8_t CONV_SMALL = 1 + MAX_MEMBERS;
-constexpr int CONVERSATIONS = CONV_SMALL + 16;
+constexpr uint8_t CONV_GROUPS = 1 + MAX_MEMBERS;
+constexpr int CONVERSATIONS = CONV_GROUPS + MAX_GROUPS;
 
-// The conversation a packet from sender to recipient belongs to, seen by me.
-inline uint8_t conversationOf(uint8_t me, uint8_t sender, uint8_t recipient) {
-  if (recipient == GROUP) return CONV_GROUP;
-  if (isSmallGroup(recipient)) return uint8_t(CONV_SMALL + (recipient & 0x0F));
-  return sender == me ? recipient : sender;
+inline bool isGroupConversation(uint8_t conversation) {
+  return conversation >= CONV_GROUPS && conversation < CONVERSATIONS;
 }
-// The recipient byte for a conversation.
-inline uint8_t recipientOf(uint8_t conversation) {
-  if (conversation == CONV_GROUP) return GROUP;
-  if (conversation >= CONV_SMALL) return uint8_t(SMALL_GROUP | (conversation - CONV_SMALL));
-  return conversation;
-}
-inline bool isSmallConversation(uint8_t conversation) {
-  return conversation >= CONV_SMALL && conversation < CONVERSATIONS;
-}
+inline bool isDmConversation(uint8_t conversation) { return conversation >= 1 && conversation <= MAX_MEMBERS; }
 
 enum class Delivery : uint8_t { Sending = 0, Sent = 1, Stored = 2, Delivered = 3, Read = 4 };
 
@@ -83,6 +74,10 @@ class MessageStore {
   // The newest `limit` messages of a conversation, oldest first, with states applied.
   std::vector<ChatMessage> load(uint8_t conversation, size_t limit) const;
   bool hasMessage(uint8_t conversation, uint8_t sender, uint32_t counter) const;
+  // A missing message arrived: the later one no longer gets the warning.
+  void clearWarning(uint8_t conversation, uint8_t sender, uint32_t counter);
+  // Empties a conversation (a group slot taken by a new group).
+  void clear(uint8_t conversation);
   // The hash and counter of sender's newest message in the conversation (for
   // the chain). An older message arriving later fills a gap and is not checked.
   void lastHash(uint8_t conversation, uint8_t sender, uint8_t out[4]) const;
