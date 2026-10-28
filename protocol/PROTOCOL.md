@@ -154,7 +154,7 @@ check until that member's ACK comes, also after a restart.
 | Text | Meaning |
 |---|---|
 | `0x00 'S'` key number, key (32) | my sender key |
-| `0x00 'G'` group id (u16), key number, member bits (u32; bit 31 = a new group), key (32), name | a group's key |
+| `0x00 'G'` group id (u16), key number, flags (bit 0 = a new group), member bits (u32), key (32), name | a group's key |
 | `0x00 'L'` group id (u16) | I leave the group |
 | `0x00 'R'` group id (u16), member | please take this member out (to the lowest remaining member) |
 
@@ -252,7 +252,7 @@ accept step.
 - **Id:** creator's member number × 256 + the creator's own count (u16), so two
   units never pick the same id. Recipient byte `0xFE`, id in header bytes 11–12.
 - **Key:** the creator makes 32 random bytes, key number 1, and sends it to each
-  member in a `'G'` DM (bit 31 of the member bits marks a new group).
+  member in a `'G'` DM (flag bit 0 marks a new group: start afresh).
 - **Who may change a group:** only the remaining member with the lowest number
   makes a new key, so two never do at once. An invitation for a group a unit
   already has counts only when it comes from a member of that group and carries

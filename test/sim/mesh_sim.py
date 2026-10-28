@@ -7,7 +7,10 @@ air between them: who hears whom is a table the tests change as they go.
 Run: bash test/sim/run.sh   (builds sim_node, then runs these tests)
 """
 
+import base64
 import email.utils
+import importlib.machinery
+import importlib.util
 import json
 import os
 import shutil
@@ -24,6 +27,11 @@ from waddlemesh.core import Server  # noqa: E402
 from waddlemesh.store import Store  # noqa: E402
 
 SIM_NODE = os.environ.get("SIM_NODE", os.path.join(ROOT, "build", "sim", "sim_node"))
+
+# The setup tool's own X25519, for the admin's side of joining.
+_loader = importlib.machinery.SourceFileLoader("waddle_mesh_tool", os.path.join(ROOT, "tools", "waddle-mesh"))
+tool = importlib.util.module_from_spec(importlib.util.spec_from_loader("waddle_mesh_tool", _loader))
+_loader.exec_module(tool)
 GROUP = 0x42
 GATEWAY = "G"
 STEP_MS = 100
@@ -98,21 +106,66 @@ class World:
                 world.air.append((GATEWAY, raw))
 
         self.server.radio = Radio()
+        self.server_wifi = server_wifi
+        # The admin (protocol/PROTOCOL.md, "Joining"): keys kept here, as on Arne's computer.
+        self.admin_seed = os.urandom(32)
+        self.admin_box_secret = os.urandom(32)
+        self.admin_box = tool.x25519_public(self.admin_box_secret)
+        self.network_key = os.urandom(32)
+        self.roster_version = 0
+        self.publics = {}  # member -> X25519 public hex
         self.units = {}
         for n, name in enumerate(names, 1):
             self.units[n] = Unit(self, n, name)
-        members = []
-        for n, u in self.units.items():
-            pub, sender = u.cmd("identity")[0].split()[1:]
-            members.append({"number": n, "name": u.name, "publicKey": pub, "senderKey": sender})
-        for n, u in self.units.items():
-            doc = {"group": GROUP, "me": n, "members": members}
-            if server_wifi:
-                doc["server"] = {"url": "https://pi.example:8443", "token": "t%d" % n,
+        self.admin_sign = self.units[1].cmd("admin-sign " + self.admin_seed.hex())[0].split()[1]
+        for n in self.units:
+            self.join(n)
+
+    # --- The admin's side --------------------------------------------------------
+
+    def invite(self):
+        password = os.urandom(16)
+        raw = bytes([GROUP]) + os.urandom(8) + password + self.admin_box + bytes(32) + b"https://pi.example:8443"
+        return "waddle://join/" + base64.urlsafe_b64encode(raw).decode().rstrip("="), password
+
+    def signed_roster(self):
+        """A roster of every member that has joined (the admin signs a new version)."""
+        self.roster_version += 1
+        items = " ".join("%d:%s:%s" % (n, self.units[n].name, pub) for n, pub in sorted(self.publics.items()))
+        out = self.units[min(self.units)].cmd("admin-roster %s %d %d %s" % (self.admin_seed.hex(), GROUP,
+                                                                              self.roster_version, items))
+        return out[0].split()[1]
+
+    def join(self, n):
+        """Unit n joins as member n: invitation, request, roster, welcome."""
+        u = self.units[n]
+        link, password = self.invite()
+        reply = u.cmd("join %s %s" % (link, u.name))[0].split()
+        assert reply[0] == "join", reply
+        self.publics[n] = reply[1]
+        roster = self.signed_roster()
+        welcome = {"network": GROUP, "me": n, "name": u.name, "networkKey": self.network_key.hex(),
+                   "adminSign": self.admin_sign, "adminBox": self.admin_box.hex(), "counterFloor": 0,
+                   "roster": roster}
+        if self.server_wifi:
+            welcome["server"] = {"url": "https://pi.example:8443", "token": "t%d" % n,
                                  "cert": "-----BEGIN CERTIFICATE-----"}
-            os.makedirs(os.path.join(u.dir, ".mesh"), exist_ok=True)
-            with open(os.path.join(u.dir, ".mesh", "group.json"), "w") as f:
-                json.dump(doc, f)
+        box = u.cmd("admin-welcome %s %s %s %s" % (self.admin_box_secret.hex(), password.hex(), reply[1],
+                                                    json.dumps(welcome).encode().hex()))[0].split()[1]
+        assert u.cmd("welcome " + box) == ["joined"]
+        self.broadcast_roster(roster)
+
+    def broadcast_roster(self, roster):
+        """The server sends a new roster out over LoRa (here: straight into the air)."""
+        for line in self.units[min(self.units)].cmd("admin-packets %d %s %d %s" % (
+                GROUP, self.network_key.hex(), self.roster_version, roster)):
+            self.air.append((GATEWAY, bytes.fromhex(line.split()[1])))
+        self.all_hear_gateway = True
+
+    def remove(self, n):
+        """The admin takes member n out of the roster."""
+        del self.publics[n]
+        self.broadcast_roster(self.signed_roster())
 
     def close(self):
         for u in self.units.values():
@@ -153,7 +206,10 @@ class World:
         air, self.air = self.air, []
         for sender, raw in air:
             for n, u in self.units.items():
-                if n != sender and u.alive and self.hears(sender, n):
+                # The roster from the admin reaches every unit (in the field: the
+                # server sends it at each unit's next sync).
+                roster = sender == GATEWAY and packet_type(raw) == P.ROSTER
+                if n != sender and u.alive and (self.hears(sender, n) or roster):
                     if not (self.drop and self.drop(raw, sender, n)):
                         u.cmd("rx " + raw.hex())
             if sender != GATEWAY and self.hears(sender, GATEWAY):
@@ -470,7 +526,7 @@ class MeshTests(unittest.TestCase):
         w = self.w
         w.link(1, 2)  # only Arne and Kari: with Ola near, his relay of the answer would get through
         w.begin()
-        w.run(5)
+        w.run(20)  # sender keys swapped (their answers are ACKs too)
         lost = []
 
         def drop(raw, sender, receiver):
@@ -548,7 +604,7 @@ class MeshTests(unittest.TestCase):
             self.assertEqual(w.units[n].cmd("takesos"), ["newsos 1"])
         arne = w.units[1].state()
         self.assertEqual(arne["sosReceivedBy"] & 0b110, 0b110)
-        self.assertTrue(arne["sosReceivedBy"] & 0x80)  # the server
+        self.assertTrue(arne["sosOnServer"])
         w.units[2].cmd("seen 1")
         w.run(5)
         self.assertEqual(w.units[1].state()["sosSeenBy"], 0b010)

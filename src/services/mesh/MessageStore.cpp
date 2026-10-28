@@ -107,7 +107,7 @@ bool readRecord(HalFile& f, Record& r) {
 }
 
 void applyState(ChatMessage& m, const Delivery state, const uint8_t by) {
-  const uint8_t bit = isMember(by) ? uint8_t(1u << (by - 1)) : 0;
+  const Members bit = memberBit(by);
   switch (state) {
     case Delivery::Sent:
       m.sent = true;
@@ -141,6 +141,7 @@ void messageHash(const ChatMessage& m, uint8_t out[4]) {
 
 void MessageStore::begin(const uint8_t me) {
   me_ = me;
+  chain_.clear();
   Storage.mkdir("/.mesh/packets");
   Storage.mkdir("/.mesh/chat");
   for (uint8_t s = 1; s <= MAX_MEMBERS; s++) {
@@ -320,27 +321,32 @@ void MessageStore::clear(const uint8_t conversation) {
   Storage.remove(chatPath(conversation).c_str());
   summaries_[conversation] = ConversationSummary{};
   seen_[conversation] = 0;
-  memset(chain_[conversation], 0, sizeof(chain_[conversation]));
-  memset(chainCounter_[conversation], 0, sizeof(chainCounter_[conversation]));
+  for (auto it = chain_.begin(); it != chain_.end();) {
+    it = (it->first >> 8) == conversation ? chain_.erase(it) : std::next(it);
+  }
   saveSeen();
 }
 
 void MessageStore::lastHash(const uint8_t conversation, const uint8_t sender, uint8_t out[4]) const {
-  if (conversation >= CONVERSATIONS || !isMember(sender)) {
+  const auto it = chain_.find(uint16_t(conversation << 8 | sender));
+  if (it == chain_.end()) {
     memset(out, 0, 4);
     return;
   }
-  memcpy(out, chain_[conversation][sender - 1], 4);
+  memcpy(out, it->second.hash, 4);
 }
 
 void MessageStore::updateChain(const uint8_t conversation, const ChatMessage& m) {
-  if (!isMember(m.sender) || m.counter < chainCounter_[conversation][m.sender - 1]) return;
-  chainCounter_[conversation][m.sender - 1] = m.counter;
-  messageHash(m, chain_[conversation][m.sender - 1]);
+  if (!isMember(m.sender) || conversation >= CONVERSATIONS) return;
+  ChainLink& link = chain_[uint16_t(conversation << 8 | m.sender)];
+  if (m.counter < link.counter) return;
+  link.counter = m.counter;
+  messageHash(m, link.hash);
 }
 
 uint32_t MessageStore::lastChainCounter(const uint8_t conversation, const uint8_t sender) const {
-  return conversation < CONVERSATIONS && isMember(sender) ? chainCounter_[conversation][sender - 1] : 0;
+  const auto it = chain_.find(uint16_t(conversation << 8 | sender));
+  return it == chain_.end() ? 0 : it->second.counter;
 }
 
 uint32_t MessageStore::totalUnread() const {

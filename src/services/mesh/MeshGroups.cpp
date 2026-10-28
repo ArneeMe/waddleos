@@ -3,24 +3,81 @@
 #include <Logging.h>
 #include <Preferences.h>
 
-#include <cstdio>
 #include <cstring>
-#include <string>
+#include <vector>
+
+#include "MeshConfig.h"
 
 namespace mesh {
 
 namespace {
 
-constexpr const char* NVS_NAMESPACE = "meshgroups";
-constexpr uint8_t RECORD_VERSION = 2;
+constexpr const char* GROUPS_PATH = "/.mesh/groups.bin";
+constexpr const char* SENDERS_PATH = "/.mesh/senders.bin";
+constexpr uint8_t RECORD_VERSION = 3;
 
-std::string slotKey(const int slot) {
-  char k[8];
-  snprintf(k, sizeof(k), "g%d", slot);
-  return k;
+template <typename T>
+bool saveRecord(const char* path, const T& data) {
+  std::vector<uint8_t> bytes(1 + sizeof(T));
+  bytes[0] = RECORD_VERSION;
+  memcpy(bytes.data() + 1, &data, sizeof(T));
+  return saveSealed(path, bytes);
+}
+
+template <typename T>
+bool loadRecord(const char* path, T& data) {
+  std::vector<uint8_t> bytes;
+  if (!loadSealed(path, bytes) || bytes.size() != 1 + sizeof(T) || bytes[0] != RECORD_VERSION) return false;
+  memcpy(&data, bytes.data() + 1, sizeof(T));
+  return true;
 }
 
 }  // namespace
+
+// --- One group ----------------------------------------------------------------
+
+bool ChatGroup::accepts(const uint8_t member, const uint8_t number, const uint32_t counter) const {
+  if (!isMember(member)) return false;
+  if (has(member)) return true;
+  for (const auto& r : removed) {
+    if (r.member == member) return number < r.atKey && counter <= r.counter;
+  }
+  return false;
+}
+
+void ChatGroup::markRemoved(const uint8_t member, const uint8_t atKey, const uint32_t counter) {
+  Removed* slot = nullptr;
+  for (auto& r : removed) {
+    if (r.member == member || (!slot && !r.member)) slot = &r;
+  }
+  if (!slot) slot = &removed[0];  // full: the first one is forgotten
+  *slot = Removed{member, atKey, counter};
+}
+
+void ChatGroup::clearRemoved(const uint8_t member) {
+  for (auto& r : removed) {
+    if (r.member == member) r = Removed{};
+  }
+}
+
+void ChatGroup::setNotice(const uint8_t member, const char kind, const uint8_t about, const uint32_t counter) {
+  Notice* slot = nullptr;
+  for (auto& n : notices) {
+    if ((n.member == member && n.kind == uint8_t(kind)) || (!slot && !n.member)) slot = &n;
+  }
+  if (!slot) slot = &notices[0];
+  *slot = Notice{member, uint8_t(kind), about, counter};
+}
+
+bool ChatGroup::confirm(const uint8_t member, const uint32_t counter) {
+  for (auto& n : notices) {
+    if (n.member == member && n.counter == counter) {
+      n = Notice{};
+      return true;
+    }
+  }
+  return false;
+}
 
 const GroupKey* ChatGroup::newest() const {
   const GroupKey* best = nullptr;
@@ -58,39 +115,27 @@ bool ChatGroup::addKey(const uint8_t number, const uint8_t from, const uint8_t k
   return true;
 }
 
+// --- All groups -----------------------------------------------------------------
+
 void ChatGroups::load() {
-  Preferences prefs;
-  prefs.begin(NVS_NAMESPACE, true);
-  for (int i = 0; i < MAX_GROUPS; i++) {
-    groups_[i] = ChatGroup{};
-    uint8_t record[1 + sizeof(ChatGroup)];
-    if (prefs.getBytes(slotKey(i).c_str(), record, sizeof(record)) == sizeof(record) && record[0] == RECORD_VERSION) {
-      memcpy(&groups_[i], record + 1, sizeof(ChatGroup));
-    }
-  }
-  prefs.end();
+  for (auto& g : groups_) g = ChatGroup{};
+  loadRecord(GROUPS_PATH, groups_);
 }
 
-bool ChatGroups::save(const int slot) {
-  uint8_t record[1 + sizeof(ChatGroup)];
-  record[0] = RECORD_VERSION;
-  memcpy(record + 1, &groups_[slot], sizeof(ChatGroup));
-  Preferences prefs;
-  prefs.begin(NVS_NAMESPACE, false);
-  const bool ok = prefs.putBytes(slotKey(slot).c_str(), record, sizeof(record)) == sizeof(record);
-  prefs.end();
-  if (!ok) LOG_ERR("MESH", "Could not save group %02x: flash full?", groups_[slot].id);
+bool ChatGroups::save() {
+  const bool ok = saveRecord(GROUPS_PATH, groups_);
+  if (!ok) LOG_ERR("MESH", "Could not save the groups");
   return ok;
 }
 
-int ChatGroups::find(const uint8_t id) const {
+int ChatGroups::find(const uint16_t id) const {
   for (int i = 0; i < MAX_GROUPS; i++) {
     if (id && groups_[i].id == id) return i;
   }
   return -1;
 }
 
-int ChatGroups::take(const uint8_t id) {
+int ChatGroups::take(const uint16_t id) {
   if (const int existing = find(id); existing >= 0) return existing;
   int slot = -1;
   for (int i = 0; i < MAX_GROUPS && slot < 0; i++) {
@@ -105,21 +150,64 @@ int ChatGroups::take(const uint8_t id) {
   return slot;
 }
 
-uint8_t ChatGroups::nextId(const uint8_t me) {
+uint16_t ChatGroups::nextId(const uint8_t me) {
   Preferences prefs;
-  prefs.begin(NVS_NAMESPACE, false);
+  prefs.begin("meshgroups", false);
   uint32_t count = prefs.getUInt("next", 0);
-  // 16 per member: past that, the id of a group I have left is used again (its
-  // invitations say "new group", so the others start it afresh).
-  uint8_t id = 0;
-  for (int tries = 0; tries < 16 && !id; tries++, count++) {
-    const uint8_t candidate = groupId(me, uint8_t(count & 15));
+  // 256 per member; past that, the id of a group I have left is used again
+  // (its invitations say "new group", so the others start it afresh).
+  uint16_t id = 0;
+  for (int tries = 0; tries < 256 && !id; tries++, count++) {
+    const uint16_t candidate = groupId(me, uint8_t(count & 0xFF));
     const int slot = find(candidate);
     if (slot < 0 || groups_[slot].left) id = candidate;
   }
   prefs.putUInt("next", count);
   prefs.end();
   return id;
+}
+
+// --- Sender keys ----------------------------------------------------------------
+
+void SenderKeys::load() {
+  for (auto& member : keys_) {
+    for (auto& k : member) k = Kept{};
+  }
+  loadRecord(SENDERS_PATH, keys_);
+}
+
+bool SenderKeys::save() { return saveRecord(SENDERS_PATH, keys_); }
+
+const uint8_t* SenderKeys::key(const uint8_t member, const uint8_t number) const {
+  if (!isMember(member) || !number) return nullptr;
+  for (const auto& k : keys_[member - 1]) {
+    if (k.number == number) return k.key;
+  }
+  return nullptr;
+}
+
+bool SenderKeys::add(const uint8_t member, const uint8_t number, const uint8_t key[KEY_SIZE]) {
+  if (!isMember(member) || !number) return false;
+  Kept* slot = nullptr;
+  for (auto& k : keys_[member - 1]) {
+    if (k.number == number) {
+      if (memcmp(k.key, key, KEY_SIZE) == 0) return false;
+      slot = &k;  // a member who joined again under the same number
+    }
+  }
+  if (!slot) {
+    for (auto& k : keys_[member - 1]) {
+      if (!slot || k.number < slot->number) slot = &k;
+    }
+  }
+  slot->number = number;
+  memcpy(slot->key, key, KEY_SIZE);
+  return true;
+}
+
+void SenderKeys::forget(const uint8_t member) {
+  if (!isMember(member)) return;
+  for (auto& k : keys_[member - 1]) k = Kept{};
 }
 
 }  // namespace mesh
