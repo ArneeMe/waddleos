@@ -32,6 +32,12 @@ void begin() { mesh::Node::get().begin(); }
 void registerWebRoutes(WebServer& server) { mesh::web::registerRoutes(server); }
 const char* firmwareName() { return "waddleos-t5.bin"; }
 
+std::string transferNote() {
+  char code[8];
+  mesh::setupCode(mesh::identity().publicKey, code);
+  return std::string("Oppsettkode: ") + code;
+}
+
 namespace {
 // Holding the user button (beside the screen) this long starts an SOS from anywhere.
 constexpr unsigned long SOS_HOLD_MS = 3000;

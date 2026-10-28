@@ -8,7 +8,9 @@
 //   time <ms>              set the simulated millis()
 //   rx <hex>               a packet arrives over the radio
 //   loop                   run the node once; radio sends come out as "tx <hex>"
-//   send <conv> <text>     write a message (conv 0 = group, 1-4 = DM, 5+bits = small group)
+//   send <conv> <text>     write a message (conv 0 = everyone, 1-4 = DM, 5+ = a group)
+//   group <bits> <name>    make a group of me and these members; prints "conv <n>"
+//   leave <conv> | remove <conv> <member>
 //   read <conv>            the user opened the conversation
 //   sos | cancel | seen <member>
 //   wifi <0|1>             a known Wi-Fi network is (not) in range
@@ -151,6 +153,16 @@ static void dump() {
       o["warning"] = m.chainWarning;
     }
   }
+  for (int slot = 0; slot < mesh::MAX_GROUPS; slot++) {
+    const auto& g = node.groups().at(slot);
+    if (!g.id) continue;
+    JsonObject o = doc["groups"][std::to_string(mesh::CONV_GROUPS + slot)].to<JsonObject>();
+    o["id"] = g.id;
+    o["members"] = g.members;
+    o["left"] = g.left;
+    o["name"] = g.name;
+    o["key"] = g.newest() ? g.newest()->number : 0;
+  }
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
     const auto& st = node.member(n);
     JsonObject o = doc["members"][std::to_string(n)].to<JsonObject>();
@@ -223,6 +235,20 @@ int main(int argc, char** argv) {
       simFix.latE7 = int32_t(lat * 1e7);
       simFix.lonE7 = int32_t(lon * 1e7);
       simFix.time = uint32_t(time(nullptr));
+    } else if (cmd == "group") {
+      int bits = 0;
+      in >> bits >> std::ws;
+      std::string name;
+      std::getline(in, name);
+      std::cout << "conv " << int(node.createGroup(uint8_t(bits), name)) << "\n";
+    } else if (cmd == "leave") {
+      int conv = 0;
+      in >> conv;
+      node.leaveGroup(uint8_t(conv));
+    } else if (cmd == "remove") {
+      int conv = 0, member = 0;
+      in >> conv >> member;
+      node.removeFromGroup(uint8_t(conv), uint8_t(member));
     } else if (cmd == "trip") {
       int on = 0;
       in >> on;

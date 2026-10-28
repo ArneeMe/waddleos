@@ -84,9 +84,31 @@ Modus and checks (PR #33):
 Four people and groups (PR #33):
 - [ ] `waddle mesh setup` with 4 units: Hjem shows "Alle" and three contacts, each
       with "hørt … siden", battery % and (on a trip) distance.
-- [ ] Meldinger → "+ Ny gruppe", tick two people, "Skriv til dem": the chat is
-      called "Du, Kari og Per". They get it; the fourth unit does not.
-- [ ] Ticking one person opens the DM; ticking everyone opens "Alle".
+- [ ] Ticking one person in "+ Ny gruppe" opens the DM.
+
+Groups made on the unit (PR #35):
+- [ ] Meldinger → "+ Ny gruppe", tick Kari and Per, "Skriv til dem", give it a
+      name: the group shows up on Kari's and Per's units within a minute, with
+      that name. The fourth unit gets nothing it can read.
+- [ ] Per off while the group is made and written in; switch him on: the group
+      and the messages arrive.
+- [ ] Tap the group's title: the members. "Forlat gruppe" on Per (tap twice):
+      the others keep writing and reading, Per still sees the old messages but
+      no new ones.
+- [ ] "Fjern" on a member (twice): the same, without their unit doing anything.
+- [ ] After updating from an older build: the log says "Moved the group from the
+      SD card to flash" once, and /.mesh/group.json is gone from the SD card.
+- [ ] File Transfer on a T5 shows "Oppsettkode: 123 456" under the address, and
+      `waddle mesh setup` asks you to compare it before going on.
+- [ ] Two "Fjern" at once from two units (different people): both are out, and
+      neither of them can read or write in the group afterwards.
+- [ ] Make a group while one member is off, restart your own unit, switch the
+      member on: the group still reaches them (at your next check).
+- [ ] `waddle mesh reset-keys` with one unit switched off ("lost"): the others
+      get new keys and setup runs; they still talk, and keep their numbers.
+- [ ] Lose one message on purpose (switch a unit off while the other sends two,
+      then on just before the third): the "(!) en melding kan mangle" warning
+      shows briefly or not at all, and the missing message arrives.
 
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
@@ -123,3 +145,24 @@ gateway's HELLO. Install the server:
 - [ ] Two units out of range of each other but both near the gateway: a message
       goes straight through (the gateway passes it on), within seconds.
 - [ ] Next morning: a backup file in `/var/backups/waddlemesh/`.
+- [ ] Gateway: `pio device monitor -e heltec-gateway`, type `PING <group>`
+      (the "group" in `/etc/waddlemesh.json`; the gateway saves it): it
+      answers `PONG 0 2 gc1109` (or `kct8103l`).
+- [ ] Status page on a phone (home Wi-Fi): every unit by name, "Sist hørt",
+      battery, "Hjemme" or "På tur" with how often it checks; signal for a unit
+      last heard over LoRa. It reloads by itself every 30 s.
+- [ ] Switch a unit to "På tur": after its next sync the page says "På tur".
+- [ ] Start an SOS on a unit: a red "SOS fra <name>" at the top within a
+      minute; cancel it: gone within 5 minutes.
+- [ ] Standalone: stop the server (`sudo systemctl stop waddlemesh`). After
+      30 s, send a message from one unit while the other is off; turn the other
+      on: it gets the message from the gateway (the server is still off).
+- [ ] Standalone on a power bank: move the gateway to a USB power bank, send a
+      few messages and an SOS between units; the sender sees "lagret".
+- [ ] Unplug and replug the power bank: the gateway still has them (back on
+      the Pi, step below shows the count).
+- [ ] Handover: back on the Pi, start the server. Within 10 s the log says
+      "gateway handed over N packets" and the page says "leverte N pakker".
+      A unit that syncs over Wi-Fi gets the messages sent while the Pi was off.
+- [ ] The page says "Svarer ikke" for the gateway when it is plugged in but
+      silent (e.g. hold its RST button for a while).

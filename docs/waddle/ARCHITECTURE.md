@@ -175,18 +175,25 @@ Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOC
 ```
 
 - **Privacy:** messages and positions are encrypted on the unit
-  (ChaCha20-Poly1305; per-member sender keys for the group, X25519 for DMs).
+  (ChaCha20-Poly1305; per-member sender keys for everyone, X25519 for DMs, and
+  a key per group, with a key number in the header).
   The server stores packets as received and has no keys. Units talk only to each
   other, the Pi and arnee.me (updates).
 - **Keys:** each unit makes its own on first start (NVS flash). `waddle mesh setup`
   (`tools/waddle-mesh`) collects public keys and sender keys over the file
-  transfer web server (`/api/mesh/identity`, `/api/mesh/group`), writes
-  `/.mesh/group.json` to every unit, and gives the Pi the group id and unit keys
-  over SSH.
+  transfer web server (`/api/mesh/identity`, `/api/mesh/group`), gives every
+  unit the group (kept in NVS flash, not on the SD card), and gives the Pi the
+  group id, names and unit token hashes over SSH. Member numbers stay the same
+  between setups. `waddle mesh reset-keys` makes the others take new keys after
+  a unit is lost.
+- **Groups** (`services/mesh/MeshGroups.cpp`): made on a unit; the key goes to
+  each member in an invitation DM. Leaving or "Fjern" makes the next key number
+  for those left; every unit keeps the old ones for the history.
 - **Node** (`services/mesh/MeshNode.cpp`): one loop for radio and Wi-Fi alike:
   decrypt, store (`/.mesh/`), ACK (delivered, read), relay with a random delay,
   retry after 30 s, 2 min, 8 min, then try the server over Wi-Fi. SYNC_REQ on
-  start and wake; the server and other units answer with what is missing.
+  start and wake; the server and other units answer with what is missing. A gap
+  in a sender's chain is fetched on purpose (FETCH).
 - **Sleep:** the T5 light-sleeps with the radio listening (`product::sleep()` in
   `products/t5s3/Product.cpp`): packets are handled without waking the screen;
   a button or an incoming SOS wakes it.
@@ -194,6 +201,12 @@ Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOC
   backup mode) instead of switched off. Which GPS ships is not known yet.
 - **Server** (`server/`): `python3 -m waddlemesh serve`, systemd units and
   `install.sh` in `server/`. Status page from the home network only.
+- **Two modes:** *full*, the Pi on: it stores and answers, and shows a status
+  page (`https://<pi>:8443/`, Norwegian, no keys: SOS, each unit's last
+  contact, signal, battery, "Hjemme"/"På tur", the gateway); *low power*, the
+  Pi off: after 30 s without a `PING` the gateway keeps packets in flash and
+  answers syncs itself (`lib/WaddleMesh/src/GatewayStore.*`), and hands them
+  over when the Pi is back (protocol/PROTOCOL.md, "Gateway serial link").
 
 ## How a screen works
 

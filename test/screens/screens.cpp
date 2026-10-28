@@ -168,7 +168,6 @@ struct Other {
   uint32_t counter = 100;
 };
 Other others[5];
-uint8_t smallKeys[16][mesh::KEY_SIZE];
 
 mesh::Node& node() { return mesh::Node::get(); }
 
@@ -183,9 +182,13 @@ void hear(const uint8_t* raw, size_t len) { sim::rxQueue.emplace_back(raw, raw +
 void message(const uint8_t from, const uint8_t conversation, const uint32_t when, const std::string& text,
              const uint8_t hops = mesh::DEFAULT_HOPS) {
   at(when);
-  const uint8_t* key = conversation == mesh::CONV_GROUP       ? others[from].senderKey
-                       : mesh::isSmallConversation(conversation) ? smallKeys[conversation - mesh::CONV_SMALL]
-                                                                 : nullptr;
+  // A group's newest key: the same one Arne's unit made and sent to them.
+  const mesh::GroupKey* groupKey = mesh::isGroupConversation(conversation)
+                                       ? node().groups().at(conversation - mesh::CONV_GROUPS).newest()
+                                       : nullptr;
+  const uint8_t* key = conversation == mesh::CONV_GROUP ? others[from].senderKey
+                       : groupKey                       ? groupKey->key
+                                                        : nullptr;
   uint8_t pair[mesh::KEY_SIZE];
   if (!key) {
     // A DM to me: the key we share.
@@ -197,7 +200,10 @@ void message(const uint8_t from, const uint8_t conversation, const uint32_t when
   h.group = GROUP_ID;
   h.hops = hops;
   h.sender = from;
-  h.recipient = key == pair ? ARNE : mesh::recipientOf(conversation);  // a DM is to me
+  h.recipient = key == pair  ? ARNE  // a DM is to me
+                : groupKey   ? uint8_t(mesh::GROUP_FLAG | node().groups().at(conversation - mesh::CONV_GROUPS).id)
+                             : mesh::GROUP;
+  h.key = groupKey ? groupKey->number : 0;
   h.counter = ++others[from].counter;
   std::string plain(mesh::MSG_PREFIX, '\0');
   mesh::put32(reinterpret_cast<uint8_t*>(&plain[0]), when);
@@ -286,7 +292,8 @@ uint32_t write(const uint8_t conversation, const uint32_t when, const std::strin
   return node().store().load(conversation, 1).back().counter;
 }
 
-// /.mesh/group.json as `waddle mesh setup` writes it: four members, the small groups I am in.
+// The group as `waddle mesh setup` gives it: four members. (An old setup on the
+// SD card, which the unit moves into flash.)
 void writeGroup() {
   const auto& me = mesh::identity();
   std::string json = "{\"group\":" + std::to_string(GROUP_ID) + ",\"me\":1,\"members\":[";
@@ -295,20 +302,6 @@ void writeGroup() {
     const uint8_t* sender = n == ARNE ? me.senderKey : others[n].senderKey;
     json += std::string(n > 1 ? "," : "") + "{\"number\":" + std::to_string(n) + ",\"name\":\"" + NAMES[n] +
             "\",\"publicKey\":\"" + mesh::toHex(pub, 32) + "\",\"senderKey\":\"" + mesh::toHex(sender, 32) + "\"}";
-  }
-  json += "],\"groups\":[";
-  bool first = true;
-  for (uint8_t bits = 0; bits < 16; bits++) {
-    if (!(bits & 1) || mesh::memberCount(bits) < 3 || bits == 0x0F) continue;
-    json += std::string(first ? "" : ",") + "{\"members\":[";
-    bool firstMember = true;
-    for (uint8_t n = 1; n <= 4; n++) {
-      if (!(bits & mesh::memberBit(n))) continue;
-      json += std::string(firstMember ? "" : ",") + std::to_string(n);
-      firstMember = false;
-    }
-    json += "],\"key\":\"" + mesh::toHex(smallKeys[bits], 32) + "\"}";
-    first = false;
   }
   json += "],\"server\":{\"url\":\"https://pi.example:8443\",\"token\":\"t1\",\"cert\":\"-----BEGIN CERTIFICATE-----\"}}";
   std::filesystem::create_directories(sim::rootDir + "/.mesh");
@@ -323,16 +316,13 @@ void setUpGroup() {
     }
     mesh::publicKey(others[n].secret, others[n].publicKey);
   }
-  for (int g = 0; g < 16; g++) {
-    for (int i = 0; i < 32; i++) smallKeys[g][i] = uint8_t(g * 11 + i * 3 + 9);
-  }
   writeGroup();
 }
 
 // --- The day so far ------------------------------------------------------------------
 
 constexpr double HOME_LAT = 60.0000, HOME_LON = 10.6800;  // Nordmarka
-const uint8_t ARNE_KARI_OLA = uint8_t(mesh::CONV_SMALL + 0b0111);
+uint8_t ARNE_KARI_OLA = 0;  // a group Arne makes in story()
 
 void story() {
   // On a trip: GPS on, position shared every 10 minutes, checks every hour.
@@ -351,6 +341,9 @@ void story() {
   node().markRead(mesh::CONV_GROUP);
 
   // This morning: the three of us, and Kari and me.
+  at(NOW - 3 * 3600 - MIN);
+  ARNE_KARI_OLA = node().createGroup(mesh::memberBit(KARI) | mesh::memberBit(OLA), "Bilen til Ullevål");
+  deliver();
   message(KARI, ARNE_KARI_OLA, NOW - 3 * 3600, "Skal vi dele bil til Ullevålseter?");
   const uint32_t car = write(ARNE_KARI_OLA, NOW - 3 * 3600 + 4 * MIN, "Gjerne, jeg kan kjøre. Henter dere kl 09.");
   ack(KARI, NOW - 3 * 3600 + 10 * MIN, car, mesh::AckState::Read);
@@ -453,6 +446,18 @@ int main(int argc, char** argv) {
   {
     ChatActivity chat(renderer, mappedInputManager, KARI);
     show(chat, "t5-chat-kari");
+  }
+  {
+    ChatActivity chat(renderer, mappedInputManager, ARNE_KARI_OLA);
+    show(chat, "t5-chat-gruppe");
+  }
+  {
+    // The group's members, with "Fjern" tapped once on Ola (asks "Sikker?").
+    GroupInfoActivity info(renderer, mappedInputManager, ARNE_KARI_OLA);
+    show(info, "t5-gruppe", [](Activity& screen) {
+      sim::tap(460, 330);  // Ola's "Fjern"
+      screen.loop();
+    });
   }
   {
     MapActivity map(renderer, mappedInputManager);

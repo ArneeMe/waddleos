@@ -32,8 +32,8 @@ class MessagesActivity final : public Activity {
   void open(uint8_t conversation);
 };
 
-// Ny gruppe: tick the people to write to. Two people is a DM, everyone is
-// "Alle", and anything between is a small group (keys from `waddle mesh setup`).
+// Ny gruppe: tick the people to write to. One person opens the DM; otherwise
+// a group is made (with an optional name) and its key sent to the others.
 class NewGroupActivity final : public Activity {
  public:
   NewGroupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
@@ -55,6 +55,28 @@ class NewGroupActivity final : public Activity {
 
   void toggle(int index);
   void finish();
+  void openChat(uint8_t conversation);
+};
+
+// A group: its members with "Fjern" (for a lost unit), and "Forlat gruppe".
+class GroupInfoActivity final : public Activity {
+ public:
+  GroupInfoActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, uint8_t conversation);
+  void onEnter() override;
+  void loop() override;
+  void render(RenderLock&&) override;
+
+ private:
+  struct Box {
+    int x = 0, y = 0, w = 0, h = 0;
+    bool contains(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; }
+  };
+  static constexpr uint8_t LEAVE = 0xFF;
+  uint8_t conversation;
+  std::vector<std::pair<uint8_t, Box>> removeBoxes;  // member, its "Fjern" button
+  Box leaveBox;
+  uint8_t armed = 0;  // the button tapped once (member, or LEAVE), waiting for "Sikker?"
+  uint32_t shownChanges = 0;
 };
 
 // One conversation: messages as bubbles, a field to write in.
@@ -74,6 +96,7 @@ class ChatActivity final : public Activity {
   int renders = 0;
 
   std::string name;
+  int titleBottom = 0;  // tapping above it opens a group's members
 
   void reload();
   void write();

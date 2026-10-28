@@ -31,7 +31,7 @@ const char* directionText(double degrees);
 // "59,9139 N  10,7522 Ø".
 std::string coordinatesText(const mesh::Position& p);
 
-// "Alle", "Kari", or a small group: "Du, Kari og Per".
+// "Alle", "Kari", or a group: its name, or "Du, Kari og Per".
 std::string conversationName(uint8_t conversation);
 // About a contact: "hørt 5 min siden · 82 % · 1,2 km nordøst".
 std::string contactText(uint8_t member);

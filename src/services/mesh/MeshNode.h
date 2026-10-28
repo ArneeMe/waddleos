@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "MeshConfig.h"
+#include "MeshGroups.h"
 #include "MessageStore.h"
 
 namespace mesh {
@@ -50,6 +51,16 @@ class Node {
   bool sendText(uint8_t conversation, const std::string& text);
   // Whether this unit has the key to write to the conversation.
   bool canWrite(uint8_t conversation) const;
+
+  // Groups made on units (protocol/PROTOCOL.md, "Groups").
+  const ChatGroups& groups() const { return groups_; }
+  // Makes a group of me and these members (bits) and invites them. Returns
+  // its conversation, or CONV_GROUP when it could not.
+  uint8_t createGroup(uint8_t members, const std::string& name);
+  // Leaves a group: the others are told and make a new key.
+  void leaveGroup(uint8_t conversation);
+  // Takes a member out (a lost unit): the rest get a new key.
+  void removeFromGroup(uint8_t conversation, uint8_t member);
   // The conversation was shown: clears unread and tells the sender "read".
   void markRead(uint8_t conversation);
 
@@ -108,6 +119,9 @@ class Node {
   enum class WifiStep : uint8_t { Idle, Joining };
 
   Group group_;
+  ChatGroups groups_;
+  std::vector<Fetch> fetches_;  // missing messages to ask the server for over Wi-Fi
+  std::vector<uint32_t> controlCounters_;  // my invitations and notices this session
   MessageStore store_;
   LoraParams params_;
   AirtimeBudget budget_;
@@ -147,7 +161,23 @@ class Node {
   void handleAck(const Header& h, const uint8_t* body, size_t len);
   void handleSyncReq(const Header& h, const uint8_t* body, size_t len);
   const uint8_t* keyFor(const Header& h) const;
-  const uint8_t* sendingKey(uint8_t conversation) const;
+  const uint8_t* sendingKey(uint8_t conversation, uint8_t* keyNumber = nullptr) const;
+  uint8_t recipientOf(uint8_t conversation) const;
+  // The conversation of a packet, or -1 for a group this unit is not in.
+  int conversationOf(uint8_t sender, uint8_t recipient) const;
+  void handleFetch(const Header& h, const uint8_t* body, size_t len);
+  void requestFetch(uint8_t sender, uint32_t after, uint32_t before);
+  void fillGap(uint8_t conversation, const ChatMessage& late);
+  uint8_t syncFlags() const;
+  uint32_t sendControl(uint8_t to, const std::string& payload);
+  void sendToMember(int slot, uint8_t to, char kind, uint8_t about);
+  void handleControl(uint8_t from, const std::string& text);
+  bool confirmControl(uint8_t from, uint32_t counter);
+  void resendUnconfirmed();
+  void rotate(int slot);
+  void takeOut(int slot, uint8_t member);
+  void openWaiting(uint8_t recipient);
+  void dropMissingMembers();
   uint8_t conversationOfMine(uint32_t counter);
   void sendOutbox();
   void retryPending();

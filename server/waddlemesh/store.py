@@ -38,9 +38,13 @@ CREATE TABLE IF NOT EXISTS units (
     battery INTEGER,
     build TEXT,
     rssi INTEGER,
-    snr REAL
+    snr REAL,
+    flags INTEGER,
+    sos_at INTEGER
 );
 """
+# Columns added after the first release, for databases made before them.
+NEW_COLUMNS = {"units": ("flags INTEGER", "sos_at INTEGER")}
 
 
 class Store:
@@ -49,6 +53,11 @@ class Store:
         self.lock = threading.Lock()
         with self.lock:
             self.db.executescript(SCHEMA)
+            for table, columns in NEW_COLUMNS.items():
+                have = {r[1] for r in self.db.execute("PRAGMA table_info(%s)" % table)}
+                for column in columns:
+                    if column.split()[0] not in have:
+                        self.db.execute("ALTER TABLE %s ADD COLUMN %s" % (table, column))
             self.db.commit()
 
     def add_packet(self, h, raw, via, now=None):
@@ -71,19 +80,23 @@ class Store:
     def messages_after(self, sender, counter, for_member, limit=None):
         """Stored MSG pieces from sender with a higher counter, oldest first.
 
-        Messages for_member could not read (DMs between two others, small groups
-        without them) are left out.
+        DMs between two others are left out. Group messages go to everyone: only
+        their members have the key.
         """
-        bit = 1 << (for_member - 1)
         sql = ("SELECT raw FROM packets WHERE type = 1 AND sender = ? AND counter > ?"
-               " AND (recipient = 255 OR recipient = ? OR sender = ? OR (recipient & 240 = 128 AND recipient & ?))"
+               " AND (recipient = 255 OR recipient = ? OR sender = ? OR recipient & 128)"
                " ORDER BY counter, piece_index")
-        args = [sender, counter, for_member, for_member, bit]
+        args = [sender, counter, for_member, for_member]
         if limit:
             sql += " LIMIT ?"
             args.append(limit)
         with self.lock:
             return [bytes(r[0]) for r in self.db.execute(sql, args)]
+
+    def messages_between(self, sender, after, before, for_member, limit=None):
+        """Stored MSG pieces from sender with after < counter < before (a fetch)."""
+        return [raw for raw in self.messages_after(sender, after, for_member)
+                if int.from_bytes(raw[6:10], "little") < before][:limit]
 
     def latest_positions(self, except_member):
         """The newest POS (and any newer SOS) of every other member."""
@@ -136,26 +149,39 @@ class Store:
                 " HAVING COUNT(*) = MAX(piece_count) ORDER BY counter DESC LIMIT ?", (sender, limit)).fetchall()
         return [r[0] for r in reversed(rows)]
 
-    def seen_unit(self, member, via, battery=None, build=None, rssi=None, snr=None, now=None):
+    def seen_unit(self, member, via, battery=None, build=None, rssi=None, snr=None, flags=None, now=None):
         with self.lock:
             self.db.execute(
-                "INSERT INTO units (member, last_seen, via, battery, build, rssi, snr) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO units (member, last_seen, via, battery, build, rssi, snr, flags)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT (member) DO UPDATE SET last_seen = excluded.last_seen, via = excluded.via,"
                 " battery = COALESCE(excluded.battery, battery), build = COALESCE(excluded.build, build),"
-                " rssi = COALESCE(excluded.rssi, rssi), snr = COALESCE(excluded.snr, snr)",
-                (member, int(now or time.time()), via, battery, build, rssi, snr))
+                " rssi = COALESCE(excluded.rssi, rssi), snr = COALESCE(excluded.snr, snr),"
+                " flags = COALESCE(excluded.flags, flags)",
+                (member, int(now or time.time()), via, battery, build, rssi, snr, flags))
+            self.db.commit()
+
+    def sos_heard(self, member, now=None):
+        """An SOS packet from member: the status page shows it for a while."""
+        with self.lock:
+            self.db.execute("UPDATE units SET sos_at = ? WHERE member = ?", (int(now or time.time()), member))
             self.db.commit()
 
     def units(self):
         with self.lock:
-            rows = self.db.execute("SELECT member, last_seen, via, battery, build, rssi, snr FROM units"
+            rows = self.db.execute("SELECT member, last_seen, via, battery, build, rssi, snr, flags, sos_at FROM units"
                                    " ORDER BY member").fetchall()
-        keys = ("member", "last_seen", "via", "battery", "build", "rssi", "snr")
+        keys = ("member", "last_seen", "via", "battery", "build", "rssi", "snr", "flags", "sos_at")
         return [dict(zip(keys, r)) for r in rows]
 
     def counts(self):
+        """Stored packets by type (ACKs too, when there are any)."""
         with self.lock:
-            return dict(self.db.execute("SELECT type, COUNT(*) FROM packets GROUP BY type").fetchall())
+            counts = dict(self.db.execute("SELECT type, COUNT(*) FROM packets GROUP BY type").fetchall())
+            (acks,) = self.db.execute("SELECT COUNT(*) FROM acks").fetchone()
+        if acks:
+            counts[2] = acks
+        return counts
 
     def backup(self, path):
         """A consistent copy of the database, safe while the server runs."""

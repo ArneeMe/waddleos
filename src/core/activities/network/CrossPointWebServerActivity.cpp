@@ -10,6 +10,7 @@
 
 #include <cstddef>
 
+#include "core/Product.h"
 #include "core/MappedInputManager.h"
 #include "NetworkModeSelectionActivity.h"
 #include "core/SilentRestart.h"
@@ -484,6 +485,7 @@ void CrossPointWebServerActivity::renderServerRunning() const {
     QrUtils::drawQrCode(renderer, qrBoundsUrl, ipUrl);
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding + QR_CODE_WIDTH + metrics.verticalSpacing, startY + 80,
                       ipUrl.c_str());
+    startY += QR_CODE_HEIGHT + metrics.verticalSpacing * 2;
   } else {
     startY += metrics.verticalSpacing * 2;
 
@@ -504,6 +506,10 @@ void CrossPointWebServerActivity::renderServerRunning() const {
     renderer.drawCenteredText(UI_10_FONT_ID, startY, webInfo.c_str(), true);
     startY += height10 + 5;
   }
+
+  // The mesh unit's setup code (product::transferNote()).
+  const std::string note = product::transferNote();
+  if (!note.empty()) renderer.drawCenteredText(UI_12_FONT_ID, startY + 10, note.c_str(), true, EpdFontFamily::BOLD);
 
   const auto labels = mappedInput.mapLabels(tr(STR_EXIT), "", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

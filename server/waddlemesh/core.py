@@ -10,12 +10,16 @@ log = logging.getLogger("waddlemesh")
 
 # Over LoRa an answer must stay short: at most this many packets per SYNC_REQ.
 LORA_SYNC_LIMIT = 12
+# The status page shows an SOS packet this long.
+SOS_SHOWN_S = 300
 
 
 class Server:
-    def __init__(self, store, group):
+    def __init__(self, store, group, names=None):
         self.store = store
         self.group = group
+        self.names = names or {}  # member -> name, for the status page only
+        self.started = time.time()
         self.radio = None  # set by the gateway link: radio.send(raw)
         self.relayed = collections.deque(maxlen=256)  # packets already passed on
 
@@ -24,12 +28,13 @@ class Server:
                      counter=self.store.next_counter())
         return h.pack() + P.Ack(member, counter, state).pack()
 
-    def handle(self, raw, via, rssi=None, snr=None):
+    def handle(self, raw, via, rssi=None, snr=None, handed_over=False):
         """Handles one packet. Returns the packets to send back to that unit.
 
         via is "lora" or "wifi". Packets that arrived over Wi-Fi and are meant
         for other units are also sent out over LoRa, so units in range of the
-        gateway get them at once.
+        gateway get them at once. handed_over: kept by the gateway while the Pi
+        was away; it relayed and answered then, so only store it.
         """
         try:
             h = P.parse_header(raw)
@@ -37,6 +42,15 @@ class Server:
             log.debug("dropped packet: %s", e)
             return []
         if h.group != self.group or h.sender == P.SERVER:
+            return []
+        if handed_over:
+            if h.type in (P.MSG, P.POS, P.SOS):
+                self.store.add_packet(h, raw, via)
+            elif h.type == P.ACK:
+                try:
+                    self.store.add_ack(P.parse_ack(raw[P.HEADER_SIZE:]), h.sender, raw)
+                except P.BadPacket:
+                    pass
             return []
         self.store.seen_unit(h.sender, via, rssi=rssi, snr=snr)
         if via == "lora":
@@ -47,6 +61,7 @@ class Server:
             if new and via == "wifi" and self.radio:
                 self.radio.send(raw)
             if h.type == P.SOS:
+                self.store.sos_heard(h.sender)
                 if new:
                     log.warning("SOS from member %d", h.sender)
                 # The sender's SOS screen shows that the server has it.
@@ -71,8 +86,16 @@ class Server:
                 req = P.parse_sync_req(body)
             except P.BadPacket:
                 return []
-            self.store.seen_unit(h.sender, via, battery=req.battery, build="%02x" % req.build)
+            self.store.seen_unit(h.sender, via, battery=req.battery, build="%02x" % req.build, flags=req.flags)
             return self.sync_answer(h.sender, req, via)
+
+        if h.type == P.FETCH:
+            try:
+                f = P.parse_fetch(body)
+            except P.BadPacket:
+                return []
+            limit = LORA_SYNC_LIMIT if via == "lora" else None
+            return self.store.messages_between(f.sender, f.after, f.before, h.sender, limit)
         return []
 
     def _relay(self, h, raw):
@@ -104,8 +127,22 @@ class Server:
         return out
 
     def status(self):
+        """Every unit set up or heard, for the status page (no keys, no content)."""
         now = int(time.time())
-        units = self.store.units()
-        for u in units:
+        heard = {u["member"]: u for u in self.store.units()}
+        units = []
+        for member in sorted(set(heard) | set(self.names)):
+            u = heard.get(member) or {"member": member, "last_seen": None, "via": None, "battery": None,
+                                      "build": None, "rssi": None, "snr": None, "flags": None, "sos_at": None}
+            u["name"] = self.names.get(member) or "Enhet %d" % member
             u["ago_s"] = now - u["last_seen"] if u["last_seen"] else None
-        return {"units": units, "packets": self.store.counts()}
+            flags = u["flags"]
+            u["on_trip"] = None if flags is None else bool(flags & P.SYNC_ON_TRIP)
+            check = None if flags is None else (flags >> P.SYNC_CHECK_SHIFT) & 7
+            u["check"] = P.CHECK_NAMES[check] if check is not None and check < len(P.CHECK_NAMES) else None
+            # SOS: the unit says its SOS is on, or an SOS packet came in the last 5 minutes.
+            u["sos"] = bool(flags and flags & P.SYNC_SOS) or bool(u["sos_at"] and now - u["sos_at"] < SOS_SHOWN_S)
+            units.append(u)
+        counts = self.store.counts()
+        return {"units": units, "packets": {P.TYPE_NAMES[t]: n for t, n in sorted(counts.items())},
+                "uptime_s": int(time.time() - self.started)}

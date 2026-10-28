@@ -8,7 +8,6 @@ Run: bash test/sim/run.sh   (builds sim_node, then runs these tests)
 """
 
 import email.utils
-import itertools
 import json
 import os
 import shutil
@@ -106,12 +105,8 @@ class World:
         for n, u in self.units.items():
             pub, sender = u.cmd("identity")[0].split()[1:]
             members.append({"number": n, "name": u.name, "publicKey": pub, "senderKey": sender})
-        # Small groups, as `waddle mesh setup` makes them: some members, at least three.
-        groups = [{"members": list(c), "key": os.urandom(32).hex()}
-                  for size in range(3, len(names)) for c in itertools.combinations(self.units, size)]
         for n, u in self.units.items():
-            doc = {"group": GROUP, "me": n, "members": members,
-                   "groups": [g for g in groups if n in g["members"]]}
+            doc = {"group": GROUP, "me": n, "members": members}
             if server_wifi:
                 doc["server"] = {"url": "https://pi.example:8443", "token": "t%d" % n,
                                  "cert": "-----BEGIN CERTIFICATE-----"}
@@ -201,26 +196,160 @@ class FourUnitTests(unittest.TestCase):
         self.assertEqual(w.units[4].texts(1), ["Hei Per"])
         self.assertEqual(w.units[4].chat(0)[0]["delivered"], 0b0111)
 
-    def test_small_group(self):
+    def make_group(self, unit, bits, name):
+        return int(self.w.units[unit].cmd("group %d %s" % (bits, name))[0].split()[1])
+
+    def test_group_made_on_a_unit(self):
         w = self.w
         w.link(1, 2)
         w.link(1, 3)
         w.link(3, 4)  # Per hears only Ola, who is not in the group
         w.begin()
         w.run(5)
-        conv = 5 + 0b1011  # Arne, Kari and Per
+        conv = self.make_group(1, 0b1010, "Hyttetur")  # Arne makes it with Kari and Per
+        w.run(20)
+        for n in (2, 4):
+            g = w.units[n].state()["groups"][str(conv)]
+            self.assertEqual((g["name"], g["members"], g["key"]), ("Hyttetur", 0b1011, 1))
+        self.assertNotIn("groups", w.units[3].state())
         self.assertEqual(w.units[1].cmd("send %d Uten Ola" % conv), ["sent"])
         w.run(20)
         self.assertEqual(w.units[2].texts(conv), ["Uten Ola"])
-        self.assertEqual(w.units[4].texts(conv), ["Uten Ola"])  # relayed by Ola
+        self.assertEqual(w.units[4].texts(conv), ["Uten Ola"])  # relayed by Ola, who cannot read it
         self.assertTrue(all(not msgs for msgs in w.units[3].state()["chats"].values()))
         self.assertEqual(w.units[1].chat(conv)[0]["delivered"], 0b1010)
-        # Per answers in the same group.
         self.assertEqual(w.units[4].cmd("send %d Fint" % conv), ["sent"])
         w.run(20)
         self.assertEqual(w.units[1].texts(conv), ["Uten Ola", "Fint"])
-        # Ola has no key for it and cannot write there.
         self.assertEqual(w.units[3].cmd("send %d Hallo?" % conv), ["refused"])
+
+    def test_leaving_gives_the_rest_a_new_key(self):
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(5)
+        conv = self.make_group(2, 0b1101, "Alle fire")  # Kari makes it with everyone
+        w.run(20)
+        w.units[1].cmd("send %d Før Per gikk" % conv)
+        w.run(15)
+        w.units[4].cmd("leave %d" % conv)
+        w.run(30)
+        # Arne (lowest number left) made key 2 and gave it to Kari and Ola.
+        for n in (1, 2, 3):
+            g = w.units[n].state()["groups"][str(conv)]
+            self.assertEqual((g["members"], g["key"]), (0b0111, 2), "unit %d" % n)
+        self.assertTrue(w.units[4].state()["groups"][str(conv)]["left"])
+        w.units[3].cmd("send %d Etter Per gikk" % conv)
+        w.run(20)
+        self.assertEqual(w.units[2].texts(conv), ["Før Per gikk", "Etter Per gikk"])
+        self.assertEqual(w.units[4].texts(conv), ["Før Per gikk"])  # keeps the old, not the new
+
+    def test_removing_a_lost_unit(self):
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(5)
+        conv = self.make_group(1, 0b1110, "Tur")
+        w.run(20)
+        w.units[4].stop()  # Per's unit is lost
+        w.units[2].cmd("remove %d 4" % conv)
+        w.run(30)
+        for n in (1, 2, 3):
+            g = w.units[n].state()["groups"][str(conv)]
+            self.assertEqual((g["members"], g["key"]), (0b0111, 2), "unit %d" % n)
+
+    def test_invitation_and_messages_wait_for_a_unit_that_was_off(self):
+        w = self.w
+        w.all_in_range(gateway=True)
+        w.units[4].stop()
+        w.begin(1, 2, 3)
+        w.run(5)
+        conv = self.make_group(2, 0b1001, "Middag")  # Kari, with Arne and Per
+        w.run(15)
+        w.units[1].cmd("send %d Kl 18?" % conv)
+        w.run(15)
+        w.units[4].start()
+        w.units[4].cmd("time %d" % w.now)
+        w.begin(4)  # catches up from the server: Arne's message, then Kari's invitation
+        w.run(30)
+        per = w.units[4].state()
+        self.assertEqual(per["groups"][str(conv)]["name"], "Middag")
+        self.assertEqual(w.units[4].texts(conv), ["Kl 18?"])
+
+
+class GroupSafetyTests(unittest.TestCase):
+    """What the review found: clashing key changes, removed members, restarts."""
+
+    def setUp(self):
+        self.w = World(names=("Arne", "Kari", "Ola", "Per"))
+        self.w.all_in_range()
+        self.w.begin()
+        self.w.run(5)
+
+    def tearDown(self):
+        self.w.close()
+
+    def group(self, unit, bits, name="G"):
+        conv = int(self.w.units[unit].cmd("group %d %s" % (bits, name))[0].split()[1])
+        self.w.run(20)
+        return conv
+
+    def state(self, unit, conv):
+        return self.w.units[unit].state()["groups"][str(conv)]
+
+    def test_two_removals_at_once_both_happen(self):
+        w = self.w
+        conv = self.group(1, 0b1110)
+        w.units[2].cmd("remove %d 4" % conv)  # Kari takes Per out ...
+        w.units[1].cmd("remove %d 3" % conv)  # ... while Arne takes Ola out
+        w.run(40)
+        for n in (1, 2):
+            self.assertEqual(self.state(n, conv)["members"], 0b0011, "unit %d" % n)
+        w.units[1].cmd("send %d Bare oss to" % conv)
+        w.run(20)
+        self.assertEqual(w.units[2].texts(conv), ["Bare oss to"])
+        self.assertEqual(w.units[3].texts(conv), [])
+        self.assertEqual(w.units[4].texts(conv), [])
+
+    def test_removed_member_cannot_write_or_take_over(self):
+        w = self.w
+        conv = self.group(1, 0b1110)
+        w.units[1].cmd("remove %d 4" % conv)
+        w.run(30)
+        # Per still has key 1 and can send under it, but nobody shows it as new.
+        w.units[4].cmd("send %d Hei, jeg er her fortsatt" % conv)
+        w.run(20)
+        for n in (1, 2, 3):
+            self.assertEqual(w.units[n].texts(conv), [], "unit %d" % n)
+            self.assertEqual(self.state(n, conv)["key"], 2)
+
+    def test_invitation_survives_a_restart(self):
+        w = self.w
+        w.units[3].stop()
+        conv = self.group(1, 0b0110, "Restart")  # Ola is off and misses it
+        w.run(200)  # Arne's retries run out
+        w.units[1].stop()
+        w.units[1].start()
+        w.units[1].cmd("time %d" % w.now)
+        w.begin(1)  # Arne's unit restarts, then checks: the invitation goes again
+        w.units[3].start()
+        w.units[3].cmd("time %d" % w.now)
+        w.begin(3)
+        w.run(20)
+        w.units[1].cmd("check")
+        w.run(20)
+        self.assertEqual(self.state(3, conv)["name"], "Restart")
+
+    def test_leaving_twice_and_stale_invitation_do_not_rejoin(self):
+        w = self.w
+        conv = self.group(1, 0b1110)
+        w.units[4].cmd("leave %d" % conv)
+        w.run(30)
+        self.assertTrue(self.state(4, conv)["left"])
+        w.units[1].cmd("check")  # resends nothing to Per: he is out
+        w.run(20)
+        self.assertTrue(self.state(4, conv)["left"])
+        self.assertEqual(self.state(1, conv)["members"], 0b0111)
 
 
 class CheckTests(unittest.TestCase):
@@ -454,7 +583,7 @@ class MeshTests(unittest.TestCase):
         self.assertTrue(kari["hasPosition"])
         self.assertEqual(kari["lat"], 600000000)
 
-    def test_missing_message_shows_a_warning(self):
+    def test_missing_message_is_fetched(self):
         w = self.w
         w.all_in_range()
         w.begin()
@@ -467,7 +596,27 @@ class MeshTests(unittest.TestCase):
         w.run(10)
         w.drop = None
         w.units[1].cmd("send 0 Tre")
+        w.run(15)
+        # "Tre" said a message was missing; Ola asked for it and got it.
+        ola = w.units[3].chat(0)
+        self.assertEqual([m["text"] for m in ola], ["En", "To", "Tre"])
+        self.assertEqual([m["warning"] for m in ola], [False, False, False])
+
+    def test_missing_message_nobody_has_shows_a_warning(self):
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(5)
+        w.units[1].cmd("send 0 En")
         w.run(10)
+        w.units[1].cmd("send 0 To")
+        lost = w.units[1].chat(0)[-1]["counter"]
+        # Every copy of "To" to Ola is lost, the fetched ones too.
+        w.drop = lambda raw, sender, receiver: (receiver == 3 and packet_type(raw) == P.MSG
+                                                and P.parse_header(raw).counter == lost)
+        w.run(10)
+        w.units[1].cmd("send 0 Tre")
+        w.run(15)
         ola = w.units[3].chat(0)
         self.assertEqual([m["text"] for m in ola], ["En", "Tre"])
         self.assertEqual([m["warning"] for m in ola], [False, True])

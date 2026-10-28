@@ -22,22 +22,21 @@ constexpr int TEXT_FONT = NOTOSANS_14_FONT_ID;
 mesh::Node& node() { return mesh::Node::get(); }
 
 // Member bits of everyone in the group.
-uint8_t everyone() {
-  uint8_t bits = 0;
-  for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
-    if (node().group().member(n)->present) bits |= mesh::memberBit(n);
-  }
-  return bits;
-}
+uint8_t everyone() { return node().group().everyone(); }
 
-bool isDm(const uint8_t conversation) { return conversation != mesh::CONV_GROUP && !mesh::isSmallConversation(conversation); }
+bool isDm(const uint8_t conversation) { return mesh::isDmConversation(conversation); }
+
+const mesh::ChatGroup* chatGroup(const uint8_t conversation) {
+  return mesh::isGroupConversation(conversation) ? &node().groups().at(conversation - mesh::CONV_GROUPS) : nullptr;
+}
 
 // What the sender sees under their own message.
 std::string deliveryText(const mesh::ChatMessage& m, const uint8_t conversation) {
   const uint8_t me = mesh::memberBit(node().group().me);
-  const uint8_t wanted = conversation == mesh::CONV_GROUP     ? uint8_t(everyone() & ~me)
-                         : mesh::isSmallConversation(conversation) ? uint8_t((conversation - mesh::CONV_SMALL) & ~me)
-                                                                   : mesh::memberBit(conversation);
+  const mesh::ChatGroup* g = chatGroup(conversation);
+  const uint8_t wanted = conversation == mesh::CONV_GROUP ? uint8_t(everyone() & ~me)
+                         : g                              ? uint8_t(g->members & ~me)
+                                                          : mesh::memberBit(conversation);
   std::string when = meshui::timeText(m.time);
   if (!when.empty()) when += " · ";
   if (m.readBy && (m.readBy & wanted) == wanted) return when + "lest";
@@ -63,14 +62,12 @@ void MessagesActivity::onEnter() {
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
     if (n != group.me && group.member(n)->present) conversations.push_back(n);
   }
-  // Small groups with messages; new ones start from "Ny gruppe".
-  bool anySmall = false;
-  for (uint8_t c = mesh::CONV_SMALL; c < mesh::CONVERSATIONS; c++) {
-    if (!node().canWrite(c)) continue;
-    anySmall = true;
-    if (node().store().summary(c).count) conversations.push_back(c);
+  // Groups I am in, and those I left that still have messages to read.
+  for (uint8_t c = mesh::CONV_GROUPS; c < mesh::CONVERSATIONS; c++) {
+    const mesh::ChatGroup* g = chatGroup(c);
+    if (g->id && (!g->left || node().store().summary(c).count)) conversations.push_back(c);
   }
-  if (anySmall) conversations.push_back(NEW_GROUP);
+  if (node().configured() && mesh::memberCount(everyone()) >= 3) conversations.push_back(NEW_GROUP);
   requestUpdate();
 }
 
@@ -257,6 +254,10 @@ void ChatActivity::loop() {
       write();
       return;
     }
+    if (y < titleBottom && chatGroup(conversation)) {
+      activityManager.replaceActivity(std::make_unique<GroupInfoActivity>(renderer, mappedInput, conversation));
+      return;
+    }
     // Upper half: older messages; lower half: newer.
     scroll = y < renderer.getScreenHeight() / 2 ? scroll + 3 : std::max(0, scroll - 3);
     requestUpdate();
@@ -274,7 +275,10 @@ void ChatActivity::render(RenderLock&&) {
   const int height = renderer.getScreenHeight();
   const uint8_t me = node().group().me;
   renderer.clearScreen();
-  const int top = meshui::drawTitle(renderer, name.c_str());
+  // A group's title opens who is in it.
+  const std::string title = chatGroup(conversation) ? name + "  ›" : name;
+  const int top = meshui::drawTitle(renderer, title.c_str());
+  titleBottom = top;
 
   // Input bar.
   inputY = height - 82;
@@ -360,24 +364,42 @@ void NewGroupActivity::toggle(const int index) {
 void NewGroupActivity::finish() {
   const uint8_t bits = chosen | mesh::memberBit(node().group().me);
   const int people = mesh::memberCount(bits);
-  uint8_t conversation = mesh::CONV_GROUP;
   if (people < 2) {
     problem = "Velg minst én";
-  } else if (bits == everyone()) {
-    conversation = mesh::CONV_GROUP;
-  } else if (people == 2) {
-    conversation = members[0];
-    for (const uint8_t n : members) {
-      if (chosen & mesh::memberBit(n)) conversation = n;
-    }
-  } else {
-    conversation = uint8_t(mesh::CONV_SMALL + bits);
-    if (!node().canWrite(conversation)) problem = "Mangler nøkkel: kjør \"waddle mesh setup\" på nytt";
-  }
-  if (problem) {
     requestUpdate();
     return;
   }
+  // One person is the DM. A group with exactly these people already: open it.
+  if (people == 2) {
+    for (const uint8_t n : members) {
+      if (chosen & mesh::memberBit(n)) return openChat(n);
+    }
+  }
+  for (uint8_t c = mesh::CONV_GROUPS; c < mesh::CONVERSATIONS; c++) {
+    const mesh::ChatGroup* g = chatGroup(c);
+    if (g->id && !g->left && g->members == bits) return openChat(c);
+  }
+  // A name is optional; without one the group is called by its members.
+  auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, "Navn på gruppen (kan stå tomt)", "",
+                                                           mesh::GROUP_NAME - 1, InputType::Text);
+  if (!keyboard) return;
+  startActivityForResult(std::move(keyboard), [this](const ActivityResult& result) {
+    if (result.isCancelled) {
+      requestUpdate();
+      return;
+    }
+    const std::string name = std::get<KeyboardResult>(result.data).text;
+    const uint8_t conversation = node().createGroup(chosen, name);
+    if (conversation == mesh::CONV_GROUP) {
+      problem = "Kunne ikke lage gruppen (16 grupper er maks: forlat en først)";
+      requestUpdate();
+      return;
+    }
+    openChat(conversation);
+  });
+}
+
+void NewGroupActivity::openChat(const uint8_t conversation) {
   activityManager.replaceActivity(std::make_unique<ChatActivity>(renderer, mappedInput, conversation));
 }
 
@@ -451,5 +473,107 @@ void NewGroupActivity::render(RenderLock&&) {
   const int lw = renderer.getTextWidth(UI_12_FONT_ID, label, EpdFontFamily::BOLD);
   renderer.drawText(UI_12_FONT_ID, doneBox.x + (doneBox.w - lw) / 2, doneBox.y + 20, label, false, EpdFontFamily::BOLD);
   if (problem) renderer.drawCenteredText(UI_10_FONT_ID, doneBox.y + doneBox.h + 24, problem);
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+}
+
+// --- A group: who is in it, Fjern, Forlat gruppe ------------------------------------
+
+GroupInfoActivity::GroupInfoActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const uint8_t conversation)
+    : Activity("GroupInfo", renderer, mappedInput), conversation(conversation) {}
+
+void GroupInfoActivity::onEnter() {
+  Activity::onEnter();
+  requestUpdate();
+}
+
+void GroupInfoActivity::loop() {
+  using Button = MappedInputManager::Button;
+  if (mappedInput.wasReleased(Button::Back) || mappedInput.wasHomeGesture()) {
+    activityManager.replaceActivity(std::make_unique<ChatActivity>(renderer, mappedInput, conversation));
+    return;
+  }
+  int x = 0, y = 0;
+  if (!mappedInput.wasScreenTapped(x, y)) {
+    if (node().changes() != shownChanges) requestUpdate();
+    return;
+  }
+  // Every button asks once more before it acts.
+  for (size_t i = 0; i < removeBoxes.size(); i++) {
+    if (!removeBoxes[i].second.contains(x, y)) continue;
+    const uint8_t member = removeBoxes[i].first;
+    if (armed == member) {
+      node().removeFromGroup(conversation, member);
+      armed = 0;
+    } else {
+      armed = member;
+    }
+    requestUpdate();
+    return;
+  }
+  if (leaveBox.contains(x, y)) {
+    if (armed == LEAVE) {
+      node().leaveGroup(conversation);
+      activityManager.replaceActivity(std::make_unique<MessagesActivity>(renderer, mappedInput));
+      return;
+    }
+    armed = LEAVE;
+    requestUpdate();
+    return;
+  }
+  armed = 0;
+  requestUpdate();
+}
+
+void GroupInfoActivity::render(RenderLock&&) {
+  const int width = renderer.getScreenWidth();
+  shownChanges = node().changes();
+  const mesh::ChatGroup& g = node().groups().at(conversation - mesh::CONV_GROUPS);
+  const auto& group = node().group();
+  renderer.clearScreen();
+  int y = meshui::drawTitle(renderer, meshui::conversationName(conversation).c_str());
+  renderer.drawText(SMALL_FONT_ID, SIDE, y + 8, "MEDLEMMER", true, EpdFontFamily::BOLD);
+  y += 40;
+  removeBoxes.clear();
+  for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
+    if (!(g.members & mesh::memberBit(n))) continue;
+    const std::string who = n == group.me ? std::string(group.name(n)) + " (deg)" : group.name(n);
+    renderer.drawText(UI_12_FONT_ID, SIDE, y + 22, who.c_str(), true, EpdFontFamily::BOLD);
+    if (n != group.me && !g.left) {
+      // "Fjern": for a lost unit. The rest get a new key.
+      Box b{width - SIDE - 150, y + 12, 150, 52};
+      const char* label = armed == n ? "Sikker?" : "Fjern";
+      if (armed == n) {
+        renderer.fillRoundedRect(b.x, b.y, b.w, b.h, 12, Color::Black);
+      } else {
+        renderer.drawRoundedRect(b.x, b.y, b.w, b.h, 2, 12, true);
+      }
+      const int lw = renderer.getTextWidth(UI_10_FONT_ID, label, EpdFontFamily::BOLD);
+      renderer.drawText(UI_10_FONT_ID, b.x + (b.w - lw) / 2, b.y + 14, label, armed != n, EpdFontFamily::BOLD);
+      removeBoxes.emplace_back(n, b);
+    }
+    y += ROW_H - 8;
+    renderer.drawLine(SIDE, y, width - SIDE, y);
+  }
+  y += 30;
+  if (g.left) {
+    renderer.drawCenteredText(UI_10_FONT_ID, y, "Du har forlatt gruppen. Meldingene fra før kan du fortsatt lese.");
+    leaveBox = {};
+  } else {
+    leaveBox = {SIDE, y, width - 2 * SIDE, 64};
+    const char* label = armed == LEAVE ? "Sikker? Trykk igjen" : "Forlat gruppe";
+    renderer.drawRoundedRect(leaveBox.x, leaveBox.y, leaveBox.w, leaveBox.h, 3, 14, true);
+    const int lw = renderer.getTextWidth(UI_12_FONT_ID, label, EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, leaveBox.x + (leaveBox.w - lw) / 2, leaveBox.y + 18, label, true,
+                      EpdFontFamily::BOLD);
+    y += 90;
+    const auto lines = renderer.wrappedText(SMALL_FONT_ID,
+                                            "Den som går ut eller fjernes, kan lese det som ble skrevet før, "
+                                            "men ikke det som kommer etterpå.",
+                                            width - 2 * SIDE, 3);
+    for (const auto& line : lines) {
+      renderer.drawText(SMALL_FONT_ID, SIDE, y, line.c_str());
+      y += renderer.getLineHeight(SMALL_FONT_ID);
+    }
+  }
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }

@@ -20,6 +20,7 @@ constexpr size_t PREVIEW = 60;
 // Chat log records.
 constexpr uint8_t REC_MESSAGE = 'M';  // M sender counter(4) time(4) prev(4) flags len(2) text
 constexpr uint8_t REC_STATE = 'S';    // S sender counter(4) state by
+constexpr uint8_t REC_CHAIN_OK = 'W';  // W sender counter(4): its missing previous message came
 
 std::string packetPath(const uint8_t sender) {
   char p[32];
@@ -87,6 +88,12 @@ bool readRecord(HalFile& f, Record& r) {
     if (len > MAX_TEXT) return false;
     m.text.resize(len);
     return len == 0 || f.read(&m.text[0], len) == len;
+  }
+  if (kind == REC_CHAIN_OK) {
+    if (f.read(head, 5) != 5) return false;
+    r.sender = head[0];
+    r.counter = get32(head + 1);
+    return true;
   }
   if (kind == REC_STATE) {
     if (f.read(head, 7) != 7) return false;
@@ -209,6 +216,14 @@ std::vector<std::vector<uint8_t>> MessageStore::packetsAfter(const uint8_t sende
   return out;
 }
 
+std::vector<std::vector<uint8_t>> MessageStore::packetsTo(const uint8_t sender, const uint8_t recipient) {
+  std::vector<std::vector<uint8_t>> out;
+  forEachPacket(sender, [&](const Header& h, const uint8_t* raw, const size_t len) {
+    if (h.type == Type::Msg && h.recipient == recipient) out.emplace_back(raw, raw + len);
+  });
+  return out;
+}
+
 void MessageStore::addMessage(const uint8_t conversation, const ChatMessage& m) {
   if (conversation >= CONVERSATIONS) return;
   std::vector<uint8_t> rec(17 + m.text.size());
@@ -254,6 +269,10 @@ std::vector<ChatMessage> MessageStore::load(const uint8_t conversation, const si
       all.push_back(std::move(r.message));
       // Keep memory bounded on long histories: drop the oldest half when far over.
       if (all.size() > limit * 2) all.erase(all.begin(), all.begin() + long(all.size() - limit));
+    } else if (r.kind == REC_CHAIN_OK) {
+      for (auto& m : all) {
+        if (m.sender == r.sender && m.counter == r.counter) m.chainWarning = false;
+      }
     } else if (r.kind == REC_STATE) {
       // A read or delivered message also means every earlier one from that sender.
       for (auto it = all.rbegin(); it != all.rend(); ++it) {
@@ -287,6 +306,23 @@ bool MessageStore::hasMessage(const uint8_t conversation, const uint8_t sender, 
   }
   f.close();
   return found;
+}
+
+void MessageStore::clearWarning(const uint8_t conversation, const uint8_t sender, const uint32_t counter) {
+  if (conversation >= CONVERSATIONS) return;
+  uint8_t rec[6] = {REC_CHAIN_OK, sender};
+  put32(rec + 2, counter);
+  append(chatPath(conversation), rec, sizeof(rec));
+}
+
+void MessageStore::clear(const uint8_t conversation) {
+  if (conversation >= CONVERSATIONS) return;
+  Storage.remove(chatPath(conversation).c_str());
+  summaries_[conversation] = ConversationSummary{};
+  seen_[conversation] = 0;
+  memset(chain_[conversation], 0, sizeof(chain_[conversation]));
+  memset(chainCounter_[conversation], 0, sizeof(chainCounter_[conversation]));
+  saveSeen();
 }
 
 void MessageStore::lastHash(const uint8_t conversation, const uint8_t sender, uint8_t out[4]) const {

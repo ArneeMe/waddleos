@@ -51,7 +51,7 @@ sources=(
   src/apps/messages/MeshUi.cpp src/apps/messages/MessagesActivity.cpp
   src/apps/map/MapActivity.cpp src/apps/sos/SosAlertActivity.cpp
   # The mesh: the real node, store and crypto.
-  src/services/mesh/MeshNode.cpp src/services/mesh/MessageStore.cpp src/services/mesh/MeshConfig.cpp
+  src/services/mesh/MeshNode.cpp src/services/mesh/MessageStore.cpp src/services/mesh/MeshConfig.cpp src/services/mesh/MeshGroups.cpp
   lib/WaddleMesh/src/*.cpp
 )
 csources=(lib/monocypher/src/monocypher.c lib/MiniBidi/minibidi.c lib/uzlib/src/*.c)
