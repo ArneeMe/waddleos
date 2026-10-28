@@ -84,9 +84,25 @@ Modus and checks (PR #33):
 Four people and groups (PR #33):
 - [ ] `waddle mesh setup` with 4 units: Hjem shows "Alle" and three contacts, each
       with "hørt … siden", battery % and (on a trip) distance.
-- [ ] Meldinger → "+ Ny gruppe", tick two people, "Skriv til dem": the chat is
-      called "Du, Kari og Per". They get it; the fourth unit does not.
-- [ ] Ticking one person opens the DM; ticking everyone opens "Alle".
+- [ ] Ticking one person in "+ Ny gruppe" opens the DM.
+
+Groups made on the unit (PR #35):
+- [ ] Meldinger → "+ Ny gruppe", tick Kari and Per, "Skriv til dem", give it a
+      name: the group shows up on Kari's and Per's units within a minute, with
+      that name. The fourth unit gets nothing it can read.
+- [ ] Per off while the group is made and written in; switch him on: the group
+      and the messages arrive.
+- [ ] Tap the group's title: the members. "Forlat gruppe" on Per (tap twice):
+      the others keep writing and reading, Per still sees the old messages but
+      no new ones.
+- [ ] "Fjern" on a member (twice): the same, without their unit doing anything.
+- [ ] After updating from an older build: the log says "Moved the group from the
+      SD card to flash" once, and /.mesh/group.json is gone from the SD card.
+- [ ] `waddle mesh reset-keys` with one unit switched off ("lost"): the others
+      get new keys and setup runs; they still talk, and keep their numbers.
+- [ ] Lose one message on purpose (switch a unit off while the other sends two,
+      then on just before the third): the "(!) en melding kan mangle" warning
+      shows briefly or not at all, and the missing message arrives.
 
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
