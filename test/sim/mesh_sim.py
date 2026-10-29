@@ -165,6 +165,25 @@ class World:
             self.air.append((GATEWAY, bytes.fromhex(line.split()[1])))
         self.all_hear_gateway = True
 
+    def add_phone(self, n):
+        """Member n's phone: a copy of their unit's keys and network, as pairing
+        hands them over. It has no radio here, only Wi-Fi to the server."""
+        u = self.units[n]
+        u.stop()
+        phone = n | P.PHONE
+        shutil.copytree(u.dir, os.path.join(self.dir, "unit%d" % phone))
+        u.start()
+        u.cmd("time %d" % self.now)
+        u.cmd("twin 1")
+        u.cmd("begin")
+        p = Unit(self, phone, u.name)
+        p.cmd("become-phone")
+        p.cmd("time %d" % self.now)
+        p.cmd("wifi 1")
+        p.cmd("begin")
+        self.units[phone] = p
+        return p
+
     def remove(self, n):
         """The admin takes member n out of the roster."""
         del self.publics[n]
@@ -972,6 +991,70 @@ class MeshTests(unittest.TestCase):
         w.run(30)
         relays = [s for s in sent if s != GATEWAY]
         self.assertLessEqual(len(relays), 12, sent)
+
+
+
+class PhoneTests(unittest.TestCase):
+    """Kari has a T5 and a phone (PHONE.md): one person, two devices."""
+
+    def setUp(self):
+        self.w = World()
+        w = self.w
+        w.all_in_range(gateway=True)
+        w.begin()
+        w.run(90)  # sender keys go out over a minute
+        self.phone = w.add_phone(2)
+        w.run(5)
+
+    def tearDown(self):
+        self.w.close()
+
+    def sync(self, unit):
+        unit.cmd("wifi 1")
+        unit.cmd("wifisync")
+        self.w.run(3)
+
+    def test_phone_reads_and_writes_as_kari(self):
+        w, phone = self.w, self.phone
+        w.units[1].cmd("send 2 Hei Kari")
+        w.run(20)
+        self.sync(phone)
+        self.assertEqual(phone.texts(1), ["Hei Kari"])
+        # From the phone to Arne: through the Pi, out over LoRa by the gateway.
+        phone.cmd("send 1 Fra mobilen")
+        self.sync(phone)
+        w.run(20)
+        arne = w.units[1].chat(2)
+        self.assertEqual([m["text"] for m in arne], ["Hei Kari", "Fra mobilen"])
+        self.assertEqual(arne[1]["sender"], 2 | P.PHONE)
+        # Kari's T5 shows the phone's message as her own (from the server).
+        self.sync(w.units[2])
+        self.assertEqual(w.units[2].texts(1), ["Hei Kari", "Fra mobilen"])
+        # To everyone from the phone: the others open it with Kari's sender key.
+        phone.cmd("send 0 Alle fra mobilen")
+        self.sync(phone)
+        w.run(20)
+        self.assertEqual(w.units[3].texts(0), ["Alle fra mobilen"])
+
+    def test_groups_and_new_keys_reach_the_phone(self):
+        w, phone = self.w, self.phone
+        conv = int(w.units[2].cmd("group %d Tur" % 0b101)[0].split()[1])  # Kari, Arne, Ola
+        w.run(30)
+        self.sync(phone)
+        groups = list(phone.state()["groups"].values())
+        self.assertEqual([(g["name"], g["members"]) for g in groups], [("Tur", 0b111)])
+        # Ola is taken out: the phone stops writing to everyone until Kari's
+        # unit sends it the new sender key (a note to self).
+        w.remove(3)
+        w.run(5)
+        self.assertNotEqual(phone.cmd("send 0 For tidlig"), ["sent"])
+        w.run(70)
+        self.sync(phone)
+        self.assertEqual(phone.cmd("send 0 Nå går det"), ["sent"])
+        self.sync(phone)
+        w.run(20)
+        self.assertEqual(w.units[1].texts(0)[-1:], ["Nå går det"])
+        del conv
 
 
 if __name__ == "__main__":

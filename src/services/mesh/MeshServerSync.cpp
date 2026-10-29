@@ -58,13 +58,13 @@ std::string Node::serverRequest() {
   for (const auto& p : pending_) mine.push_back(p.counter);
   mine.insert(mine.end(), controlWaiting_.begin(), controlWaiting_.end());
   for (const uint32_t counter : mine) {
-    for (const auto& raw : store_.packetsAfter(network_.me, counter - 1, network_.me, MAX_PIECES)) {
+    for (const auto& raw : store_.packetsAfter(network_.myDevice(), counter - 1, network_.me, MAX_PIECES)) {
       Header h;
       if (readHeader(raw.data(), raw.size(), h) && h.counter == counter) add(raw.data(), raw.size());
     }
   }
   SyncReq req;
-  for (uint8_t m = 1; m <= MAX_MEMBERS; m++) req.lastCounter[m - 1] = store_.lastCounter(m);
+  for (int slot = 0; slot < MAX_DEVICES; slot++) req.lastCounter[slot] = store_.lastCounter(slotDevice(slot));
   req.battery = battery();
   req.build = buildByte();
   req.flags = syncFlags();

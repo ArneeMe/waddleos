@@ -32,13 +32,14 @@ struct Member {
   bool admin = false;
   char name[ROSTER_NAME + 1] = "";
   uint8_t publicKey[KEY_SIZE] = {};
-  uint8_t dmKey[KEY_SIZE] = {};  // our DM key, derived on load
+  uint8_t dmKey[KEY_SIZE] = {};  // our DM key, derived on load (for me: notes to my other device)
 };
 
 struct Network {  // the network
   bool configured = false;
   uint8_t id = 0;  // network id
   uint8_t me = 0;  // my member number, 1-32
+  bool phone = false;  // this is the member's phone, not their unit (protocol/PROTOCOL.md, "Devices")
   Member members[MAX_MEMBERS];
   uint8_t networkKey[KEY_SIZE] = {};
   uint8_t adminSign[SIGN_KEY_SIZE] = {};
@@ -50,8 +51,11 @@ struct Network {  // the network
   std::string serverCert;       // the server's certificate (PEM), the only one trusted
   uint32_t counterFloor = 0;    // message counters start above this
 
-  Member* member(uint8_t number) { return isMember(number) ? &members[number - 1] : nullptr; }
-  const Member* member(uint8_t number) const { return isMember(number) ? &members[number - 1] : nullptr; }
+  // What this device sends as: my number, + PHONE on the phone.
+  uint8_t myDevice() const { return uint8_t(me | (phone ? PHONE : 0)); }
+  // By member number or device: a phone's packets belong to its member.
+  Member* member(uint8_t number) { return isDevice(number) ? &members[person(number) - 1] : nullptr; }
+  const Member* member(uint8_t number) const { return isDevice(number) ? &members[person(number) - 1] : nullptr; }
   const char* name(uint8_t number) const;
   // Member bits of everyone in the network.
   Members everyone() const;
@@ -61,6 +65,12 @@ struct Network {  // the network
 const Identity& identity();
 // A new sender key (number + 1), after someone left the network.
 void newSenderKey();
+// The phone takes its unit's new sender key (sent as a note to self).
+void adoptSenderKey(uint8_t number, const uint8_t key[KEY_SIZE]);
+// Whether this unit has a paired phone: then its key and group changes also go
+// to itself, for the phone (protocol/PROTOCOL.md, "Devices").
+bool hasTwin();
+void setHasTwin(bool twin);
 // A new secret and sender key, when this unit is taken out of the network. The
 // files on the SD card stay readable (their key is separate).
 void newIdentity();

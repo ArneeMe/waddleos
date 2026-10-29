@@ -248,8 +248,10 @@ wrote them.
 
 ## What to build, roughly in order
 
-1. Protocol 4: device in the sender byte (R2), the self pair key, group id
-   ranges.
+1. Done: protocol 4, the device in the sender byte (R2), notes to self (R3), only
+   the unit makes keys (R4), the server sends a device its other one's messages
+   (R6), the phone waits for its unit's new sender key (R7), group id ranges.
+   Tested in the simulator with Kari's unit and phone.
 2. The T5: notes to self (R3), only the T5 rotates (R4), upload after trips
    (R5), pairing endpoint (R1), the key archive and history fetch (R11, R12).
    Done: a new identity when taken out, files sealed with a key of their own

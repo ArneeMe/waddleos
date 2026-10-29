@@ -323,7 +323,7 @@ def write_roster(roster, sign_seed):
 
 def header(ptype, network, sender, recipient, counter, index=0, count=1, hops=3):
     """A 14-byte packet header (protocol/PROTOCOL.md, "Header"); no group id, key number 0."""
-    return bytes([0x57, (3 << 4) | ptype, network, (hops & 0x0F) | (0x10 if count > 1 else 0), sender,
+    return bytes([0x57, (4 << 4) | ptype, network, (hops & 0x0F) | (0x10 if count > 1 else 0), sender,
                   recipient]) + struct.pack("<IBHB", counter, (index << 4) | count, 0, 0)
 
 

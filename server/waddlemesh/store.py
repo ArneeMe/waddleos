@@ -127,7 +127,7 @@ class Store:
         their members have the key.
         """
         sql = ("SELECT raw FROM packets WHERE type = 1 AND sender = ? AND counter > ?"
-               " AND (recipient = 255 OR recipient = ? OR sender = ? OR recipient & 128)"
+               " AND (recipient = 255 OR recipient = ? OR (sender & 127) = ? OR recipient & 128)"
                " ORDER BY counter, piece_index")
         args = [sender, counter, for_member, for_member]
         if limit:
@@ -142,13 +142,13 @@ class Store:
                 if int.from_bytes(raw[6:10], "little") < before][:limit]
 
     def latest_positions(self, except_member, since=0):
-        """The newest POS (and any newer SOS) of every other member, if it came
-        at or after since (unix seconds)."""
+        """The newest POS (and any newer SOS) of every other member's devices, if
+        it came at or after since (unix seconds)."""
         out = []
         with self.lock:
             for ptype in (4, 5):
                 rows = self.db.execute(
-                    "SELECT raw FROM packets p WHERE type = ? AND sender != ? AND received_at >= ? AND counter ="
+                    "SELECT raw FROM packets p WHERE type = ? AND (sender & 127) != ? AND received_at >= ? AND counter ="
                     " (SELECT MAX(counter) FROM packets q WHERE q.type = p.type AND q.sender = p.sender)",
                     (ptype, except_member, since)).fetchall()
                 out += [bytes(r[0]) for r in rows]

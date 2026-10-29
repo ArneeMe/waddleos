@@ -9,7 +9,7 @@ import struct
 from dataclasses import dataclass, field
 
 MAGIC = 0x57
-VERSION = 3  # 3: up to 32 members, a signed roster, 2-byte group ids
+VERSION = 4  # 4: a member's phone sends as its own device (PHONE)
 MAX_PACKET = 200
 HEADER_SIZE = 14
 DEFAULT_HOPS = 3
@@ -17,12 +17,17 @@ SERVER = 0
 EVERYONE = 0xFF     # everyone
 TO_GROUP = 0xFE  # a group made on a unit; its id is in the header
 MEMBERS = tuple(range(1, 33))
+# A member's unit sends as their number, their phone as the number + PHONE.
+PHONE = 0x80
+DEVICES = MEMBERS + tuple(m | PHONE for m in MEMBERS)
+SYNC_MAX_LISTED = (MAX_PACKET - HEADER_SIZE - 5) // 5  # 36
 
 MSG, ACK, SYNC_REQ, POS, SOS, FETCH, ROSTER = 1, 2, 3, 4, 5, 6, 7
 TYPE_NAMES = {MSG: "MSG", ACK: "ACK", SYNC_REQ: "SYNC_REQ", POS: "POS", SOS: "SOS", FETCH: "FETCH", ROSTER: "ROSTER"}
 
 # SYNC_REQ flags: how the unit is set up (for the status page).
 SYNC_ON_TRIP, SYNC_SOS, SYNC_CHECK_SHIFT = 1, 2, 2
+SYNC_LISTED_ONLY = 0x20  # more devices than fit: those not listed are not asked about
 CHECK_NAMES = ["lytter hele tiden", "hvert kvarter", "hver time", "hver 6. time", "en gang i døgnet",
                "når den vekkes"]
 
@@ -70,10 +75,19 @@ def is_member(n):
     return n in MEMBERS
 
 
+def person(device):
+    """The member a device belongs to (a phone's packets are its member's)."""
+    return device & 0x7F
+
+
+def is_device(n):
+    return is_member(person(n))
+
+
 def can_read(member, sender, recipient):
     """Whether member may be given a packet sender sent to recipient. Groups go
     to everyone; only those with the key can open them."""
-    return recipient in (EVERYONE, TO_GROUP) or member in (sender, recipient)
+    return recipient in (EVERYONE, TO_GROUP) or member in (person(sender), recipient)
 
 
 def parse_header(raw):
@@ -99,7 +113,7 @@ def parse_header(raw):
     )
     if h.piece_count == 0 or h.piece_index >= h.piece_count or (not h.fragmented and h.piece_count != 1):
         raise BadPacket("pieces")
-    if h.sender != SERVER and not is_member(h.sender):
+    if h.sender != SERVER and not is_device(h.sender):
         raise BadPacket("sender %d" % h.sender)
     if h.recipient not in (EVERYONE, TO_GROUP, SERVER) and not is_member(h.recipient):
         raise BadPacket("recipient %d" % h.recipient)
@@ -127,30 +141,31 @@ def parse_ack(body):
 
 @dataclass
 class SyncReq:
-    last_counter: dict = field(default_factory=dict)  # member -> last MSG counter it has (0 when missing)
+    last_counter: dict = field(default_factory=dict)  # device -> last MSG counter it has (0 when missing)
     battery: int = 0
     build: int = 0
     flags: int = 0
     roster_version: int = 0
 
     def pack(self):
-        out = struct.pack("<BBBH", self.battery, self.build, self.flags, self.roster_version)
-        for m in MEMBERS:
-            if self.last_counter.get(m):
-                out += struct.pack("<BI", m, self.last_counter[m])
+        listed = [d for d in DEVICES if self.last_counter.get(d)]
+        flags = self.flags | (SYNC_LISTED_ONLY if len(listed) > SYNC_MAX_LISTED else 0)
+        out = struct.pack("<BBBH", self.battery, self.build, flags, self.roster_version)
+        for d in listed[:SYNC_MAX_LISTED]:
+            out += struct.pack("<BI", d, self.last_counter[d])
         return out
 
 
 def parse_sync_req(body):
-    if len(body) < 5 or (len(body) - 5) % 5 or len(body) > 5 + 5 * len(MEMBERS):
+    if len(body) < 5 or (len(body) - 5) % 5 or len(body) > 5 + 5 * SYNC_MAX_LISTED:
         raise BadPacket("sync body")
     battery, build, flags, roster = struct.unpack_from("<BBBH", body)
-    last = {m: 0 for m in MEMBERS}
+    last = {d: 0 for d in DEVICES}
     for i in range(5, len(body), 5):
-        member, counter = struct.unpack_from("<BI", body, i)
-        if not is_member(member):
-            raise BadPacket("sync member %d" % member)
-        last[member] = counter
+        device, counter = struct.unpack_from("<BI", body, i)
+        if not is_device(device):
+            raise BadPacket("sync device %d" % device)
+        last[device] = counter
     return SyncReq(last, battery, build, flags, roster)
 
 
@@ -169,7 +184,7 @@ def parse_fetch(body):
     if len(body) != 9:
         raise BadPacket("fetch body")
     f = Fetch(*struct.unpack("<BII", body))
-    if not is_member(f.sender) or f.before <= f.after:
+    if not is_device(f.sender) or f.before <= f.after:
         raise BadPacket("fetch range")
     return f
 

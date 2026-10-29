@@ -41,29 +41,39 @@ using namespace internal;
 const uint8_t* Node::keyFor(const Header& h) const {
   const Member* from = network_.member(h.sender);
   if (!from || !from->present) return nullptr;
-  if (h.recipient == EVERYONE) return senders_.key(h.sender, h.key);  // kept until their key comes
+  const bool mine = person(h.sender) == network_.me;  // from my other device
+  if (h.recipient == EVERYONE) {
+    // My other device sends with my own sender key; others' are kept until their key comes.
+    if (mine) return h.key == identity().senderKeyNumber ? identity().senderKey : nullptr;
+    return senders_.key(person(h.sender), h.key);
+  }
   if (h.recipient == network_.me) return from->dmKey;
   if (h.recipient == TO_GROUP) {
     // Not (yet) mine: the packet is kept until the key comes. A member who was
     // taken out can no longer write.
     const int slot = groups_.find(h.groupId);
-    if (slot < 0 || !groups_.at(slot).has(h.sender)) return nullptr;
+    if (slot < 0 || !groups_.at(slot).has(person(h.sender))) return nullptr;
     return groups_.at(slot).key(h.key);
+  }
+  // My other device's DM to someone: our DM key with them.
+  if (mine && isMember(h.recipient)) {
+    const Member* to = network_.member(h.recipient);
+    return to && to->present ? to->dmKey : nullptr;
   }
   return nullptr;  // a DM between two others
 }
 
 void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bool viaWifi) {
   Header h;
-  if (!readHeader(raw, len, h) || h.network != network_.id || h.sender == network_.me) return;
+  if (!readHeader(raw, len, h) || h.network != network_.id || h.sender == network_.myDevice()) return;
   const uint32_t now = millis();
   if (listeningForCheck() || viaWifi) lastCheckUnix_ = unixNow();
   if (h.sender == SERVER) {
     serverAtMs_ = now;
   } else if (!viaWifi && (h.hops == DEFAULT_HOPS || h.type == Type::SyncReq)) {
     // Straight from their radio (not relayed, not a stored copy): they are near.
-    members_[h.sender - 1].heardAtMs = now;
-    members_[h.sender - 1].rssi = rssi;
+    members_[person(h.sender) - 1].heardAtMs = now;
+    members_[person(h.sender) - 1].rssi = rssi;
   }
 
   // Someone else already sent a relay or sync answer we had queued: skip ours.
@@ -76,8 +86,8 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
     // not someone's relay or a stored copy): the sender missed our ACK.
     // Only when the message is really here (a piece may be missing).
     if (h.type == Type::Msg && h.hops == DEFAULT_HOPS && h.pieceIndex == h.pieceCount - 1 &&
-        canRead(network_.me, h.sender, h.recipient) && isMember(h.sender) && haveMessage(h)) {
-      sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
+        canRead(network_.me, h.sender, h.recipient) && isDevice(h.sender) && haveMessage(h)) {
+      sendAck(person(h.sender), h.sender, h.counter, AckState::Delivered);
     }
     return;
   }
@@ -93,7 +103,7 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
   const size_t bodyLen = len - HEADER_SIZE;
   switch (h.type) {
     case Type::Msg: {
-      if (!isMember(h.sender) || store_.hasPacket(h, raw, len)) return;
+      if (!isDevice(h.sender) || store_.hasPacket(h, raw, len)) return;
       store_.savePacket(h.sender, raw, len);  // kept to help other units catch up
       if (h.pieceCount == 1) {
         handleMessage(h, body, bodyLen);
@@ -177,10 +187,13 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
   m.time = get32(plain.data());
   memcpy(m.prevHash, plain.data() + 4, 4);
   m.text.assign(reinterpret_cast<const char*>(plain.data() + MSG_PREFIX), plain.size() - MSG_PREFIX);
-  // A group invitation or a member leaving, not a message to show.
-  if (isControl(m.text) && h.recipient == network_.me) {
+  // A group invitation or a member leaving, not a message to show. (My other
+  // device's control DMs to others come too: nothing to do with them here.)
+  if (isControl(m.text)) {
     // Not confirmed when it cannot be taken yet: it comes again at their next check.
-    if (handleControl(h.sender, m.text)) sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
+    if (h.recipient == network_.me && handleControl(person(h.sender), m.text)) {
+      sendAck(person(h.sender), h.sender, h.counter, AckState::Delivered);
+    }
     return;
   }
   if (store_.hasMessage(conversation, h.sender, h.counter)) return;
@@ -196,15 +209,19 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
   if (m.chainWarning) requestFetch(h.sender, newest, h.counter);
   store_.addMessage(conversation, m);
   if (late) fillGap(conversation, m);
-  sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
+  // My other device's own messages need no "delivered" from me.
+  if (person(h.sender) != network_.me) sendAck(person(h.sender), h.sender, h.counter, AckState::Delivered);
   // The radio's clock source when the unit has none yet.
   if (!unixNow() && m.time > 1600000000) halClock.setUtc(m.time);
 }
 
 void Node::handlePosition(const Header& h, const uint8_t* cipher, const size_t len) {
   const Member* from = network_.member(h.sender);
-  const uint8_t* key = senders_.key(h.sender, h.key);
-  if (!from || !from->present || h.recipient != EVERYONE || len != POS_SIZE + TAG_SIZE) return;
+  const uint8_t* key = senders_.key(person(h.sender), h.key);
+  if (!from || !from->present || person(h.sender) == network_.me || h.recipient != EVERYONE ||
+      len != POS_SIZE + TAG_SIZE) {
+    return;
+  }
   if (!key) {
     missingKey(h);
     return;
@@ -213,7 +230,7 @@ void Node::handlePosition(const Header& h, const uint8_t* cipher, const size_t l
   if (!open(h, key, cipher, len, plain)) return;
   Position p;
   if (!readPosition(plain, sizeof(plain), p)) return;
-  MemberStatus& st = members_[h.sender - 1];
+  MemberStatus& st = members_[person(h.sender) - 1];
   if (p.battery) st.battery = p.battery;
   if (!p.noFix) {
     st.hasPosition = true;
@@ -225,12 +242,12 @@ void Node::handlePosition(const Header& h, const uint8_t* cipher, const size_t l
     if (p.cancelled) {
       st.sos = false;
     } else {
-      if (!st.sos) newSos_ = h.sender;
+      if (!st.sos) newSos_ = person(h.sender);
       st.sos = true;
       st.sosPosition = p;
       st.sosCounter = h.counter;
       // Every repeat is answered, so a lost answer is made up a minute later.
-      sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
+      sendAck(person(h.sender), h.sender, h.counter, AckState::Delivered);
     }
   }
 }
@@ -240,7 +257,7 @@ uint8_t Node::conversationOfMine(const uint32_t counter) {
     if (p.counter == counter) return p.conversation;
   }
   // Older messages: look at the stored packet's recipient.
-  const auto raw = store_.packetsAfter(network_.me, counter - 1, network_.me, 1);
+  const auto raw = store_.packetsAfter(network_.myDevice(), counter - 1, network_.me, 1);
   Header h;
   if (!raw.empty() && readHeader(raw[0].data(), raw[0].size(), h) && h.counter == counter) {
     const int c = conversationOf(h);
@@ -251,19 +268,19 @@ uint8_t Node::conversationOfMine(const uint32_t counter) {
 
 void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
   Ack ack;
-  if (!readAck(body, len, ack) || ack.sender != network_.me) return;
+  if (!readAck(body, len, ack) || ack.sender != network_.myDevice()) return;
   controlWaiting_.erase(std::remove(controlWaiting_.begin(), controlWaiting_.end(), ack.counter), controlWaiting_.end());
   // An answer to my SOS: who has it, and who has seen it.
   if (std::find(sosCounters_.begin(), sosCounters_.end(), ack.counter) != sosCounters_.end()) {
     if (h.sender == SERVER) {
       sosOnServer_ = true;
     } else {
-      sosReceivedBy_ |= memberBit(h.sender);
-      if (ack.state == AckState::Read) sosSeenBy_ |= memberBit(h.sender);
+      sosReceivedBy_ |= memberBit(person(h.sender));
+      if (ack.state == AckState::Read) sosSeenBy_ |= memberBit(person(h.sender));
     }
     return;
   }
-  if (confirmControl(h.sender, ack.counter)) {
+  if (confirmControl(person(h.sender), ack.counter)) {
     pending_.erase(std::remove_if(pending_.begin(), pending_.end(),
                                   [&](const Pending& p) { return p.counter == ack.counter; }),
                    pending_.end());
@@ -273,7 +290,7 @@ void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
   const Delivery state = ack.state == AckState::Stored ? Delivery::Stored
                          : ack.state == AckState::Read ? Delivery::Read
                                                        : Delivery::Delivered;
-  store_.addState(conversation, network_.me, ack.counter, state, h.sender);
+  store_.addState(conversation, network_.myDevice(), ack.counter, state, person(h.sender));
   pending_.erase(std::remove_if(pending_.begin(), pending_.end(),
                                 [&](const Pending& p) { return p.counter == ack.counter; }),
                  pending_.end());
@@ -281,8 +298,8 @@ void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
 
 void Node::handleSyncReq(const Header& h, const uint8_t* body, const size_t len) {
   SyncReq req;
-  if (!isMember(h.sender) || !readSyncReq(body, len, req)) return;
-  if (req.battery) members_[h.sender - 1].battery = req.battery;
+  if (!isDevice(h.sender) || !readSyncReq(body, len, req)) return;
+  if (req.battery && !isPhone(h.sender)) members_[person(h.sender) - 1].battery = req.battery;
   size_t sent = 0;
   // Their roster is older (it may take someone out): it goes first, whole.
   if (req.rosterVersion < network_.rosterVersion) {
@@ -293,9 +310,11 @@ void Node::handleSyncReq(const Header& h, const uint8_t* body, const size_t len)
       sent++;
     }
   }
-  for (uint8_t s = 1; s <= MAX_MEMBERS && sent < MAX_SYNC_ANSWER; s++) {
-    if (s == h.sender) continue;
-    for (const auto& raw : store_.packetsAfter(s, req.lastCounter[s - 1], h.sender, MAX_SYNC_ANSWER - sent)) {
+  const bool listedOnly = (req.flags & SYNC_LISTED_ONLY) != 0;
+  for (int slot = 0; slot < MAX_DEVICES && sent < MAX_SYNC_ANSWER; slot++) {
+    const uint8_t s = slotDevice(slot);
+    if (s == h.sender || (listedOnly && !req.lastCounter[slot])) continue;
+    for (const auto& raw : store_.packetsAfter(s, req.lastCounter[slot], person(h.sender), MAX_SYNC_ANSWER - sent)) {
       // Not relayed further, and skipped if another unit or the server answers first.
       std::vector<uint8_t> copy = raw;
       copy[3] &= 0xF0;
@@ -307,9 +326,9 @@ void Node::handleSyncReq(const Header& h, const uint8_t* body, const size_t len)
 
 void Node::handleFetch(const Header& h, const uint8_t* body, const size_t len) {
   Fetch f;
-  if (!isMember(h.sender) || !readFetch(body, len, f) || f.sender == h.sender) return;
+  if (!isDevice(h.sender) || !readFetch(body, len, f) || f.sender == h.sender) return;
   size_t sent = 0;
-  for (const auto& raw : store_.packetsAfter(f.sender, f.after, h.sender, MAX_SYNC_ANSWER)) {
+  for (const auto& raw : store_.packetsAfter(f.sender, f.after, person(h.sender), MAX_SYNC_ANSWER)) {
     Header ph;
     if (!readHeader(raw.data(), raw.size(), ph) || ph.counter >= f.before) continue;
     std::vector<uint8_t> copy = raw;
@@ -320,7 +339,7 @@ void Node::handleFetch(const Header& h, const uint8_t* body, const size_t len) {
 }
 
 void Node::requestFetch(const uint8_t sender, const uint32_t after, const uint32_t before) {
-  if (!isMember(sender) || before <= after + 1) return;
+  if (!isDevice(sender) || before <= after + 1) return;
   const Fetch f{sender, after, before};
   // Over LoRa now (the server through the gateway, or another unit answers),
   // and over Wi-Fi with the next sync.

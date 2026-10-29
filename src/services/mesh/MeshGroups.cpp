@@ -126,15 +126,16 @@ int ChatGroups::take(const uint16_t id) {
   return slot;
 }
 
-uint16_t ChatGroups::nextId(const uint8_t me) {
+uint16_t ChatGroups::nextId(const uint8_t me, const bool phone) {
   Preferences prefs;
   prefs.begin("meshgroups", false);
   uint32_t count = prefs.getUInt("next", 0);
-  // 256 per member; past that, the id of a group I have left is used again
-  // (its invitations say "new group", so the others start it afresh).
+  // 256 per member: 0-127 for the unit, 128-255 for the phone, so the two
+  // never pick the same one. Past that, the id of a group I have left is used
+  // again (its invitations say "new group", so the others start it afresh).
   uint16_t id = 0;
-  for (int tries = 0; tries < 256 && !id; tries++, count++) {
-    const uint16_t candidate = groupId(me, uint8_t(count & 0xFF));
+  for (int tries = 0; tries < 128 && !id; tries++, count++) {
+    const uint16_t candidate = groupId(me, uint8_t((count & 0x7F) | (phone ? 0x80 : 0)));
     const int slot = find(candidate);
     if (slot < 0 || groups_[slot].left) id = candidate;
   }

@@ -10,7 +10,7 @@ GatewayStore::GatewayStore(const uint8_t network, const uint32_t savedCounter)
 
 bool GatewayStore::ours(const uint8_t* raw, const size_t len, Header& h) const {
   return network_ != 0 && readHeader(raw, len, h) && h.network == network_ && h.sender != SERVER &&
-         (!members_ || (members_ & memberBit(h.sender)));
+         (!members_ || (members_ & memberBit(person(h.sender))));
 }
 
 int GatewayStore::find(const Header& h) const {
@@ -93,7 +93,7 @@ void GatewayStore::addSlot(const int index, Result& r) const {
   p.data[3] &= 0xF0;  // hops 0: the asking unit is in range, nobody relays an answer
 }
 
-void GatewayStore::answerMessages(const uint8_t member, const uint8_t sender, const uint32_t after,
+void GatewayStore::answerMessages(const uint8_t asker, const uint8_t sender, const uint32_t after,
                                   const uint64_t before, Result& r) const {
   int found[SLOTS];
   int n = 0;
@@ -101,7 +101,7 @@ void GatewayStore::answerMessages(const uint8_t member, const uint8_t sender, co
     const uint8_t* d = slots_[i].packet.data;
     if (!slots_[i].seq || (d[1] & 0x0F) != uint8_t(Type::Msg) || d[4] != sender) continue;
     const uint32_t counter = get32(d + 6);
-    if (counter > after && counter < before && canRead(member, sender, d[5])) found[n++] = i;
+    if (counter > after && counter < before && canRead(person(asker), sender, d[5])) found[n++] = i;
   }
   // Oldest first, pieces in order, as the server answers.
   std::sort(found, found + n, [this](const int a, const int b) {
@@ -113,24 +113,29 @@ void GatewayStore::answerMessages(const uint8_t member, const uint8_t sender, co
   for (int i = 0; i < n; i++) addSlot(found[i], r);
 }
 
-void GatewayStore::answerSync(const uint8_t member, const SyncReq& req, Result& r) const {
-  // Messages first, then the newest position (and SOS) of each other member,
-  // then ACKs from the others for the asking unit's messages.
-  for (uint8_t sender = 1; sender <= MAX_MEMBERS; sender++) {
-    if (sender != member) answerMessages(member, sender, req.lastCounter[sender - 1], UINT64_MAX, r);
+void GatewayStore::answerSync(const uint8_t asker, const SyncReq& req, Result& r) const {
+  // Messages first (from every other device, the asker's other one too), then
+  // the newest position (and SOS) of each other member, then ACKs from the
+  // others for the asking device's messages.
+  const bool listedOnly = (req.flags & SYNC_LISTED_ONLY) != 0;
+  for (int slot = 0; slot < MAX_DEVICES; slot++) {
+    const uint8_t sender = slotDevice(slot);
+    if (sender == asker || (listedOnly && !req.lastCounter[slot])) continue;
+    answerMessages(asker, sender, req.lastCounter[slot], UINT64_MAX, r);
   }
   for (const Type type : {Type::Pos, Type::Sos}) {
-    for (uint8_t sender = 1; sender <= MAX_MEMBERS; sender++) {
-      if (sender == member) continue;
+    for (int slot = 0; slot < MAX_DEVICES; slot++) {
+      const uint8_t sender = slotDevice(slot);
+      if (person(sender) == person(asker)) continue;
       const int newest = newestOf(type, sender);
       if (newest >= 0) addSlot(newest, r);
     }
   }
-  const uint32_t own = req.lastCounter[member - 1];
+  const uint32_t own = req.lastCounter[deviceSlot(asker)];
   const uint32_t from = own > 50 ? own - 50 : 0;
   for (int i = 0; i < SLOTS; i++) {
     const uint8_t* d = slots_[i].packet.data;
-    if (slots_[i].seq && (d[1] & 0x0F) == uint8_t(Type::Ack) && d[HEADER_SIZE] == member &&
+    if (slots_[i].seq && (d[1] & 0x0F) == uint8_t(Type::Ack) && d[HEADER_SIZE] == asker &&
         get32(d + HEADER_SIZE + 1) >= from) {
       addSlot(i, r);
     }
@@ -151,7 +156,9 @@ void GatewayStore::handle(const uint8_t* raw, const size_t len, Result& r) {
     case Type::Sos:
       r.savedSlot = store(h, raw, len);
       // Like the server: the sender's screen shows that its message or SOS is kept.
-      if (h.type == Type::Sos || (h.type == Type::Msg && hasAllPieces(h))) addAck(h.sender, h.sender, h.counter, r);
+      if (h.type == Type::Sos || (h.type == Type::Msg && hasAllPieces(h))) {
+        addAck(person(h.sender), h.sender, h.counter, r);
+      }
       return;
     case Type::Ack: {
       Ack a;

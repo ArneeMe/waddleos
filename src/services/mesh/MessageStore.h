@@ -55,7 +55,7 @@ struct ConversationSummary {
   uint32_t count = 0;      // messages in the conversation
   uint32_t unread = 0;     // from others, not yet seen
   uint32_t lastTime = 0;
-  uint8_t lastSender = 0;
+  uint8_t lastSender = 0;  // the person (not the device)
   std::string lastText;    // the start of the newest message
 };
 
@@ -79,7 +79,7 @@ class MessageStore {
   // The highest MSG counter from sender that opened (or was mine, or for a group
   // I am not in), for sync requests. Packets that did not open do not count: a
   // forged one with a high counter would hide the sender's real messages.
-  uint32_t lastCounter(uint8_t sender) const { return isMember(sender) ? lastCounter_[sender - 1] : 0; }
+  uint32_t lastCounter(uint8_t sender) const { return isDevice(sender) ? lastCounter_[deviceSlot(sender)] : 0; }
   void confirmCounter(uint8_t sender, uint32_t counter);
 
   // Chat history.
@@ -103,7 +103,7 @@ class MessageStore {
 
  private:
   uint8_t me_ = 0;
-  uint32_t lastCounter_[MAX_MEMBERS] = {};
+  uint32_t lastCounter_[MAX_DEVICES] = {};  // by deviceSlot()
   ConversationSummary summaries_[CONVERSATIONS];
   uint32_t seen_[CONVERSATIONS] = {};  // read.bin
   // Newest message hash per conversation and sender (only pairs that have written).

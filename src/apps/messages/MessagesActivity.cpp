@@ -305,7 +305,7 @@ void ChatActivity::render(RenderLock&&) {
   const int last = static_cast<int>(messages.size()) - 1 - scroll;
   for (int i = last; i >= 0; i--) {
     const auto& m = messages[i];
-    const bool mine = m.sender == me;
+    const bool mine = mesh::person(m.sender) == me;  // from this unit or my phone
     const auto lines = renderer.wrappedText(TEXT_FONT, m.text.c_str(), BUBBLE_MAX_W - 32, 12);
     int textW = 0;
     for (const auto& l : lines) textW = std::max(textW, renderer.getTextWidth(TEXT_FONT, l.c_str()));
