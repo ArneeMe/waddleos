@@ -41,8 +41,8 @@ class Node {
   // joined a network (`waddle mesh join`) the unit stays quiet.
   void begin();
   void loop();
-  bool configured() const { return group_.configured; }
-  const Group& group() const { return group_; }
+  bool configured() const { return network_.configured; }
+  const Network& network() const { return network_; }
   const Identity& me() const { return identity(); }
   MessageStore& store() { return store_; }
 
@@ -55,8 +55,8 @@ class Node {
   // Groups made on units (protocol/PROTOCOL.md, "Groups").
   const ChatGroups& groups() const { return groups_; }
   // Makes a group of me and these members (bits) and invites them. Returns
-  // its conversation, or CONV_GROUP when it could not.
-  uint8_t createGroup(Members members, const std::string& name);
+  // its conversation, or -1 when it could not (16 groups already).
+  int createGroup(Members members, const std::string& name);
   // Leaves a group: the others are told and make a new key.
   void leaveGroup(uint8_t conversation);
   // Takes a member out (a lost unit): the rest get a new key.
@@ -125,7 +125,7 @@ class Node {
   };
   enum class WifiStep : uint8_t { Idle, Joining };
 
-  Group group_;
+  Network network_;
   ChatGroups groups_;
   SenderKeys senders_;
   std::vector<Fetch> fetches_;  // missing messages to ask the server for over Wi-Fi

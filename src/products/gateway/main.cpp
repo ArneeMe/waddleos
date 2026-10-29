@@ -74,7 +74,7 @@ uint32_t nextOwnSend = 0;
 
 // Only once a server has pinged it (and so told it the group): with a Pi
 // server too old to ping, the gateway keeps passing everything on as before.
-bool standalone() { return store && store->group() && millis() - lastFromPi > PI_TIMEOUT_MS; }
+bool standalone() { return store && store->network() && millis() - lastFromPi > PI_TIMEOUT_MS; }
 
 void IRAM_ATTR onReceive() { received = true; }
 
@@ -258,8 +258,8 @@ void transmit(const char* hex) {
 void pong(const char* args) {
   char* rest = nullptr;
   const long group = strtol(args, &rest, 10);
-  if (group > 0 && group < 256 && group != store->group()) {
-    store->setGroup(uint8_t(group));
+  if (group > 0 && group < 256 && group != store->network()) {
+    store->setNetwork(uint8_t(group));
     prefs.putUChar("group", uint8_t(group));
   }
   // Then who is in the network, as hex bits (member 1 = bit 0).

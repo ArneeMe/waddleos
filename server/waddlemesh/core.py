@@ -60,7 +60,7 @@ class Server:
         return found
 
     def _ack(self, member, counter, state, to):
-        h = P.Header(type=P.ACK, group=self.network, sender=P.SERVER, recipient=to,
+        h = P.Header(type=P.ACK, network=self.network, sender=P.SERVER, recipient=to,
                      counter=self.store.next_counter())
         return h.pack() + P.Ack(member, counter, state).pack()
 
@@ -77,7 +77,7 @@ class Server:
         except P.BadPacket as e:
             log.debug("dropped packet: %s", e)
             return []
-        if h.group != self.network or h.sender == P.SERVER:
+        if h.network != self.network or h.sender == P.SERVER:
             return []
         if handed_over:
             if h.type in (P.MSG, P.POS, P.SOS):

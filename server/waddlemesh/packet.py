@@ -14,8 +14,8 @@ MAX_PACKET = 200
 HEADER_SIZE = 14
 DEFAULT_HOPS = 3
 SERVER = 0
-GROUP = 0xFF     # everyone
-GROUP_TO = 0xFE  # a group made on a unit; its id is in the header
+EVERYONE = 0xFF     # everyone
+TO_GROUP = 0xFE  # a group made on a unit; its id is in the header
 MEMBERS = tuple(range(1, 33))
 
 MSG, ACK, SYNC_REQ, POS, SOS, FETCH, ROSTER = 1, 2, 3, 4, 5, 6, 7
@@ -36,7 +36,7 @@ class BadPacket(ValueError):
 @dataclass
 class Header:
     type: int
-    group: int
+    network: int
     sender: int
     recipient: int
     counter: int
@@ -44,14 +44,14 @@ class Header:
     fragmented: bool = False
     piece_index: int = 0
     piece_count: int = 1
-    group_id: int = 0  # recipient GROUP_TO: creator * 256 + their count
+    group_id: int = 0  # recipient TO_GROUP: creator * 256 + their count
     key: int = 0       # which of the sender's or the group's keys sealed it
 
     def pack(self):
         return bytes([
             MAGIC,
             (VERSION << 4) | self.type,
-            self.group,
+            self.network,
             (self.hops & 0x0F) | (0x10 if self.fragmented else 0),
             self.sender,
             self.recipient,
@@ -70,15 +70,10 @@ def is_member(n):
     return n in MEMBERS
 
 
-def is_group(recipient):
-    """A group made on a unit (who is in it, only its members know)."""
-    return recipient == GROUP_TO
-
-
 def can_read(member, sender, recipient):
     """Whether member may be given a packet sender sent to recipient. Groups go
     to everyone; only those with the key can open them."""
-    return recipient in (GROUP, GROUP_TO) or member in (sender, recipient)
+    return recipient in (EVERYONE, TO_GROUP) or member in (sender, recipient)
 
 
 def parse_header(raw):
@@ -91,7 +86,7 @@ def parse_header(raw):
         raise BadPacket("type %d" % ptype)
     h = Header(
         type=ptype,
-        group=raw[2],
+        network=raw[2],
         hops=raw[3] & 0x0F,
         fragmented=bool(raw[3] & 0x10),
         sender=raw[4],
@@ -106,9 +101,9 @@ def parse_header(raw):
         raise BadPacket("pieces")
     if h.sender != SERVER and not is_member(h.sender):
         raise BadPacket("sender %d" % h.sender)
-    if h.recipient not in (GROUP, GROUP_TO, SERVER) and not is_member(h.recipient):
+    if h.recipient not in (EVERYONE, TO_GROUP, SERVER) and not is_member(h.recipient):
         raise BadPacket("recipient %d" % h.recipient)
-    if (h.recipient == GROUP_TO) != (h.group_id != 0) or (h.group_id and not is_member(h.group_id >> 8)):
+    if (h.recipient == TO_GROUP) != (h.group_id != 0) or (h.group_id and not is_member(h.group_id >> 8)):
         raise BadPacket("group id %d" % h.group_id)
     return h
 

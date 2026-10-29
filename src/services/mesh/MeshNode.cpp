@@ -99,32 +99,32 @@ Node& Node::get() {
 
 void Node::begin() {
   identity();
-  loadGroup(group_);
+  loadNetwork(network_);
   groups_.load();
   senders_.load();
-  store_.begin(group_.me);
+  store_.begin(network_.me);
   // Above the floor from joining, so a unit that gets a former member's number
   // never repeats their counters.
-  if (group_.configured && group_.counterFloor > savedCounterLimit()) saveCounterLimit(group_.counterFloor);
+  if (network_.configured && network_.counterFloor > savedCounterLimit()) saveCounterLimit(network_.counterFloor);
   counters_ = std::make_unique<CounterReserve>(savedCounterLimit());
   loadPositions();
   pending_.clear();
-  if (group_.configured) {
+  if (network_.configured) {
     // My messages nobody confirmed before the restart: try them again.
     for (uint8_t c = 0; c < CONVERSATIONS; c++) {
       if (!canWrite(c)) continue;
       for (const auto& m : store_.load(c, 20)) {
-        if (m.sender != group_.me || m.stored || m.deliveredTo) continue;
+        if (m.sender != network_.me || m.stored || m.deliveredTo) continue;
         if (pending_.size() >= MAX_PENDING) pending_.erase(pending_.begin());
         pending_.push_back(Pending{m.counter, c, 0, millis() + 10000});
       }
     }
   }
-  if (!group_.configured) {
+  if (!network_.configured) {
     LOG_INF("MESH", "Not in a network yet: `waddle mesh join`. Public key %s", toHex(identity().publicKey, 8).c_str());
     return;
   }
-  LOG_INF("MESH", "Member %u of network %u (roster %u)", group_.me, group_.id, group_.rosterVersion);
+  LOG_INF("MESH", "Member %u of network %u (roster %u)", network_.me, network_.id, network_.rosterVersion);
   dropMissingMembers();
   // Everyone who has not confirmed my sender key gets it (after joining: all).
   loadKeyConfirmations();
@@ -140,7 +140,7 @@ void Node::begin() {
 }
 
 void Node::startCheck() {
-  if (!group_.configured) return;
+  if (!network_.configured) return;
   const uint32_t now = millis();
   // A radio that did not start (a loose cable, a cold start) gets another go.
   if (!radio::isUp()) radio::begin(params_);
@@ -148,7 +148,7 @@ void Node::startCheck() {
   requestSync();
   // At home the server is one Wi-Fi hop away; on a trip Wi-Fi is rarely there.
   // Retries of unanswered messages still try Wi-Fi in both modes.
-  if (!MESH_SETTINGS.onTrip && MESH_SETTINGS.homeWifi && !group_.serverUrl.empty() && battery() >= LOW_BATTERY &&
+  if (!MESH_SETTINGS.onTrip && MESH_SETTINGS.homeWifi && !network_.serverUrl.empty() && battery() >= LOW_BATTERY &&
       (!lastWifiSyncMs_ || now - lastWifiSyncMs_ > CHECK_WIFI_GAP_MS)) {
     startWifiSync();
   }
@@ -185,8 +185,8 @@ uint32_t Node::nextCounter() {
 Header Node::header(const Type type, const uint8_t recipient) {
   Header h;
   h.type = type;
-  h.group = group_.id;
-  h.sender = group_.me;
+  h.network = network_.id;
+  h.sender = network_.me;
   h.recipient = recipient;
   h.counter = nextCounter();
   return h;
@@ -214,10 +214,10 @@ void Node::sendSealed(const Header& h, const uint8_t* key, const uint8_t* plain,
     Header piece;
     readHeader(sealed->packets[i], sealed->lengths[i], piece);
     seen_.remember(piece);  // never relay our own packet back
-    if (store) store_.savePacket(group_.me, sealed->packets[i], sealed->lengths[i]);
+    if (store) store_.savePacket(network_.me, sealed->packets[i], sealed->lengths[i]);
     queue(sealed->packets[i], sealed->lengths[i], delayMs, false);
   }
-  if (store) store_.confirmCounter(group_.me, h.counter);
+  if (store) store_.confirmCounter(network_.me, h.counter);
 }
 
 void Node::sendAck(const uint8_t toMember, const uint8_t ackedSender, const uint32_t counter, const AckState state) {
@@ -231,37 +231,37 @@ void Node::sendAck(const uint8_t toMember, const uint8_t ackedSender, const uint
 
 const uint8_t* Node::sendingKey(const uint8_t conversation, uint8_t* keyNumber) const {
   if (keyNumber) *keyNumber = 0;
-  if (!group_.configured) return nullptr;
-  if (conversation == CONV_GROUP) {
-    if (keyNumber) *keyNumber = identity().senderNumber;
+  if (!network_.configured) return nullptr;
+  if (conversation == CONV_EVERYONE) {
+    if (keyNumber) *keyNumber = identity().senderKeyNumber;
     return identity().senderKey;
   }
   if (isGroupConversation(conversation)) {
-    const ChatGroup& g = groups_.at(conversation - CONV_GROUPS);
+    const ChatGroup& g = groups_.at(conversation - CONV_FIRST_GROUP);
     const GroupKey* newest = g.newest();
-    if (!g.id || g.left || !(g.members & memberBit(group_.me)) || !newest) return nullptr;
+    if (!g.id || g.left || !(g.members & memberBit(network_.me)) || !newest) return nullptr;
     if (keyNumber) *keyNumber = newest->number;
     return newest->key;
   }
-  const Member* m = group_.member(conversation);
-  return m && m->present && conversation != group_.me ? m->pairKey : nullptr;
+  const Member* m = network_.member(conversation);
+  return m && m->present && conversation != network_.me ? m->dmKey : nullptr;
 }
 
 bool Node::canWrite(const uint8_t conversation) const { return sendingKey(conversation) != nullptr; }
 
 uint8_t Node::recipientOf(const uint8_t conversation) const {
-  if (conversation == CONV_GROUP) return GROUP;
-  if (isGroupConversation(conversation)) return GROUP_TO;
+  if (conversation == CONV_EVERYONE) return EVERYONE;
+  if (isGroupConversation(conversation)) return TO_GROUP;
   return conversation;
 }
 
 int Node::conversationOf(const Header& h) const {
-  if (h.recipient == GROUP) return CONV_GROUP;
-  if (h.recipient == GROUP_TO) {
+  if (h.recipient == EVERYONE) return CONV_EVERYONE;
+  if (h.recipient == TO_GROUP) {
     const int slot = groups_.find(h.groupId);
-    return slot < 0 ? -1 : CONV_GROUPS + slot;
+    return slot < 0 ? -1 : CONV_FIRST_GROUP + slot;
   }
-  return h.sender == group_.me ? h.recipient : h.sender;
+  return h.sender == network_.me ? h.recipient : h.sender;
 }
 
 bool Node::sendText(const uint8_t conversation, const std::string& text) {
@@ -270,9 +270,9 @@ bool Node::sendText(const uint8_t conversation, const std::string& text) {
   if (!key || text.empty() || text.size() > MAX_TEXT) return false;
   const uint8_t recipient = recipientOf(conversation);
   ChatMessage msg;
-  msg.sender = group_.me;
+  msg.sender = network_.me;
   msg.time = unixNow();
-  store_.lastHash(conversation, group_.me, msg.prevHash);
+  store_.lastHash(conversation, network_.me, msg.prevHash);
   msg.text = text;
 
   std::string plain(MSG_PREFIX, '\0');
@@ -281,7 +281,7 @@ bool Node::sendText(const uint8_t conversation, const std::string& text) {
   plain += text;
   Header h = header(Type::Msg, recipient);
   h.key = keyNumber;
-  if (recipient == GROUP_TO) h.groupId = groups_.at(conversation - CONV_GROUPS).id;
+  if (recipient == TO_GROUP) h.groupId = groups_.at(conversation - CONV_FIRST_GROUP).id;
   msg.counter = h.counter;
   sendSealed(h, key, reinterpret_cast<const uint8_t*>(plain.data()), plain.size(), true);
   store_.addMessage(conversation, msg);
@@ -297,7 +297,7 @@ void Node::markRead(const uint8_t conversation) {
   const auto recent = store_.load(conversation, 30);
   bool told[MAX_MEMBERS + 1] = {};
   for (auto it = recent.rbegin(); it != recent.rend(); ++it) {
-    if (it->sender == group_.me || !isMember(it->sender) || told[it->sender]) continue;
+    if (it->sender == network_.me || !isMember(it->sender) || told[it->sender]) continue;
     told[it->sender] = true;
     sendAck(it->sender, it->sender, it->counter, AckState::Read);
   }
@@ -306,7 +306,7 @@ void Node::markRead(const uint8_t conversation) {
 }
 
 void Node::sendPosition(const Type type, const bool cancelled) {
-  if (!group_.configured) return;
+  if (!network_.configured) return;
   const gps::Fix& fix = gps::lastFix();
   Position p;
   p.time = fix.valid ? fix.time : unixNow();
@@ -318,12 +318,12 @@ void Node::sendPosition(const Type type, const bool cancelled) {
   p.cancelled = cancelled;
   uint8_t plain[POS_SIZE];
   writePosition(p, plain);
-  Header h = header(type, GROUP);
-  h.key = identity().senderNumber;
+  Header h = header(type, EVERYONE);
+  h.key = identity().senderKeyNumber;
   if (type == Type::Sos) sosCounters_.push_back(h.counter);
   sendSealed(h, identity().senderKey, plain, sizeof(plain), false);
   if (fix.valid) {
-    MemberStatus& self = members_[group_.me - 1];
+    MemberStatus& self = members_[network_.me - 1];
     self.hasPosition = true;
     self.position = p;
     self.positionAtMs = gps::lastFixAtMs();
@@ -331,7 +331,7 @@ void Node::sendPosition(const Type type, const bool cancelled) {
 }
 
 void Node::startSos() {
-  if (!group_.configured) return;
+  if (!network_.configured) return;
   sosActive_ = true;
   nextSosMs_ = millis();
   sosCounters_.clear();
@@ -368,15 +368,15 @@ const MemberStatus& Node::member(const uint8_t number) const {
 }
 
 void Node::requestSync() {
-  if (!group_.configured || !radio::isUp()) return;
+  if (!network_.configured || !radio::isUp()) return;
   SyncReq req;
   for (uint8_t m = 1; m <= MAX_MEMBERS; m++) req.lastCounter[m - 1] = store_.lastCounter(m);
   req.battery = battery();
   req.build = buildByte();
   req.flags = syncFlags();
-  req.rosterVersion = group_.rosterVersion;
+  req.rosterVersion = network_.rosterVersion;
   uint8_t raw[HEADER_SIZE + SYNC_REQ_MAX];
-  Header h = header(Type::SyncReq, GROUP);
+  Header h = header(Type::SyncReq, EVERYONE);
   h.hops = 0;  // answered by whoever hears it; not relayed
   writeHeader(h, raw);
   const size_t len = HEADER_SIZE + writeSyncReq(req, raw + HEADER_SIZE);
@@ -426,11 +426,11 @@ uint32_t Node::msUntilWork() const {
 // --- Receiving ----------------------------------------------------------------
 
 const uint8_t* Node::keyFor(const Header& h) const {
-  const Member* from = group_.member(h.sender);
+  const Member* from = network_.member(h.sender);
   if (!from || !from->present) return nullptr;
-  if (h.recipient == GROUP) return senders_.key(h.sender, h.key);  // kept until their key comes
-  if (h.recipient == group_.me) return from->pairKey;
-  if (h.recipient == GROUP_TO) {
+  if (h.recipient == EVERYONE) return senders_.key(h.sender, h.key);  // kept until their key comes
+  if (h.recipient == network_.me) return from->dmKey;
+  if (h.recipient == TO_GROUP) {
     // Not (yet) mine: the packet is kept until the key comes. A member who was
     // taken out can no longer write.
     const int slot = groups_.find(h.groupId);
@@ -442,7 +442,7 @@ const uint8_t* Node::keyFor(const Header& h) const {
 
 void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bool viaWifi) {
   Header h;
-  if (!readHeader(raw, len, h) || h.group != group_.id || h.sender == group_.me) return;
+  if (!readHeader(raw, len, h) || h.network != network_.id || h.sender == network_.me) return;
   const uint32_t now = millis();
   if (listeningForCheck() || viaWifi) lastCheckUnix_ = unixNow();
   if (h.sender == SERVER) {
@@ -463,14 +463,14 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
     // not someone's relay or a stored copy): the sender missed our ACK.
     // Only when the message is really here (a piece may be missing).
     if (h.type == Type::Msg && h.hops == DEFAULT_HOPS && h.pieceIndex == h.pieceCount - 1 &&
-        canRead(group_.me, h.sender, h.recipient) && isMember(h.sender) && haveMessage(h)) {
+        canRead(network_.me, h.sender, h.recipient) && isMember(h.sender) && haveMessage(h)) {
       sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
     }
     return;
   }
 
   // Pass it on so units out of each other's range still hear it.
-  if (!viaWifi && h.hops > 0 && h.type != Type::SyncReq && h.recipient != group_.me) {
+  if (!viaWifi && h.hops > 0 && h.type != Type::SyncReq && h.recipient != network_.me) {
     std::vector<uint8_t> copy(raw, raw + len);
     copy[3] = uint8_t((copy[3] & 0xF0) | (h.hops - 1));
     queue(copy.data(), copy.size(), randomBetween(500, 2500), true);
@@ -517,7 +517,7 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
     case Type::Roster: {
       // From the admin's tool through the server (or a unit passing it on).
       // The pieces are kept, to pass the roster on to units that missed it.
-      if (h.sender != SERVER || h.counter < ROSTER_COUNTER + group_.rosterVersion) break;
+      if (h.sender != SERVER || h.counter < ROSTER_COUNTER + network_.rosterVersion) break;
       Header first;
       if (!rosterPieces_.empty() &&
           (!readHeader(rosterPieces_[0].data(), rosterPieces_[0].size(), first) || first.counter != h.counter)) {
@@ -565,7 +565,7 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
   memcpy(m.prevHash, plain.data() + 4, 4);
   m.text.assign(reinterpret_cast<const char*>(plain.data() + MSG_PREFIX), plain.size() - MSG_PREFIX);
   // A group invitation or a member leaving, not a message to show.
-  if (!m.text.empty() && m.text[0] == '\0' && h.recipient == group_.me) {
+  if (!m.text.empty() && m.text[0] == '\0' && h.recipient == network_.me) {
     // Not confirmed when it cannot be taken yet: it comes again at their next check.
     if (handleControl(h.sender, m.text)) sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
     return;
@@ -589,9 +589,9 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
 }
 
 void Node::handlePosition(const Header& h, const uint8_t* cipher, const size_t len) {
-  const Member* from = group_.member(h.sender);
+  const Member* from = network_.member(h.sender);
   const uint8_t* key = senders_.key(h.sender, h.key);
-  if (!from || !from->present || h.recipient != GROUP || len != POS_SIZE + TAG_SIZE) return;
+  if (!from || !from->present || h.recipient != EVERYONE || len != POS_SIZE + TAG_SIZE) return;
   if (!key) {
     missingKey(h);
     return;
@@ -627,18 +627,18 @@ uint8_t Node::conversationOfMine(const uint32_t counter) {
     if (p.counter == counter) return p.conversation;
   }
   // Older messages: look at the stored packet's recipient.
-  const auto raw = store_.packetsAfter(group_.me, counter - 1, group_.me, 1);
+  const auto raw = store_.packetsAfter(network_.me, counter - 1, network_.me, 1);
   Header h;
   if (!raw.empty() && readHeader(raw[0].data(), raw[0].size(), h) && h.counter == counter) {
     const int c = conversationOf(h);
-    return c < 0 ? CONV_GROUP : uint8_t(c);
+    return c < 0 ? CONV_EVERYONE : uint8_t(c);
   }
-  return CONV_GROUP;
+  return CONV_EVERYONE;
 }
 
 void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
   Ack ack;
-  if (!readAck(body, len, ack) || ack.sender != group_.me) return;
+  if (!readAck(body, len, ack) || ack.sender != network_.me) return;
   controlWaiting_.erase(std::remove(controlWaiting_.begin(), controlWaiting_.end(), ack.counter), controlWaiting_.end());
   // An answer to my SOS: who has it, and who has seen it.
   if (std::find(sosCounters_.begin(), sosCounters_.end(), ack.counter) != sosCounters_.end()) {
@@ -660,7 +660,7 @@ void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
   const Delivery state = ack.state == AckState::Stored ? Delivery::Stored
                          : ack.state == AckState::Read ? Delivery::Read
                                                        : Delivery::Delivered;
-  store_.addState(conversation, group_.me, ack.counter, state, h.sender);
+  store_.addState(conversation, network_.me, ack.counter, state, h.sender);
   pending_.erase(std::remove_if(pending_.begin(), pending_.end(),
                                 [&](const Pending& p) { return p.counter == ack.counter; }),
                  pending_.end());
@@ -672,7 +672,7 @@ void Node::handleSyncReq(const Header& h, const uint8_t* body, const size_t len)
   if (req.battery) members_[h.sender - 1].battery = req.battery;
   size_t sent = 0;
   // Their roster is older (it may take someone out): it goes first, whole.
-  if (req.rosterVersion < group_.rosterVersion) {
+  if (req.rosterVersion < network_.rosterVersion) {
     for (const auto& raw : savedRosterPackets()) {
       std::vector<uint8_t> copy = raw;
       copy[3] &= 0xF0;
@@ -714,7 +714,7 @@ void Node::requestFetch(const uint8_t sender, const uint32_t after, const uint32
   if (fetches_.size() < 8) fetches_.push_back(f);
   if (!radio::isUp()) return;
   uint8_t raw[HEADER_SIZE + FETCH_SIZE];
-  Header h = header(Type::Fetch, GROUP);
+  Header h = header(Type::Fetch, EVERYONE);
   h.hops = 0;
   writeHeader(h, raw);
   writeFetch(f, raw + HEADER_SIZE);
@@ -787,14 +787,14 @@ std::string invitation(const ChatGroup& g, const GroupKey& k, const bool fresh) 
 }  // namespace
 
 uint32_t Node::sendControl(const uint8_t to, const std::string& payload, const uint32_t delayMs) {
-  const Member* m = group_.member(to);
-  if (!m || !m->present || to == group_.me) return 0;
+  const Member* m = network_.member(to);
+  if (!m || !m->present || to == network_.me) return 0;
   // A DM like any other (ACKs, retries, sync), never shown as a message.
   std::string plain(MSG_PREFIX, '\0');
   put32(reinterpret_cast<uint8_t*>(&plain[0]), unixNow());
   plain += payload;
   const Header h = header(Type::Msg, to);
-  sendSealed(h, m->pairKey, reinterpret_cast<const uint8_t*>(plain.data()), plain.size(), true, delayMs);
+  sendSealed(h, m->dmKey, reinterpret_cast<const uint8_t*>(plain.data()), plain.size(), true, delayMs);
   // Not in pending_ (31 key DMs would push the user's own retries out): the
   // ones that must arrive are sent again at each check until confirmed. Until
   // someone answers, it also goes up with each Wi-Fi sync.
@@ -806,10 +806,10 @@ uint32_t Node::sendControl(const uint8_t to, const std::string& payload, const u
 }
 
 void Node::sendSenderKey(const uint8_t to, const uint32_t delayMs) {
-  const Member* m = group_.member(to);
-  if (!m || !m->present || to == group_.me) return;
+  const Member* m = network_.member(to);
+  if (!m || !m->present || to == network_.me) return;
   const Identity& mine = identity();
-  std::string p{'\0', SENDER_KEY, char(mine.senderNumber)};
+  std::string p{'\0', SENDER_KEY, char(mine.senderKeyNumber)};
   p.append(reinterpret_cast<const char*>(mine.senderKey), KEY_SIZE);
   senderKeyCounters_[to - 1] = sendControl(to, p, delayMs);
 }
@@ -833,9 +833,9 @@ void Node::rotate(const int slot) {
   const GroupKey* newest = g.newest();
   uint8_t key[KEY_SIZE];
   esp_fill_random(key, KEY_SIZE);
-  g.addKey(uint8_t((newest ? newest->number : 0) + 1), group_.me, key);
+  g.addKey(uint8_t((newest ? newest->number : 0) + 1), network_.me, key);
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-    if (n != group_.me && g.has(n)) sendToMember(slot, n, INVITE, 0);
+    if (n != network_.me && g.has(n)) sendToMember(slot, n, INVITE, 0);
   }
   groups_.save();
   LOG_INF("MESH", "Group %04x has key %u", g.id, g.newest()->number);
@@ -849,7 +849,7 @@ void Node::takeOut(const int slot, const uint8_t member) {
     if (n.member == member) n = Notice{};
   }
   groups_.save();
-  if (!g.left && lowest(g.members) == group_.me) rotate(slot);
+  if (!g.left && lowest(g.members) == network_.me) rotate(slot);
 }
 
 bool Node::handleControl(const uint8_t from, const std::string& text) {
@@ -878,7 +878,7 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
     Members members = 0;
     for (int i = 0; i < 4; i++) members |= Members(uint8_t(text[6 + i])) << (8 * i);
     const uint8_t* key = reinterpret_cast<const uint8_t*>(&text[10]);
-    if (!number || !(members & memberBit(from)) || !(members & memberBit(group_.me))) return true;
+    if (!number || !(members & memberBit(from)) || !(members & memberBit(network_.me))) return true;
     // Only its creator starts a group, or starts an id of theirs afresh: nobody
     // else can make up a group under someone's id or take one over.
     const bool creator = from == groupCreator(id);
@@ -891,14 +891,14 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
       groups_.at(slot) = ChatGroup{};
       groups_.at(slot).id = id;
       groups_.at(slot).members = members;
-      store_.clear(uint8_t(CONV_GROUPS + slot));
+      store_.clear(uint8_t(CONV_FIRST_GROUP + slot));
     } else if (fresh && creator && groups_.at(slot).key(1) &&
                memcmp(groups_.at(slot).key(1), key, KEY_SIZE) != 0) {
       // The creator used an id again (they had left the old group).
       groups_.at(slot) = ChatGroup{};
       groups_.at(slot).id = id;
       groups_.at(slot).members = members;
-      store_.clear(uint8_t(CONV_GROUPS + slot));
+      store_.clear(uint8_t(CONV_FIRST_GROUP + slot));
     }
     ChatGroup& g = groups_.at(slot);
     // Only a member can change the group, and only with a newer key.
@@ -925,8 +925,8 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
   } else if (text[1] == REMOVE) {
     // Asked to take someone out: only the lowest of those who stay does it.
     const uint8_t member = uint8_t(text[4]);
-    if (!isMember(member) || member == group_.me || !g.has(member)) return true;
-    if (lowest(g.members & ~memberBit(member)) == group_.me) takeOut(slot, member);
+    if (!isMember(member) || member == network_.me || !g.has(member)) return true;
+    if (lowest(g.members & ~memberBit(member)) == network_.me) takeOut(slot, member);
   }
   changes_++;
   return true;
@@ -939,23 +939,23 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
 // message under a key number it lacks asks for it ('K'), at most every few hours.
 
 void Node::missingKey(const Header& h) {
-  const Member* from = group_.member(h.sender);
-  if (!group_.configured || !from || !from->present || !h.key) return;
-  if (h.recipient == GROUP) {
+  const Member* from = network_.member(h.sender);
+  if (!network_.configured || !from || !from->present || !h.key) return;
+  if (h.recipient == EVERYONE) {
     askForKey(h.sender, 0, h.key);
-  } else if (h.recipient == GROUP_TO) {
+  } else if (h.recipient == TO_GROUP) {
     const int slot = groups_.find(h.groupId);
     if (slot < 0) {
       // Its invitation never came: the creator sends it again if I am in it.
       // Its counter counts, so syncs move past groups I am not in.
       store_.confirmCounter(h.sender, h.counter);
-      if (isMember(groupCreator(h.groupId)) && groupCreator(h.groupId) != group_.me) {
+      if (isMember(groupCreator(h.groupId)) && groupCreator(h.groupId) != network_.me) {
         askForKey(groupCreator(h.groupId), h.groupId, h.key);
       }
       return;
     }
     const ChatGroup& g = groups_.at(slot);
-    if (!g.left && g.has(group_.me) && g.has(h.sender) && !g.key(h.key)) askForKey(h.sender, h.groupId, h.key);
+    if (!g.left && g.has(network_.me) && g.has(h.sender) && !g.key(h.key)) askForKey(h.sender, h.groupId, h.key);
   }
 }
 
@@ -983,7 +983,7 @@ void Node::askForKey(const uint8_t to, const uint16_t groupId, const uint8_t num
 void Node::answerKeyRequest(const uint8_t from, const uint16_t groupId, const uint8_t number) {
   if (!groupId) {
     // My sender key: sent again (and no longer counted as confirmed).
-    if (number != identity().senderNumber) return;
+    if (number != identity().senderKeyNumber) return;
     senderKeyConfirmed_ &= ~memberBit(from);
     saveKeyConfirmations();
     sendSenderKey(from);
@@ -992,7 +992,7 @@ void Node::answerKeyRequest(const uint8_t from, const uint16_t groupId, const ui
   const int slot = groups_.find(groupId);
   if (slot < 0) return;
   ChatGroup& g = groups_.at(slot);
-  if (g.left || !g.has(from) || !g.has(group_.me)) return;
+  if (g.left || !g.has(from) || !g.has(network_.me)) return;
   const GroupKey* newest = g.newest();
   if (newest && newest->number == number) {
     sendToMember(slot, from, INVITE, 0);
@@ -1026,20 +1026,20 @@ bool Node::confirmControl(const uint8_t from, const uint32_t counter) {
 
 bool Node::resendStored(const uint32_t counter, const uint32_t delayMs) {
   // The same packet again (same counter): no new copy on the card or the server.
-  const auto pieces = counter ? store_.piecesOf(group_.me, counter) : std::vector<std::vector<uint8_t>>{};
+  const auto pieces = counter ? store_.piecesOf(network_.me, counter) : std::vector<std::vector<uint8_t>>{};
   for (const auto& raw : pieces) queue(raw.data(), raw.size(), delayMs, false);
   return !pieces.empty();
 }
 
 void Node::resendUnconfirmed() {
-  if (!group_.configured) return;
+  if (!network_.configured) return;
   // At most every half hour, however often the unit checks.
   const uint32_t now = millis();
   if (lastResendMs_ && now - lastResendMs_ < RESEND_GAP_MS) return;
   lastResendMs_ = now;
   // My sender key, to everyone who has not confirmed it.
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-    if (n != group_.me && group_.member(n)->present && !(senderKeyConfirmed_ & memberBit(n))) {
+    if (n != network_.me && network_.member(n)->present && !(senderKeyConfirmed_ & memberBit(n))) {
       const uint32_t delay = randomBetween(0, KEY_SPREAD_MS);
       if (!resendStored(senderKeyCounters_[n - 1], delay)) sendSenderKey(n, delay);
     }
@@ -1050,7 +1050,7 @@ void Node::resendUnconfirmed() {
     if (!g.id) continue;
     for (Notice& n : g.notices) {
       if (!n.member) continue;
-      const Member* m = group_.member(n.member);
+      const Member* m = network_.member(n.member);
       if (!m || !m->present) {
         n = Notice{};  // gone from the network
         changed = true;
@@ -1067,8 +1067,8 @@ void Node::openWaiting(const uint16_t groupId) {
   // Group messages that came before the key: kept as packets, opened now.
   Reassembler pieces;
   for (uint8_t s = 1; s <= MAX_MEMBERS; s++) {
-    if (s == group_.me) continue;
-    for (const auto& raw : store_.packetsTo(s, GROUP_TO)) {
+    if (s == network_.me) continue;
+    for (const auto& raw : store_.packetsTo(s, TO_GROUP)) {
       Header h;
       if (!readHeader(raw.data(), raw.size(), h) || h.groupId != groupId) continue;
       const uint8_t* joined = nullptr;
@@ -1085,7 +1085,7 @@ void Node::openWaiting(const uint16_t groupId) {
 void Node::openWaitingFrom(const uint8_t sender) {
   // Messages to everyone that came before the sender's key.
   Reassembler pieces;
-  for (const auto& raw : store_.packetsTo(sender, GROUP)) {
+  for (const auto& raw : store_.packetsTo(sender, EVERYONE)) {
     Header h;
     if (!readHeader(raw.data(), raw.size(), h)) continue;
     const uint8_t* joined = nullptr;
@@ -1097,31 +1097,31 @@ void Node::openWaitingFrom(const uint8_t sender) {
   }
 }
 
-uint8_t Node::createGroup(const Members others, const std::string& name) {
-  const Members members = (others & group_.everyone()) | memberBit(group_.me);
-  if (!group_.configured || memberCount(members) < 2) return CONV_GROUP;
-  const uint16_t id = groups_.nextId(group_.me);
-  if (!id) return CONV_GROUP;
+int Node::createGroup(const Members others, const std::string& name) {
+  const Members members = (others & network_.everyone()) | memberBit(network_.me);
+  if (!network_.configured || memberCount(members) < 2) return -1;
+  const uint16_t id = groups_.nextId(network_.me);
+  if (!id) return -1;
   const int slot = groups_.take(id);
-  if (slot < 0) return CONV_GROUP;  // 16 groups already
+  if (slot < 0) return -1;  // 16 groups already
   ChatGroup& g = groups_.at(slot);
   g = ChatGroup{};
   g.id = id;
   g.members = members;
   strlcpy(g.name, name.c_str(), sizeof(g.name));
-  store_.clear(uint8_t(CONV_GROUPS + slot));
+  store_.clear(uint8_t(CONV_FIRST_GROUP + slot));
   rotate(slot);  // key number 1 (marked new), and the invitations
   changes_++;
-  return uint8_t(CONV_GROUPS + slot);
+  return CONV_FIRST_GROUP + slot;
 }
 
 void Node::leaveGroup(const uint8_t conversation) {
   if (!isGroupConversation(conversation)) return;
-  const int slot = conversation - CONV_GROUPS;
+  const int slot = conversation - CONV_FIRST_GROUP;
   ChatGroup& g = groups_.at(slot);
   if (!g.id || g.left) return;
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-    if (n != group_.me && g.has(n)) sendToMember(slot, n, LEAVE, 0);
+    if (n != network_.me && g.has(n)) sendToMember(slot, n, LEAVE, 0);
   }
   g.left = true;
   groups_.save();
@@ -1129,12 +1129,12 @@ void Node::leaveGroup(const uint8_t conversation) {
 }
 
 void Node::removeFromGroup(const uint8_t conversation, const uint8_t member) {
-  if (!isGroupConversation(conversation) || member == group_.me) return;
-  const int slot = conversation - CONV_GROUPS;
+  if (!isGroupConversation(conversation) || member == network_.me) return;
+  const int slot = conversation - CONV_FIRST_GROUP;
   ChatGroup& g = groups_.at(slot);
   if (!g.id || g.left || !g.has(member)) return;
   const uint8_t keeper = lowest(g.members & ~memberBit(member));
-  if (keeper == group_.me) {
+  if (keeper == network_.me) {
     takeOut(slot, member);
   } else {
     sendToMember(slot, keeper, REMOVE, member);  // the lowest member makes the new key
@@ -1149,7 +1149,7 @@ void Node::dropMissingMembers() {
     ChatGroup& g = groups_.at(slot);
     if (!g.id) continue;
     for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-      if (g.has(n) && !(group_.everyone() & memberBit(n))) takeOut(slot, n);
+      if (g.has(n) && !(network_.everyone() & memberBit(n))) takeOut(slot, n);
     }
   }
 }
@@ -1157,13 +1157,13 @@ void Node::dropMissingMembers() {
 // --- The roster (protocol/PROTOCOL.md, "The roster") -----------------------------
 
 void Node::handleRoster(const Header& h, const uint8_t* cipher, const size_t len) {
-  if (h.sender != SERVER || h.recipient != GROUP || len <= TAG_SIZE) return;
+  if (h.sender != SERVER || h.recipient != EVERYONE || len <= TAG_SIZE) return;
   std::vector<uint8_t> plain(len - TAG_SIZE);
-  if (!open(h, group_.networkKey, cipher, len, plain.data())) return;
-  const Members before = group_.everyone();
-  const bool changed = applyRoster(group_, plain.data(), plain.size());
+  if (!open(h, network_.networkKey, cipher, len, plain.data())) return;
+  const Members before = network_.everyone();
+  const bool changed = applyRoster(network_, plain.data(), plain.size());
   // The pieces of the roster I have now, to pass on (handleSyncReq).
-  if (h.counter == ROSTER_COUNTER + group_.rosterVersion && rosterPieces_.size() == h.pieceCount) {
+  if (h.counter == ROSTER_COUNTER + network_.rosterVersion && rosterPieces_.size() == h.pieceCount) {
     std::vector<uint8_t> framed;
     for (const auto& piece : rosterPieces_) {
       framed.push_back(uint8_t(piece.size()));
@@ -1183,7 +1183,7 @@ std::vector<std::vector<uint8_t>> Node::savedRosterPackets() const {
     const size_t n = framed[at];
     Header h;
     if (at + 1 + n > framed.size() || !readHeader(&framed[at + 1], n, h)) break;
-    if (h.counter != ROSTER_COUNTER + group_.rosterVersion) return {};  // an older one
+    if (h.counter != ROSTER_COUNTER + network_.rosterVersion) return {};  // an older one
     out.emplace_back(framed.begin() + long(at + 1), framed.begin() + long(at + 1 + n));
     at += 1 + n;
   }
@@ -1191,12 +1191,12 @@ std::vector<std::vector<uint8_t>> Node::savedRosterPackets() const {
 }
 
 void Node::rosterChanged(const Members before) {
-  if (!group_.configured) {
+  if (!network_.configured) {
     LOG_INF("MESH", "Taken out of the network");
     changes_++;
     return;
   }
-  const Members now = group_.everyone();
+  const Members now = network_.everyone();
   const Members gone = before & ~now;
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
     if (gone & memberBit(n)) {
@@ -1215,7 +1215,7 @@ void Node::rosterChanged(const Members before) {
   senderKeyConfirmed_ &= before & now;
   saveKeyConfirmations();
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-    if (n != group_.me && (now & memberBit(n)) && !(senderKeyConfirmed_ & memberBit(n))) {
+    if (n != network_.me && (now & memberBit(n)) && !(senderKeyConfirmed_ & memberBit(n))) {
       sendSenderKey(n, randomBetween(1000, KEY_SPREAD_MS));
     }
   }
@@ -1226,7 +1226,7 @@ void Node::loadKeyConfirmations() {
   Preferences prefs;
   prefs.begin("waddlemesh", true);
   // Confirmations count only for the sender key they were for.
-  const bool sameKey = prefs.getUInt("keySentNum", 0) == identity().senderNumber;
+  const bool sameKey = prefs.getUInt("keySentNum", 0) == identity().senderKeyNumber;
   senderKeyConfirmed_ = sameKey ? prefs.getUInt("keySent", 0) : 0;
   prefs.end();
 }
@@ -1235,7 +1235,7 @@ void Node::saveKeyConfirmations() {
   Preferences prefs;
   prefs.begin("waddlemesh", false);
   prefs.putUInt("keySent", senderKeyConfirmed_);
-  prefs.putUInt("keySentNum", identity().senderNumber);
+  prefs.putUInt("keySentNum", identity().senderKeyNumber);
   prefs.end();
 }
 
@@ -1255,9 +1255,9 @@ void Node::sendOutbox() {
   if (!radio::send(raw.data(), raw.size())) return;
   // My message has left the unit: show "sendt".
   Header h;
-  if (readHeader(raw.data(), raw.size(), h) && h.type == Type::Msg && h.sender == group_.me &&
+  if (readHeader(raw.data(), raw.size(), h) && h.type == Type::Msg && h.sender == network_.me &&
       h.pieceIndex == h.pieceCount - 1) {
-    store_.addState(conversationOfMine(h.counter), group_.me, h.counter, Delivery::Sent, 0);
+    store_.addState(conversationOfMine(h.counter), network_.me, h.counter, Delivery::Sent, 0);
     changes_++;
   }
 }
@@ -1267,7 +1267,7 @@ void Node::retryPending() {
   bool needWifi = false;
   for (auto& p : pending_) {
     if (p.tries >= 3 || int32_t(now - p.nextTryMs) < 0) continue;
-    for (const auto& raw : store_.packetsAfter(group_.me, p.counter - 1, group_.me, MAX_PIECES)) {
+    for (const auto& raw : store_.packetsAfter(network_.me, p.counter - 1, network_.me, MAX_PIECES)) {
       Header h;
       if (readHeader(raw.data(), raw.size(), h) && h.counter == p.counter) queue(raw.data(), raw.size(), 0, false);
     }
@@ -1276,14 +1276,14 @@ void Node::retryPending() {
     if (p.tries >= 3) needWifi = true;
   }
   // Nobody heard it over LoRa: try the server over Wi-Fi (not on low battery).
-  if (needWifi && !group_.serverUrl.empty() && battery() >= LOW_BATTERY &&
+  if (needWifi && !network_.serverUrl.empty() && battery() >= LOW_BATTERY &&
       (!lastWifiSyncMs_ || now - lastWifiSyncMs_ > WIFI_FALLBACK_GAP_MS)) {
     startWifiSync();
   }
 }
 
 void Node::startWifiSync() {
-  if (!group_.configured || group_.serverUrl.empty() || wifi_ != WifiStep::Idle) return;
+  if (!network_.configured || network_.serverUrl.empty() || wifi_ != WifiStep::Idle) return;
   // File Transfer's own hotspot: leave it alone.
   if (WiFi.getMode() & WIFI_AP) return;
   // Already on (File Transfer, an update): used, and left on afterwards.
@@ -1296,7 +1296,7 @@ void Node::startWifiSync() {
 
 size_t Node::runWifiSync() {
   lastWifiSyncMs_ = millis();
-  if (ESP.getFreeHeap() < HttpDownloader::MIN_TLS_FREE_HEAP || group_.serverCert.empty()) {
+  if (ESP.getFreeHeap() < HttpDownloader::MIN_TLS_FREE_HEAP || network_.serverCert.empty()) {
     wifiServerFailed_ = true;
     return 0;
   }
@@ -1310,7 +1310,7 @@ size_t Node::runWifiSync() {
   for (const auto& p : pending_) mine.push_back(p.counter);
   mine.insert(mine.end(), controlWaiting_.begin(), controlWaiting_.end());
   for (const uint32_t counter : mine) {
-    for (const auto& raw : store_.packetsAfter(group_.me, counter - 1, group_.me, MAX_PIECES)) {
+    for (const auto& raw : store_.packetsAfter(network_.me, counter - 1, network_.me, MAX_PIECES)) {
       Header h;
       if (readHeader(raw.data(), raw.size(), h) && h.counter == counter) add(raw.data(), raw.size());
     }
@@ -1320,7 +1320,7 @@ size_t Node::runWifiSync() {
   req.battery = battery();
   req.build = buildByte();
   req.flags = syncFlags();
-  req.rosterVersion = group_.rosterVersion;
+  req.rosterVersion = network_.rosterVersion;
   uint8_t sync[HEADER_SIZE + SYNC_REQ_MAX];
   Header h = header(Type::SyncReq, SERVER);
   h.hops = 0;
@@ -1337,14 +1337,14 @@ size_t Node::runWifiSync() {
   }
 
   freeink::SecureHttpClient http;
-  http.setCACert(group_.serverCert.c_str());  // only the Pi's own certificate is trusted
+  http.setCACert(network_.serverCert.c_str());  // only the Pi's own certificate is trusted
   http.setTimeout(10000);
   http.setReuse(false);
-  if (!http.begin(group_.serverUrl + "/api/packets")) {
+  if (!http.begin(network_.serverUrl + "/api/packets")) {
     wifiServerFailed_ = true;
     return 0;
   }
-  http.addHeader("Authorization", "Bearer " + group_.serverToken);
+  http.addHeader("Authorization", "Bearer " + network_.serverToken);
   http.addHeader("Content-Type", "application/octet-stream");
   const int status = http.POST(body);
   if (status != 200) {
@@ -1375,7 +1375,7 @@ size_t Node::runWifiSync() {
 }
 
 void Node::loop() {
-  if (!group_.configured) return;
+  if (!network_.configured) return;
   const uint32_t now = millis();
 
   Received rx;

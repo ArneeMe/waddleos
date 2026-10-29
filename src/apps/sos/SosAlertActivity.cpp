@@ -65,7 +65,7 @@ void SosActivity::render(RenderLock&&) {
   auto names = [](const mesh::Members bits, const bool server) {
     std::vector<std::string> who;
     for (uint8_t m = 1; m <= mesh::MAX_MEMBERS; m++) {
-      if (bits & mesh::memberBit(m)) who.push_back(node().group().name(m));
+      if (bits & mesh::memberBit(m)) who.push_back(node().network().name(m));
     }
     const size_t total = who.size() + (server ? 1 : 0);
     if (who.size() > 3) {
@@ -128,7 +128,7 @@ void SosAlertActivity::render(RenderLock&&) {
   const int height = renderer.getScreenHeight();
   shownChanges = node().changes();
   const auto& st = node().member(from);
-  const char* name = node().group().name(from);
+  const char* name = node().network().name(from);
   renderer.clearScreen();
   renderer.fillRect(0, 0, width, height, true);
   waddle::drawPixelText(renderer, (width - waddle::pixelTextWidth("SOS", 16)) / 2, 120, "SOS", 16, false);

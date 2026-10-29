@@ -17,8 +17,6 @@ constexpr const char* NVS_NAMESPACE = "waddlemesh";
 constexpr const char* NETWORK_PATH = "/.mesh/network.bin";
 constexpr const char* ROSTER_PATH = "/.mesh/roster.bin";
 constexpr const char* JOIN_PATH = "/.mesh/join.bin";
-// From before the network (one fixed group of four, protocol version 2): unused now.
-constexpr const char* OLD_GROUP_PATH = "/.mesh/group.json";
 constexpr const char* LINK_PREFIX = "waddle://join/";
 constexpr size_t LINK_FIXED = 1 + 8 + PASSWORD_SIZE + KEY_SIZE + 32;  // then the server address
 
@@ -33,7 +31,7 @@ bool loaded = false;
 
 }  // namespace
 
-Members Group::everyone() const {
+Members Network::everyone() const {
   Members bits = 0;
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
     if (members[n - 1].present) bits |= memberBit(n);
@@ -41,7 +39,7 @@ Members Group::everyone() const {
   return bits;
 }
 
-const char* Group::name(const uint8_t number) const {
+const char* Network::name(const uint8_t number) const {
   if (number == SERVER) return "Server";
   const Member* m = member(number);
   return m && m->present && m->name[0] ? m->name : "?";
@@ -114,7 +112,7 @@ const Identity& identity() {
     prefs.putUInt("senderNum", 1);
     LOG_INF("MESH", "Made new keys for this unit");
   }
-  id.senderNumber = uint8_t(prefs.getUInt("senderNum", 1));
+  id.senderKeyNumber = uint8_t(prefs.getUInt("senderNum", 1));
   prefs.end();
   publicKey(id.secret, id.publicKey);
   loaded = true;
@@ -136,11 +134,11 @@ void newIdentity() {
 void newSenderKey() {
   identity();
   esp_fill_random(id.senderKey, KEY_SIZE);
-  id.senderNumber = uint8_t(id.senderNumber + 1 ? id.senderNumber + 1 : 1);
+  id.senderKeyNumber = uint8_t(id.senderKeyNumber + 1 ? id.senderKeyNumber + 1 : 1);
   Preferences prefs;
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putBytes("sender", id.senderKey, KEY_SIZE);
-  prefs.putUInt("senderNum", id.senderNumber);
+  prefs.putUInt("senderNum", id.senderKeyNumber);
   prefs.end();
 }
 
@@ -356,7 +354,7 @@ void forgetNetworkFiles() {
 }
 
 // Fills group.members from a checked roster and derives the DM keys.
-void takeMembers(Group& group, const Roster& roster) {
+void takeMembers(Network& group, const Roster& roster) {
   const Identity& mine = identity();
   for (auto& m : group.members) m = Member{};
   for (const auto& e : roster.members) {
@@ -366,14 +364,14 @@ void takeMembers(Group& group, const Roster& roster) {
     m->admin = e.admin;
     strlcpy(m->name, e.name.c_str(), sizeof(m->name));
     memcpy(m->publicKey, e.publicKey, KEY_SIZE);
-    if (e.number != group.me) pairKey(mine.secret, mine.publicKey, m->publicKey, m->pairKey);
+    if (e.number != group.me) dmKey(mine.secret, mine.publicKey, m->publicKey, m->dmKey);
   }
   group.rosterVersion = roster.version;
 }
 
 // The network part of a welcome (everything but the roster).
-const char* parseNetwork(const JsonDocument& doc, Group& group) {
-  group = Group{};
+const char* parseNetwork(const JsonDocument& doc, Network& group) {
+  group = Network{};
   const int network = doc["network"] | -1;
   const int me = doc["me"] | -1;
   if (network < 0 || network > 255) return "network mangler";
@@ -390,7 +388,7 @@ const char* parseNetwork(const JsonDocument& doc, Group& group) {
   return nullptr;
 }
 
-const char* takeRoster(Group& group, const uint8_t* data, const size_t len) {
+const char* takeRoster(Network& group, const uint8_t* data, const size_t len) {
   Roster roster;
   if (!readRoster(data, len, group.adminSign, roster)) return "rosteren er ikke signert av admin";
   if (roster.network != group.id) return "rosteren er for et annet nettverk";
@@ -404,12 +402,8 @@ const char* takeRoster(Group& group, const uint8_t* data, const size_t len) {
 
 }  // namespace
 
-bool loadGroup(Group& group) {
-  group = Group{};
-  if (Storage.exists(OLD_GROUP_PATH)) {
-    Storage.remove(OLD_GROUP_PATH);
-    LOG_INF("MESH", "Removed the old group setup: join the network with `waddle mesh join`");
-  }
+bool loadNetwork(Network& group) {
+  group = Network{};
   std::vector<uint8_t> network, roster;
   if (!loadSealed(NETWORK_PATH, network) || !loadSealed(ROSTER_PATH, roster)) return false;
   JsonDocument doc;
@@ -419,13 +413,13 @@ bool loadGroup(Group& group) {
   if (!err && newest >> 16 == group.id && group.rosterVersion < (newest & 0xFFFF)) err = "en eldre roster enn sist";
   if (err) {
     LOG_ERR("MESH", "network: %s", err);
-    group = Group{};
+    group = Network{};
     return false;
   }
   return true;
 }
 
-bool applyRoster(Group& group, const uint8_t* data, const size_t len) {
+bool applyRoster(Network& group, const uint8_t* data, const size_t len) {
   Roster roster;
   if (!group.configured || !readRoster(data, len, group.adminSign, roster) || roster.network != group.id ||
       roster.version <= group.rosterVersion) {
@@ -434,7 +428,7 @@ bool applyRoster(Group& group, const uint8_t* data, const size_t len) {
   const RosterEntry* self = roster.member(group.me);
   if (!self || memcmp(self->publicKey, identity().publicKey, KEY_SIZE) != 0) {
     // I was taken out (my number may be someone else's now). The roster
-    // without me is saved, so the unit is out after a restart too (loadGroup);
+    // without me is saved, so the unit is out after a restart too (loadNetwork);
     // the chats stay, for when it is let back in as the same number.
     LOG_INF("MESH", "This unit is no longer in the network");
     saveSealed(ROSTER_PATH, std::vector<uint8_t>(data, data + len));
@@ -480,8 +474,8 @@ const char* startJoin(const std::string& link, const std::string& name, std::str
   if (!readLink(link, inv)) return "lenken er ikke en invitasjon";
   // Only a unit outside any network joins: someone on the Wi-Fi cannot move a
   // unit that is in one to another network.
-  Group current;
-  if (loadGroup(current)) return "enheten er allerede med i et nettverk";
+  Network current;
+  if (loadNetwork(current)) return "enheten er allerede med i et nettverk";
   if (name.empty() || name.size() > ROSTER_NAME) return "navnet må være 1-20 tegn";
   const Identity& mine = identity();
   uint8_t k[KEY_SIZE];
@@ -491,7 +485,7 @@ const char* startJoin(const std::string& link, const std::string& name, std::str
   std::string json;
   serializeJson(doc, json);
   std::vector<uint8_t> box(json.size() + TAG_SIZE);
-  setupSeal(k, 3, reinterpret_cast<const uint8_t*>(json.data()), json.size(), box.data());
+  sealBox(k, 3, reinterpret_cast<const uint8_t*>(json.data()), json.size(), box.data());
   crypto_wipe(k, sizeof(k));
   boxHex = toHex(box.data(), box.size());
   joinCode(inv.adminBox, mine.publicKey, code);
@@ -512,12 +506,12 @@ const char* finishJoin(const std::string& boxHex) {
   const Identity& mine = identity();
   uint8_t k[KEY_SIZE];
   joinKey(mine.secret, mine.publicKey, inv.adminBox, inv.password, k);
-  const bool opened = setupOpen(k, 4, box.data(), len, plain.data());
+  const bool opened = openBox(k, 4, box.data(), len, plain.data());
   crypto_wipe(k, sizeof(k));
   if (!opened) return "velkomsten kunne ikke åpnes (feil invitasjon?)";
   JsonDocument doc;
   if (deserializeJson(doc, plain.data(), plain.size())) return "ikke gyldig JSON";
-  Group check;
+  Network check;
   if (const char* err = parseNetwork(doc, check)) return err;
   if (check.id != inv.network || memcmp(check.adminBox, inv.adminBox, KEY_SIZE) != 0) return "feil nettverk";
   const char* rosterHex = doc["roster"] | "";
@@ -529,7 +523,7 @@ const char* finishJoin(const std::string& boxHex) {
   // (after being taken out): the history stays.
   std::vector<uint8_t> before;
   JsonDocument old;
-  Group previous;
+  Network previous;
   const bool same = loadSealed(NETWORK_PATH, before) && !deserializeJson(old, before.data(), before.size()) &&
                     !parseNetwork(old, previous) && previous.id == check.id && previous.me == check.me &&
                     memcmp(previous.adminSign, check.adminSign, SIGN_KEY_SIZE) == 0;

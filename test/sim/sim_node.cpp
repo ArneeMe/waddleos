@@ -4,11 +4,11 @@
 //
 // Commands on stdin, one per line; every command answers with lines ending in "ok":
 //   identity               print this unit's public key and sender key
-//   begin                  load the group and start (sends a SYNC_REQ)
+//   begin                  load the network and start (sends a SYNC_REQ)
 //   time <ms>              set the simulated millis()
 //   rx <hex>               a packet arrives over the radio
 //   loop                   run the node once; radio sends come out as "tx <hex>"
-//   send <conv> <text>     write a message (conv 0 = everyone, 1-4 = DM, 5+ = a group)
+//   send <conv> <text>     write a message (conv 0 = everyone, 1-32 = DM, 33+ = a group)
 //   group <bits> <name>    make a group of me and these members; prints "conv <n>"
 //   join <link> <name>     the unit's side of joining; prints "join <public> <box> <code>"
 //   welcome <hex>          the admin's welcome; the unit starts in the network
@@ -142,7 +142,7 @@ struct SimAccess {
 
 static void dump() {
   auto& node = mesh::Node::get();
-  const auto& group = node.group();
+  const auto& group = node.network();
   JsonDocument doc;
   doc["me"] = group.me;
   doc["configured"] = group.configured;
@@ -175,7 +175,7 @@ static void dump() {
   for (int slot = 0; slot < mesh::MAX_GROUPS; slot++) {
     const auto& g = node.groups().at(slot);
     if (!g.id) continue;
-    JsonObject o = doc["groups"][std::to_string(mesh::CONV_GROUPS + slot)].to<JsonObject>();
+    JsonObject o = doc["groups"][std::to_string(mesh::CONV_FIRST_GROUP + slot)].to<JsonObject>();
     o["id"] = g.id;
     o["members"] = g.members;
     o["left"] = g.left;
@@ -312,7 +312,7 @@ int main(int argc, char** argv) {
       memcpy(input + 64 + mesh::PASSWORD_SIZE, adminPublic, 32);
       crypto_blake2b(k, 32, input, sizeof(input));
       std::vector<uint8_t> box(json.size() + mesh::TAG_SIZE);
-      mesh::setupSeal(k, 4, json.data(), json.size(), box.data());
+      mesh::sealBox(k, 4, json.data(), json.size(), box.data());
       std::cout << "welcome " << hex(box.data(), box.size()) << "\n";
     } else if (cmd == "admin-packets") {
       int network = 0, version = 0;
@@ -321,9 +321,9 @@ int main(int argc, char** argv) {
       const auto key = unhex(keyHex), roster = unhex(rosterHex);
       mesh::Header h;
       h.type = mesh::Type::Roster;
-      h.group = uint8_t(network);
+      h.network = uint8_t(network);
       h.sender = mesh::SERVER;
-      h.recipient = mesh::GROUP;
+      h.recipient = mesh::EVERYONE;
       h.counter = 0x40000000u + uint32_t(version);
       static mesh::Sealed sealed;
       mesh::seal(h, key.data(), roster.data(), roster.size(), sealed);

@@ -32,7 +32,7 @@ SIM_NODE = os.environ.get("SIM_NODE", os.path.join(ROOT, "build", "sim", "sim_no
 _loader = importlib.machinery.SourceFileLoader("waddle_mesh_tool", os.path.join(ROOT, "tools", "waddle-mesh"))
 tool = importlib.util.module_from_spec(importlib.util.spec_from_loader("waddle_mesh_tool", _loader))
 _loader.exec_module(tool)
-GROUP = 0x42
+NETWORK = 0x42
 GATEWAY = "G"
 STEP_MS = 100
 
@@ -98,7 +98,7 @@ class World:
         self.roster_only = None
         self.air = []  # (who sent, raw) waiting to be heard next step
         self.store = Store(os.path.join(self.dir, "server.db"))
-        self.server = Server(self.store, GROUP)
+        self.server = Server(self.store, NETWORK)
 
         world = self
 
@@ -126,14 +126,14 @@ class World:
 
     def invite(self):
         password = os.urandom(16)
-        raw = bytes([GROUP]) + os.urandom(8) + password + self.admin_box + bytes(32) + b"https://pi.example:8443"
+        raw = bytes([NETWORK]) + os.urandom(8) + password + self.admin_box + bytes(32) + b"https://pi.example:8443"
         return "waddle://join/" + base64.urlsafe_b64encode(raw).decode().rstrip("="), password
 
     def signed_roster(self):
         """A roster of every member that has joined (the admin signs a new version)."""
         self.roster_version += 1
         items = " ".join("%d:%s:%s" % (n, self.units[n].name, pub) for n, pub in sorted(self.publics.items()))
-        out = self.units[min(self.units)].cmd("admin-roster %s %d %d %s" % (self.admin_seed.hex(), GROUP,
+        out = self.units[min(self.units)].cmd("admin-roster %s %d %d %s" % (self.admin_seed.hex(), NETWORK,
                                                                               self.roster_version, items))
         return out[0].split()[1]
 
@@ -145,7 +145,7 @@ class World:
         assert reply[0] == "join", reply
         self.publics[n] = reply[1]
         roster = self.signed_roster()
-        welcome = {"network": GROUP, "me": n, "name": u.name, "networkKey": self.network_key.hex(),
+        welcome = {"network": NETWORK, "me": n, "name": u.name, "networkKey": self.network_key.hex(),
                    "adminSign": self.admin_sign, "adminBox": self.admin_box.hex(), "counterFloor": 0,
                    "roster": roster}
         if self.server_wifi:
@@ -161,7 +161,7 @@ class World:
         to every unit, or only to the units in `only`)."""
         self.roster_only = only
         for line in self.units[min(self.units)].cmd("admin-packets %d %s %d %s" % (
-                GROUP, self.network_key.hex(), self.roster_version, roster)):
+                NETWORK, self.network_key.hex(), self.roster_version, roster)):
             self.air.append((GATEWAY, bytes.fromhex(line.split()[1])))
         self.all_hear_gateway = True
 
@@ -685,7 +685,7 @@ class MeshTests(unittest.TestCase):
         collecting = False
         self.assertTrue(lost)
         for i, c in enumerate(sorted(lost)):
-            h = P.Header(type=P.ACK, group=GROUP, sender=2, recipient=1, counter=4000000000 + i)
+            h = P.Header(type=P.ACK, network=NETWORK, sender=2, recipient=1, counter=4000000000 + i)
             w.air.append((2, h.pack() + P.Ack(1, c, 1).pack()))
         w.run(20)
         w.units[1].cmd("send 0 Til alle")

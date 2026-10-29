@@ -42,10 +42,10 @@ void T5HomeActivity::onEnter() {
   // the rest are in Meldinger.
   chatCount = 0;
   if (node().configured()) {
-    chats[chatCount++] = mesh::CONV_GROUP;
+    chats[chatCount++] = mesh::CONV_EVERYONE;
     std::vector<uint8_t> people;
     for (uint8_t m = 1; m <= mesh::MAX_MEMBERS; m++) {
-      if (m != node().group().me && node().group().member(m)->present) people.push_back(m);
+      if (m != node().network().me && node().network().member(m)->present) people.push_back(m);
     }
     auto recent = [](const uint8_t m) {
       const uint32_t wrote = node().store().summary(m).lastTime;
@@ -197,7 +197,7 @@ void T5HomeActivity::render(RenderLock&&) {
   // Everyone, then each contact.
   renderer.drawText(SMALL_FONT_ID, SIDE, y, "KONTAKTER", true, EpdFontFamily::BOLD);
   y += 30;
-  const auto& group = node().group();
+  const auto& group = node().network();
   for (int i = 0; i < chatCount; i++) {
     const uint8_t c = chats[i];
     const auto& sum = node().store().summary(c);
@@ -205,7 +205,7 @@ void T5HomeActivity::render(RenderLock&&) {
     if (focus == T_CHAT_1 + i) renderer.fillRect(0, y + 1, 6, 72);
     const std::string name = meshui::conversationName(c);
     renderer.drawText(UI_12_FONT_ID, SIDE, y + 4, name.c_str(), true, EpdFontFamily::BOLD);
-    if (c != mesh::CONV_GROUP) {
+    if (c != mesh::CONV_EVERYONE) {
       // How they are: heard, battery, distance.
       const int nameW = renderer.getTextWidth(UI_12_FONT_ID, name.c_str(), EpdFontFamily::BOLD);
       const int maxW = width - 2 * SIDE - nameW - 16 - 60;
@@ -215,7 +215,7 @@ void T5HomeActivity::render(RenderLock&&) {
     std::string preview = "Ingen meldinger ennå";
     if (sum.count) {
       const char* who = sum.lastSender == group.me ? "Du" : group.name(sum.lastSender);
-      preview = (c == mesh::CONV_GROUP || sum.lastSender == group.me) ? std::string(who) + ": " + sum.lastText
+      preview = (c == mesh::CONV_EVERYONE || sum.lastSender == group.me) ? std::string(who) + ": " + sum.lastText
                                                                        : sum.lastText;
     }
     renderer.drawText(UI_10_FONT_ID, SIDE, y + 38,

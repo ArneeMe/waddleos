@@ -93,7 +93,7 @@ def set_roster(cfg, roster_hex, packets_hex):
         print("not taken: roster for network %d, this is %d" % (roster.network, cfg["network"]))
         return 1
     counter = 0x40000000 + roster.version
-    if any(h.type != P.ROSTER or h.sender != P.SERVER or h.counter != counter or h.group != cfg["network"]
+    if any(h.type != P.ROSTER or h.sender != P.SERVER or h.counter != counter or h.network != cfg["network"]
            or h.piece_count != len(packets) for h in heads) or sorted(h.piece_index for h in heads) != list(
             range(len(packets))):
         print("not taken: these are not the roster's packets")

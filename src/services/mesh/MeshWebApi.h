@@ -16,7 +16,7 @@ namespace mesh::web {
 
 void registerRoutes(WebServer& server);
 // True once after a new group was saved: the node should load it.
-bool takeGroupChanged();
+bool takeNetworkChanged();
 // The setup code to show on the File Transfer screen, or nullptr before a tool pairs.
 const char* setupCode();
 

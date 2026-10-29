@@ -37,7 +37,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 with open(os.path.join(ROOT, "protocol", "vectors.json")) as f:
     V = json.load(f)
 
-GROUP = 0x42
+NETWORK = 0x42
 ADMIN_SEED = bytes.fromhex(V["roster"]["adminSeed"])
 ADMIN_SIGN = bytes.fromhex(V["roster"]["adminSign"])
 TOKEN_1 = "11" * 16
@@ -47,7 +47,7 @@ def token_hash(token):
     return hashlib.sha256(token.encode()).digest()[:16]
 
 
-def make_roster(version, members, network=GROUP, seed=ADMIN_SEED):
+def make_roster(version, members, network=NETWORK, seed=ADMIN_SEED):
     """A signed roster like the admin's tool makes. members: (number, name, token)."""
     out = struct.pack("<BBHB", 1, network, version, len(members))
     for number, name, token in members:
@@ -56,9 +56,9 @@ def make_roster(version, members, network=GROUP, seed=ADMIN_SEED):
     return out + ed25519.sign(seed, out)
 
 
-def roster_packets(version, pieces, network=GROUP):
+def roster_packets(version, pieces, network=NETWORK):
     """Stand-ins for the ROSTER packets (the server cannot open them anyway)."""
-    return [P.Header(type=P.ROSTER, group=network, sender=P.SERVER, recipient=P.GROUP, counter=0x40000000 + version,
+    return [P.Header(type=P.ROSTER, network=network, sender=P.SERVER, recipient=P.EVERYONE, counter=0x40000000 + version,
                      fragmented=pieces > 1, piece_index=i, piece_count=pieces).pack() + bytes([i]) * 186
             for i in range(pieces)]
 
@@ -76,7 +76,7 @@ class PacketTests(unittest.TestCase):
     def test_headers_of_cpp_packets(self):
         pkts, _ = packets("group message")
         h = P.parse_header(pkts[0])
-        self.assertEqual((h.type, h.group, h.sender, h.recipient, h.counter), (P.MSG, GROUP, 1, P.GROUP, 10))
+        self.assertEqual((h.type, h.network, h.sender, h.recipient, h.counter), (P.MSG, NETWORK, 1, P.EVERYONE, 10))
         self.assertEqual(h.pack(), pkts[0][:P.HEADER_SIZE])
         dm, _ = packets("direct message in 3 pieces")
         heads = [P.parse_header(p) for p in dm]
@@ -157,7 +157,7 @@ class CryptoCrossCheck(unittest.TestCase):
             X25519PublicKey.from_public_bytes(bytes.fromhex(b["public"])))
         lo, hi = sorted([bytes.fromhex(a["public"]), bytes.fromhex(b["public"])])
         key = hashlib.blake2b(shared + lo + hi, digest_size=32).digest()
-        self.assertEqual(key.hex(), V["pairKey"])
+        self.assertEqual(key.hex(), V["dmKey"])
         pkts, plain = packets("direct message in 3 pieces")
         self.assertEqual(self.open(pkts, key), plain)
         group_plain = packets("group message")[1]
@@ -166,8 +166,8 @@ class CryptoCrossCheck(unittest.TestCase):
     def test_group_message_with_key_number(self):
         pkts, plain = packets("group message with key 2")
         h = P.parse_header(pkts[0])
-        self.assertEqual((h.recipient, h.group_id, h.key), (P.GROUP_TO, 0x100, 2))
-        self.assertTrue(P.is_group(h.recipient))
+        self.assertEqual((h.recipient, h.group_id, h.key), (P.TO_GROUP, 0x100, 2))
+        self.assertEqual(h.recipient, P.TO_GROUP)
         self.assertTrue(all(P.can_read(m, 1, h.recipient) for m in P.MEMBERS))
         self.assertEqual(self.open(pkts, bytes.fromhex(V["groupKey"])), plain)
         # The key number is sealed: a changed one does not open.
@@ -185,7 +185,7 @@ class CryptoCrossCheck(unittest.TestCase):
 
 
 def sync_req(member, last, counter=1):
-    h = P.Header(type=P.SYNC_REQ, group=GROUP, sender=member, recipient=P.SERVER, counter=counter)
+    h = P.Header(type=P.SYNC_REQ, network=NETWORK, sender=member, recipient=P.SERVER, counter=counter)
     return h.pack() + P.SyncReq(last, battery=50, build=0x2A).pack()
 
 
@@ -193,7 +193,7 @@ class ServerTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         self.store = Store(os.path.join(self.dir, "mesh.db"))
-        self.server = Server(self.store, GROUP)
+        self.server = Server(self.store, NETWORK)
 
     def tearDown(self):
         shutil.rmtree(self.dir)
@@ -236,7 +236,7 @@ class ServerTests(unittest.TestCase):
         "stored" receipts and positions are not sent again and again."""
         pos, _ = packets("position")
         self.server.handle(pos[0], "lora")
-        mine = P.Header(type=P.MSG, group=GROUP, sender=2, recipient=P.GROUP, counter=7).pack() + bytes(20)
+        mine = P.Header(type=P.MSG, network=NETWORK, sender=2, recipient=P.EVERYONE, counter=7).pack() + bytes(20)
         self.server.handle(mine, "lora")
         types = lambda answer: sorted(P.parse_header(p).type for p in answer)
         first = self.server.handle(sync_req(2, {1: 0, 2: 7}, counter=8), "lora")
@@ -247,24 +247,24 @@ class ServerTests(unittest.TestCase):
 
     def test_wifi_sync_is_cut_at_200(self):
         for counter in range(1, 260):
-            h = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=counter)
+            h = P.Header(type=P.MSG, network=NETWORK, sender=1, recipient=P.EVERYONE, counter=counter)
             self.server.handle(h.pack() + bytes(20), "lora")
         answer = self.server.handle(sync_req(2, {1: 0, 2: 0}), "wifi")
         self.assertEqual(len(answer), 200)
 
     def test_fetch_gives_the_missing_message(self):
         for counter in (10, 11, 12, 13):
-            h = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=counter)
+            h = P.Header(type=P.MSG, network=NETWORK, sender=1, recipient=P.EVERYONE, counter=counter)
             self.server.handle(h.pack() + bytes(20), "lora")
-        h = P.Header(type=P.FETCH, group=GROUP, sender=2, recipient=P.SERVER, counter=5)
+        h = P.Header(type=P.FETCH, network=NETWORK, sender=2, recipient=P.SERVER, counter=5)
         answer = self.server.handle(h.pack() + P.Fetch(1, 10, 13).pack(), "lora")
         self.assertEqual([P.parse_header(p).counter for p in answer], [11, 12])
 
     def test_sync_flags_and_sos_for_the_status_page(self):
         flags = P.SYNC_ON_TRIP | P.SYNC_SOS | (2 << P.SYNC_CHECK_SHIFT)
-        h = P.Header(type=P.SYNC_REQ, group=GROUP, sender=3, recipient=P.SERVER, counter=1)
+        h = P.Header(type=P.SYNC_REQ, network=NETWORK, sender=3, recipient=P.SERVER, counter=1)
         self.server.handle(h.pack() + P.SyncReq({}, battery=61, build=1, flags=flags).pack(), "lora", -70, 4.0)
-        sos = P.Header(type=P.SOS, group=GROUP, sender=3, recipient=P.GROUP, counter=2)
+        sos = P.Header(type=P.SOS, network=NETWORK, sender=3, recipient=P.EVERYONE, counter=2)
         self.server.handle(sos.pack() + bytes(32), "lora")
         unit = {u["member"]: u for u in self.store.units()}[3]
         self.assertEqual((unit["flags"], unit["battery"]), (flags, 61))
@@ -272,13 +272,13 @@ class ServerTests(unittest.TestCase):
 
     def test_lora_sync_is_limited(self):
         for counter in range(1, 30):
-            h = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=counter)
+            h = P.Header(type=P.MSG, network=NETWORK, sender=1, recipient=P.EVERYONE, counter=counter)
             self.server.handle(h.pack() + bytes(20), "lora")
         self.assertEqual(len(self.server.handle(sync_req(2, {1: 0, 2: 0, 3: 0}), "lora")), 12)
         self.assertEqual(len(self.server.handle(sync_req(2, {1: 0, 2: 0, 3: 0}, 2), "wifi")), 29)
 
     def test_sos_is_answered(self):
-        h = P.Header(type=P.SOS, group=GROUP, sender=2, recipient=P.GROUP, counter=40)
+        h = P.Header(type=P.SOS, network=NETWORK, sender=2, recipient=P.EVERYONE, counter=40)
         answers = self.server.handle(h.pack() + bytes(32), "lora")
         self.assertEqual(len(answers), 1)
         a = P.parse_ack(answers[0][P.HEADER_SIZE:])
@@ -364,7 +364,7 @@ class GatewayLinkTests(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
         self.store = Store(os.path.join(self.dir, "mesh.db"))
-        self.server = Server(self.store, GROUP)
+        self.server = Server(self.store, NETWORK)
 
     def start(self):
         fake = FakeGateway(self)
@@ -375,10 +375,10 @@ class GatewayLinkTests(unittest.TestCase):
 
     def test_ping_pong_and_handover(self):
         fake, link = self.start()
-        self.assertEqual(fake.expect("PING"), "PING %d 00000000" % GROUP)  # no roster yet
+        self.assertEqual(fake.expect("PING"), "PING %d 00000000" % NETWORK)  # no roster yet
         group, _ = packets("group message")
-        sos = P.Header(type=P.SOS, group=GROUP, sender=2, recipient=P.GROUP, counter=40).pack() + bytes(32)
-        ack = P.Header(type=P.ACK, group=GROUP, sender=3, recipient=1, counter=9).pack() + P.Ack(1, 10, P.READ).pack()
+        sos = P.Header(type=P.SOS, network=NETWORK, sender=2, recipient=P.EVERYONE, counter=40).pack() + bytes(32)
+        ack = P.Header(type=P.ACK, network=NETWORK, sender=3, recipient=1, counter=9).pack() + P.Ack(1, 10, P.READ).pack()
         fake.say("PONG 3 2 gc1109")
         self.assertEqual(fake.expect("DUMP"), "DUMP")
         for raw in (group[0], sos, ack):
@@ -429,7 +429,7 @@ class StatusPageTests(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
         self.store = Store(os.path.join(self.dir, "mesh.db"))
-        self.server = Server(self.store, GROUP, ADMIN_SIGN)
+        self.server = Server(self.store, NETWORK, ADMIN_SIGN)
         set_roster(self.store, 1, [(1, "Arne", TOKEN_1), (2, "Kari <3", "22" * 16)])
 
     def page(self):
@@ -439,9 +439,9 @@ class StatusPageTests(unittest.TestCase):
 
     def test_units_and_modes(self):
         flags = P.SYNC_ON_TRIP | (1 << P.SYNC_CHECK_SHIFT)
-        h = P.Header(type=P.SYNC_REQ, group=GROUP, sender=1, recipient=P.SERVER, counter=1)
+        h = P.Header(type=P.SYNC_REQ, network=NETWORK, sender=1, recipient=P.SERVER, counter=1)
         self.server.handle(h.pack() + P.SyncReq({}, battery=64, build=0x2A, flags=flags).pack(), "lora", -87, 7.5)
-        h = P.Header(type=P.SYNC_REQ, group=GROUP, sender=3, recipient=P.SERVER, counter=1)
+        h = P.Header(type=P.SYNC_REQ, network=NETWORK, sender=3, recipient=P.SERVER, counter=1)
         self.server.handle(h.pack() + P.SyncReq({}, battery=12, build=0x2A).pack(), "wifi")
         status, page = self.page()
         self.assertEqual([u["name"] for u in status["units"]], ["Arne", "Kari <3", "Enhet 3"])
@@ -460,7 +460,7 @@ class StatusPageTests(unittest.TestCase):
         self.assertIn("versjon 1", page)  # the roster
 
     def test_sos_banner(self):
-        sos = P.Header(type=P.SOS, group=GROUP, sender=2, recipient=P.GROUP, counter=5)
+        sos = P.Header(type=P.SOS, network=NETWORK, sender=2, recipient=P.EVERYONE, counter=5)
         self.server.handle(sos.pack() + bytes(32), "lora", -100, -3.0)
         status, page = self.page()
         self.assertTrue(status["units"][1]["sos"])
@@ -469,7 +469,7 @@ class StatusPageTests(unittest.TestCase):
         # Five minutes later the packet alone no longer shows; the unit's SOS flag does.
         self.store.sos_heard(2, now=time.time() - 301)
         self.assertNotIn("SOS fra", self.page()[1])
-        h = P.Header(type=P.SYNC_REQ, group=GROUP, sender=2, recipient=P.SERVER, counter=6)
+        h = P.Header(type=P.SYNC_REQ, network=NETWORK, sender=2, recipient=P.SERVER, counter=6)
         self.server.handle(h.pack() + P.SyncReq({}, flags=P.SYNC_SOS).pack(), "lora")
         self.assertIn("SOS fra Kari", self.page()[1])
 
@@ -489,7 +489,7 @@ class WebTests(unittest.TestCase):
     def start(self, cert=None, key=None):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
-        self.mesh = Server(Store(os.path.join(self.dir, "mesh.db")), GROUP, ADMIN_SIGN)
+        self.mesh = Server(Store(os.path.join(self.dir, "mesh.db")), NETWORK, ADMIN_SIGN)
         set_roster(self.mesh.store, 1, [(1, "Arne", TOKEN_1)])
         self.web = WebServer(("127.0.0.1", 0), self.mesh, lambda: dict(GATEWAY), cert, key)
         threading.Thread(target=self.web.serve_forever, daemon=True).start()
@@ -516,7 +516,7 @@ class WebTests(unittest.TestCase):
         base = self.start()
         dm, _ = packets("direct message in 3 pieces")
         h = P.parse_header(dm[0])
-        forged = P.Header(type=P.MSG, group=GROUP, sender=2, recipient=1, counter=h.counter).pack() + dm[0][P.HEADER_SIZE:]
+        forged = P.Header(type=P.MSG, network=NETWORK, sender=2, recipient=1, counter=h.counter).pack() + dm[0][P.HEADER_SIZE:]
         self.assertEqual(self.post(base, P.frame([forged]), TOKEN_1), b"")
         self.assertEqual(self.mesh.store.counts(), {})
 
@@ -575,7 +575,7 @@ class RosterTests(unittest.TestCase):
         self.assertEqual(ed25519.public_key(ADMIN_SEED), ADMIN_SIGN)
         self.assertEqual(ed25519.sign(ADMIN_SEED, signed[:-64]), signed[-64:])  # the same signature as the C++
         r = R.parse(signed, ADMIN_SIGN)
-        self.assertEqual((r.network, r.version), (GROUP, 3))
+        self.assertEqual((r.network, r.version), (NETWORK, 3))
         self.assertEqual([(m.number, m.admin, m.name) for m in r.members], [(1, True, "Arne"), (7, False, "Kåre")])
         self.assertEqual(r.member(7).public.hex(), V["memberB"]["public"])
         self.assertEqual(r.member(1).token_hash, bytes(range(0xA0, 0xB0)))
@@ -592,15 +592,15 @@ class RosterServerTests(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
         self.store = Store(os.path.join(self.dir, "mesh.db"))
-        self.server = Server(self.store, GROUP, ADMIN_SIGN)
+        self.server = Server(self.store, NETWORK, ADMIN_SIGN)
 
     def sync(self, version, via="wifi", counter=1):
-        h = P.Header(type=P.SYNC_REQ, group=GROUP, sender=2, recipient=P.SERVER, counter=counter)
+        h = P.Header(type=P.SYNC_REQ, network=NETWORK, sender=2, recipient=P.SERVER, counter=counter)
         return self.server.handle(h.pack() + P.SyncReq({}, roster_version=version).pack(), via)
 
     def test_older_roster_gets_the_new_one_first(self):
         set_roster(self.store, 4, [(1, "Arne", TOKEN_1), (2, "Kari", "22" * 16)], pieces=3)
-        msg = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=5).pack() + bytes(20)
+        msg = P.Header(type=P.MSG, network=NETWORK, sender=1, recipient=P.EVERYONE, counter=5).pack() + bytes(20)
         self.server.handle(msg, "lora")
         answer = self.sync(3)
         self.assertEqual([P.parse_header(p).type for p in answer[:3]], [P.ROSTER] * 3)
@@ -609,7 +609,7 @@ class RosterServerTests(unittest.TestCase):
 
     def test_whole_roster_over_lora(self):
         for counter in range(1, 30):
-            h = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=counter)
+            h = P.Header(type=P.MSG, network=NETWORK, sender=1, recipient=P.EVERYONE, counter=counter)
             self.server.handle(h.pack() + bytes(20), "lora")
         set_roster(self.store, 1, [(1, "Arne", TOKEN_1)], pieces=3)
         answer = self.sync(0, "lora")
@@ -652,7 +652,7 @@ class RosterServerTests(unittest.TestCase):
         written = []
         link._write = written.append
         link._ping()
-        self.assertEqual(written, ["PING %d 00000001" % GROUP])  # Arne is member 1
+        self.assertEqual(written, ["PING %d 00000001" % NETWORK])  # Arne is member 1
         self.assertEqual(list(link.outbox.queue), self.store.roster()[2])
         link.last_ping = 0
         link._ping()
@@ -703,9 +703,9 @@ class CommandTests(unittest.TestCase):
         return cli("--config", self.path, *args)
 
     def test_set_network_and_roster(self):
-        self.assertEqual(self.run_cli("set-network", str(GROUP), ADMIN_SIGN.hex())[0], 0)
+        self.assertEqual(self.run_cli("set-network", str(NETWORK), ADMIN_SIGN.hex())[0], 0)
         cfg = load_config(self.path)
-        self.assertEqual((cfg["network"], cfg["adminSign"]), (GROUP, ADMIN_SIGN.hex()))
+        self.assertEqual((cfg["network"], cfg["adminSign"]), (NETWORK, ADMIN_SIGN.hex()))
         signed = V["roster"]["signed"]
         pkts = [p.hex() for p in roster_packets(3, 2)]
         code, out = self.run_cli("set-roster", signed, *pkts)
@@ -744,7 +744,7 @@ class JoinWebTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
-        self.mesh = Server(Store(os.path.join(self.dir, "mesh.db")), GROUP, ADMIN_SIGN)
+        self.mesh = Server(Store(os.path.join(self.dir, "mesh.db")), NETWORK, ADMIN_SIGN)
         self.web = WebServer(("127.0.0.1", 0), self.mesh, lambda: dict(GATEWAY))
         threading.Thread(target=self.web.serve_forever, daemon=True).start()
         self.addCleanup(self.web.server_close)

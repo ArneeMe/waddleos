@@ -123,8 +123,8 @@ class RosterPackets(unittest.TestCase):
         self.assertEqual(len(packets), 2)  # 197 + 16 bytes
         heads = [P.parse_header(p) for p in packets]
         for i, h in enumerate(heads):
-            self.assertEqual((h.type, h.group, h.sender, h.recipient, h.counter, h.hops),
-                             (P.ROSTER, 0x42, P.SERVER, P.GROUP, 0x40000003, 3))
+            self.assertEqual((h.type, h.network, h.sender, h.recipient, h.counter, h.hops),
+                             (P.ROSTER, 0x42, P.SERVER, P.EVERYONE, 0x40000003, 3))
             self.assertEqual((h.piece_index, h.piece_count, h.fragmented, h.group_id, h.key), (i, 2, True, 0, 0))
         self.assertEqual(len(packets[0]), 200)
         self.assertEqual(open_pieces(key, packets), signed)

@@ -13,7 +13,7 @@ void forEachSetting(SettingVisitor visit, void* context) {
   MeshSettings& s = MESH_SETTINGS;
   const StrId cat = StrId::STR_CAT_SYSTEM;
   SettingInfo mode = SettingInfo::Enum(StrId::STR_OFF_GRID_MODE, &s.onTrip, {StrId::STR_MODE_HOME, StrId::STR_MODE_TRIP},
-                                       "mesh.offGrid", cat);
+                                       "mesh.onTrip", cat);
   visit(context, mode);
   SettingInfo home = SettingInfo::StaticEnum(StrId::STR_CHECK_HOME, &s.homeCheck, CHECKS, "mesh.homeCheck", cat);
   visit(context, home);

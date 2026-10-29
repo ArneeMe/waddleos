@@ -186,24 +186,24 @@ void message(const uint8_t from, const uint8_t conversation, const uint32_t when
   at(when);
   // A group's newest key: the same one Arne's unit made and sent to them.
   const mesh::GroupKey* groupKey = mesh::isGroupConversation(conversation)
-                                       ? node().groups().at(conversation - mesh::CONV_GROUPS).newest()
+                                       ? node().groups().at(conversation - mesh::CONV_FIRST_GROUP).newest()
                                        : nullptr;
-  const uint8_t* key = conversation == mesh::CONV_GROUP ? others[from].senderKey
+  const uint8_t* key = conversation == mesh::CONV_EVERYONE ? others[from].senderKey
                        : groupKey                       ? groupKey->key
                                                         : nullptr;
   uint8_t pair[mesh::KEY_SIZE];
   if (!key) {
     // A DM to me: the key we share.
-    mesh::pairKey(others[from].secret, others[from].publicKey, mesh::identity().publicKey, pair);
+    mesh::dmKey(others[from].secret, others[from].publicKey, mesh::identity().publicKey, pair);
     key = pair;
   }
   mesh::Header h;
   h.type = mesh::Type::Msg;
-  h.group = GROUP_ID;
+  h.network = GROUP_ID;
   h.hops = hops;
   h.sender = from;
-  h.recipient = key == pair ? ARNE : groupKey ? mesh::GROUP_TO : mesh::GROUP;  // a DM is to me
-  if (groupKey) h.groupId = node().groups().at(conversation - mesh::CONV_GROUPS).id;
+  h.recipient = key == pair ? ARNE : groupKey ? mesh::TO_GROUP : mesh::EVERYONE;  // a DM is to me
+  if (groupKey) h.groupId = node().groups().at(conversation - mesh::CONV_FIRST_GROUP).id;
   h.key = groupKey ? groupKey->number : key == pair ? 0 : 1;  // everyone: their sender key number 1
   h.counter = ++others[from].counter;
   std::string plain(mesh::MSG_PREFIX, '\0');
@@ -235,10 +235,10 @@ void position(const uint8_t from, const uint32_t when, const double lat, const d
   mesh::writePosition(p, plain);
   mesh::Header h;
   h.type = type;
-  h.group = GROUP_ID;
+  h.network = GROUP_ID;
   h.hops = hops;
   h.sender = from;
-  h.recipient = mesh::GROUP;
+  h.recipient = mesh::EVERYONE;
   h.key = 1;
   h.counter = ++others[from].counter;
   mesh::Sealed sealed;
@@ -253,10 +253,10 @@ void syncRequest(const uint8_t from, const uint32_t when, const uint8_t battery)
   uint8_t raw[mesh::HEADER_SIZE + mesh::SYNC_REQ_MAX];
   mesh::Header h;
   h.type = mesh::Type::SyncReq;
-  h.group = GROUP_ID;
+  h.network = GROUP_ID;
   h.hops = 0;
   h.sender = from;
-  h.recipient = mesh::GROUP;
+  h.recipient = mesh::EVERYONE;
   h.counter = ++others[from].counter;
   mesh::writeHeader(h, raw);
   mesh::SyncReq req;
@@ -271,7 +271,7 @@ void ack(const uint8_t from, const uint32_t when, const uint32_t myCounter, cons
   uint8_t raw[mesh::HEADER_SIZE + mesh::ACK_SIZE];
   mesh::Header h;
   h.type = mesh::Type::Ack;
-  h.group = GROUP_ID;
+  h.network = GROUP_ID;
   h.hops = mesh::DEFAULT_HOPS;
   h.sender = from;
   h.recipient = ARNE;
@@ -357,7 +357,7 @@ void joinNetwork() {
   memcpy(input + 80, adminBox, 32);
   crypto_blake2b(k, 32, input, sizeof(input));
   std::vector<uint8_t> sealed(welcome.size() + mesh::TAG_SIZE);
-  mesh::setupSeal(k, 4, reinterpret_cast<const uint8_t*>(welcome.data()), welcome.size(), sealed.data());
+  mesh::sealBox(k, 4, reinterpret_cast<const uint8_t*>(welcome.data()), welcome.size(), sealed.data());
   if (const char* err = mesh::finishJoin(mesh::toHex(sealed.data(), sealed.size()))) {
     std::cerr << "welcome: " << err << "\n";
     std::exit(1);
@@ -403,12 +403,12 @@ void story() {
   senderKeys(NOW - 26 * 3600 + MIN);
 
   // Yesterday evening, to everyone (relayed by Ola's unit).
-  message(KARI, mesh::CONV_GROUP, NOW - 18 * 3600 - 17 * MIN, "Værmeldingen ser bra ut for i morgen!", 2);
-  node().markRead(mesh::CONV_GROUP);
+  message(KARI, mesh::CONV_EVERYONE, NOW - 18 * 3600 - 17 * MIN, "Værmeldingen ser bra ut for i morgen!", 2);
+  node().markRead(mesh::CONV_EVERYONE);
 
   // This morning: the three of us, and Kari and me.
   at(NOW - 3 * 3600 - MIN);
-  ARNE_KARI_OLA = node().createGroup(mesh::memberBit(KARI) | mesh::memberBit(OLA), "Bilen til Ullevål");
+  ARNE_KARI_OLA = uint8_t(node().createGroup(mesh::memberBit(KARI) | mesh::memberBit(OLA), "Bilen til Ullevål"));
   deliver();
   message(KARI, ARNE_KARI_OLA, NOW - 3 * 3600, "Skal vi dele bil til Ullevålseter?");
   const uint32_t car = write(ARNE_KARI_OLA, NOW - 3 * 3600 + 4 * MIN, "Gjerne, jeg kan kjøre. Henter dere kl 09.");
@@ -419,9 +419,9 @@ void story() {
   ack(KARI, NOW - 2 * 3600 + 5 * MIN, lamp, mesh::AckState::Read);
 
   // Everyone, today.
-  message(KARI, mesh::CONV_GROUP, NOW - 80 * MIN, "Er alle klare for turen? Husk varme klær, det blir kaldt i kveld.");
-  node().markRead(mesh::CONV_GROUP);
-  const uint32_t ready = write(mesh::CONV_GROUP, NOW - 78 * MIN, "Ja! Jeg tar med kart og kompass.");
+  message(KARI, mesh::CONV_EVERYONE, NOW - 80 * MIN, "Er alle klare for turen? Husk varme klær, det blir kaldt i kveld.");
+  node().markRead(mesh::CONV_EVERYONE);
+  const uint32_t ready = write(mesh::CONV_EVERYONE, NOW - 78 * MIN, "Ja! Jeg tar med kart og kompass.");
   ack(KARI, NOW - 77 * MIN, ready, mesh::AckState::Read);
   ack(OLA, NOW - 75 * MIN, ready, mesh::AckState::Read);
   ack(PER, NOW - 74 * MIN, ready, mesh::AckState::Delivered);
@@ -429,8 +429,8 @@ void story() {
   message(OLA, ARNE_KARI_OLA, NOW - 40 * MIN, "Jeg er med!", 2);
   syncRequest(PER, NOW - 35 * MIN, 31);
   position(OLA, NOW - 22 * MIN, HOME_LAT - 0.0300, HOME_LON - 0.0150, 64, 1);
-  message(OLA, mesh::CONV_GROUP, NOW - 12 * MIN, "Vi møtes ved parkeringen kl 10.", 2);
-  message(PER, mesh::CONV_GROUP, NOW - 7 * MIN, "Jeg kommer litt senere, rundt halv elleve.");
+  message(OLA, mesh::CONV_EVERYONE, NOW - 12 * MIN, "Vi møtes ved parkeringen kl 10.", 2);
+  message(PER, mesh::CONV_EVERYONE, NOW - 7 * MIN, "Jeg kommer litt senere, rundt halv elleve.");
   // The hourly check: Kari's position comes in while it listens.
   at(NOW - 5 * MIN - 10);
   node().startCheck();
@@ -506,7 +506,7 @@ int main(int argc, char** argv) {
     });
   }
   {
-    ChatActivity chat(renderer, mappedInputManager, mesh::CONV_GROUP);
+    ChatActivity chat(renderer, mappedInputManager, mesh::CONV_EVERYONE);
     show(chat, "t5-chat-alle");
   }
   {
