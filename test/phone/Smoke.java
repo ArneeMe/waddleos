@@ -17,6 +17,10 @@ public class Smoke {
         Mesh.markRead(0);
         Mesh.changes();
         Mesh.title(0);
+        check(Mesh.members().equals("[]"), "no members before pairing");
+        check(Mesh.createGroup(2, "Tur") == -1, "no group before pairing");
+        check(Mesh.group(0).equals("null"), "Alle is not a group");
+        Mesh.leaveGroup(33);
         check(Mesh.server().contains("\"url\":\"\""), "no server");
         check(Mesh.syncRequest().length > 0, "a sync request");
         check(Mesh.syncAnswer(new byte[0], 0) == 0, "an empty answer");

@@ -11,6 +11,10 @@ public class Mesh {
     public static native boolean canWrite(int conv);
     public static native boolean send(int conv, String text);
     public static native void markRead(int conv);
+    public static native String members();
+    public static native int createGroup(long members, String name);
+    public static native String group(int conv);
+    public static native void leaveGroup(int conv);
     public static native byte[] syncRequest();
     public static native int syncAnswer(byte[] answer, long date);
     public static native String server();

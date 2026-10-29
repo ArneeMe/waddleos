@@ -92,7 +92,16 @@ class MainActivity : Activity() {
         val sorted = items.filter { it.getInt("conv") == 0 } +
             items.filter { it.getInt("conv") != 0 }
                 .sortedWith(compareByDescending<JSONObject> { it.optLong("time") }.thenBy { it.optString("title") })
-        for (c in sorted) list.addView(item(c))
+        for (c in sorted) {
+            list.addView(item(c))
+            // "+ Ny gruppe" right after "Alle", as on the T5.
+            if (c.getInt("conv") == 0) list.addView(newGroup())
+        }
+    }
+
+    private fun newGroup(): View {
+        val c = JSONObject().put("conv", -1).put("title", "+ Ny gruppe").put("last", "Skriv til noen av dere")
+        return item(c)
     }
 
     private fun item(c: JSONObject): View {
@@ -111,7 +120,12 @@ class MainActivity : Activity() {
             })
         }
         box.setOnClickListener {
-            startActivity(Intent(this, ChatActivity::class.java).putExtra("conv", c.getInt("conv")))
+            val conv = c.getInt("conv")
+            if (conv < 0) {
+                startActivity(Intent(this, NewGroupActivity::class.java))
+            } else {
+                startActivity(Intent(this, ChatActivity::class.java).putExtra("conv", conv))
+            }
         }
         val wrap = Ui.column(this)
         wrap.addView(box)
