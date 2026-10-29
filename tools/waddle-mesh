@@ -257,9 +257,15 @@ def six_digits(data):
     return "%03d %03d" % (n // 1000, n % 1000)
 
 
-def setup_code(unit_public):
-    """The six digits the unit shows on its File Transfer screen."""
-    return six_digits(unit_public)
+def pair_commit(tool_public, tool_nonce):
+    return hashlib.blake2b(tool_public + tool_nonce, digest_size=32).digest()
+
+
+def pair_code(tool_public, unit_public, tool_nonce, unit_nonce):
+    """The six digits the unit shows on its File Transfer screen. The tool
+    commits to its key and nonce before it sees the unit's nonce, so nobody on
+    the Wi-Fi can choose a key that gives the same digits."""
+    return six_digits(tool_public + unit_public + tool_nonce + unit_nonce)
 
 
 def join_key(shared, password, unit_public, admin_public):
@@ -482,13 +488,17 @@ def remember_unit(name, ip, number=None):
 def hand_over(ip, link, name):
     """Gives the unit the invitation, sealed for it alone (POST /api/mesh/join).
     Returns (its public key, its sealed request, the code it shows)."""
-    tool_secret = secrets.token_bytes(32)
+    tool_secret, tool_nonce = secrets.token_bytes(32), secrets.token_bytes(16)
     tool_public = x25519_public(tool_secret)
-    ident = unit_get(ip, "/api/mesh/identity?tool=" + tool_public.hex())
-    unit_public = bytes.fromhex(ident["publicKey"])
+    ident = unit_get(ip, "/api/mesh/identity?commit=" + pair_commit(tool_public, tool_nonce).hex())
+    if "nonce" not in ident:
+        raise RuntimeError(f"the unit at {ip} has older firmware: update it first (waddle update)")
+    unit_public, unit_nonce = bytes.fromhex(ident["publicKey"]), bytes.fromhex(ident["nonce"])
+    unit_post(ip, "/api/mesh/pair", {"tool": tool_public.hex(), "nonce": tool_nonce.hex()})
     # Someone on the Wi-Fi could pretend to be the unit and learn the invitation:
-    # the code on the unit's own screen shows it is the real one.
-    if not yes(f"  Does the unit's screen show the setup code {B}{setup_code(unit_public)}{N}?"):
+    # the same code on the unit's own screen shows nothing sits between.
+    code = pair_code(tool_public, unit_public, tool_nonce, unit_nonce)
+    if not yes(f"  Does the unit's screen show the setup code {B}{code}{N}?"):
         raise RuntimeError(f"the code does not match: something else answered at {ip}. Stopped")
     key = setup_key(tool_secret, tool_public, unit_public)
     sealed = aead_seal(key, setup_nonce(2), json.dumps({"invite": link, "name": name}).encode())
@@ -537,9 +547,25 @@ def admit(cfg, pi, newcomers):
                # member's number never repeats their counters.
                "counterFloor": now, "roster": signed.hex()}
         welcomes[n["invite"]] = aead_seal(n["key"], setup_nonce(4), json.dumps(doc).encode())
-        cfg["invites"].pop(n["invite"], None)
+        # Kept until it reached the unit or the Pi (welcome_sent), so a failed
+        # upload can be tried again: the newcomer is in the roster already.
+        cfg["invites"][n["invite"]]["welcome"] = welcomes[n["invite"]].hex()
     save(ADMIN, cfg)
     return welcomes
+
+
+def welcome_sent(cfg, invite):
+    cfg["invites"].pop(invite, None)
+    save(ADMIN, cfg)
+
+
+def send_kept_welcomes(cfg, pi):
+    """Welcomes made earlier that did not reach the Pi: tried again."""
+    for invite, inv in list(cfg.get("invites", {}).items()):
+        if inv.get("welcome"):
+            ssh(pi, f"{PI_CMD} welcome {invite} {inv['welcome']}")
+            welcome_sent(cfg, invite)
+            say(f"  {G}✓{N} {inv['name']}'s welcome is on the Pi now")
 
 
 def upload_roster(cfg, pi, roster):
@@ -621,6 +647,7 @@ def setup(args):
     welcomes = admit(cfg, load(MESH).get("pi") or ask("Pi over SSH"), newcomers)
     for n in newcomers:
         unit_post(n["ip"], "/api/mesh/welcome", {"box": welcomes[n["invite"]].hex()})
+        welcome_sent(cfg, n["invite"])
         remember_unit(n["name"], n["ip"], n["number"])
         say(f"  {G}✓{N} {n['name']} is member {n['number']}")
     say(f"\n{G}{B}🐧 Done!{N} Close File Transfer on each unit; they find each other over LoRa.")
@@ -648,6 +675,7 @@ def approve(args):
     cfg = need_admin()
     pi = load(MESH).get("pi") or ask("Pi over SSH")
     say(f"\n{B}🐧 waddle mesh approve{N}\n")
+    send_kept_welcomes(cfg, pi)
     waiting = json.loads(ssh(pi, f"{PI_CMD} joins") or "[]")
     if not waiting:
         say("Nobody is waiting.\n")
@@ -657,7 +685,7 @@ def approve(args):
     for req in waiting:
         inv = cfg.get("invites", {}).get(req["invite"])
         try:
-            if not inv:
+            if not inv or inv.get("welcome"):
                 raise RuntimeError("an unknown or used invitation")
             unit_public = bytes.fromhex(req["from"])
             request, k = open_request(cfg, req["invite"], unit_public, bytes.fromhex(req["box"]))
@@ -682,6 +710,7 @@ def approve(args):
     welcomes = admit(cfg, pi, newcomers)
     for n in newcomers:
         ssh(pi, f"{PI_CMD} welcome {n['invite']} {welcomes[n['invite']].hex()}")
+        welcome_sent(cfg, n["invite"])
         say(f"  {G}✓{N} {n['name']} is member {n['number']}; their unit starts within 10 seconds")
     say()
     return 0

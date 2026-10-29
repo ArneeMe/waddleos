@@ -23,6 +23,8 @@ constexpr uint8_t GROUP = 0xFF;  // everyone
 // the creating member × 256 + that member's own count, so two units never pick
 // the same one. Who is in it only the members know.
 constexpr uint8_t GROUP_TO = 0xFE;
+// ROSTER packets: counter = ROSTER_COUNTER + the roster's version (sender 0).
+constexpr uint32_t ROSTER_COUNTER = 0x40000000;
 constexpr uint8_t MAX_MEMBERS = 32;
 
 constexpr size_t MSG_PREFIX = 8;  // time + previous hash, before the text

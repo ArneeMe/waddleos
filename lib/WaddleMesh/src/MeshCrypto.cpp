@@ -67,9 +67,21 @@ bool setupOpen(const uint8_t key[KEY_SIZE], const uint8_t nonceByte, const uint8
   return bad == 0;
 }
 
-void setupCode(const uint8_t unitPublic[KEY_SIZE], char out[8]) {
-  uint8_t h[32];
-  crypto_blake2b(h, sizeof(h), unitPublic, KEY_SIZE);
+void pairCommit(const uint8_t toolPublic[KEY_SIZE], const uint8_t toolNonce[PAIR_NONCE_SIZE], uint8_t out[32]) {
+  uint8_t input[KEY_SIZE + PAIR_NONCE_SIZE];
+  memcpy(input, toolPublic, KEY_SIZE);
+  memcpy(input + KEY_SIZE, toolNonce, PAIR_NONCE_SIZE);
+  crypto_blake2b(out, 32, input, sizeof(input));
+}
+
+void pairCode(const uint8_t toolPublic[KEY_SIZE], const uint8_t unitPublic[KEY_SIZE],
+              const uint8_t toolNonce[PAIR_NONCE_SIZE], const uint8_t unitNonce[PAIR_NONCE_SIZE], char out[8]) {
+  uint8_t input[2 * KEY_SIZE + 2 * PAIR_NONCE_SIZE], h[32];
+  memcpy(input, toolPublic, KEY_SIZE);
+  memcpy(input + KEY_SIZE, unitPublic, KEY_SIZE);
+  memcpy(input + 2 * KEY_SIZE, toolNonce, PAIR_NONCE_SIZE);
+  memcpy(input + 2 * KEY_SIZE + PAIR_NONCE_SIZE, unitNonce, PAIR_NONCE_SIZE);
+  crypto_blake2b(h, sizeof(h), input, sizeof(input));
   const uint32_t n = ((uint32_t(h[0]) << 16) | (uint32_t(h[1]) << 8) | h[2]) % 1000000;
   snprintf(out, 8, "%03u %03u", unsigned(n / 1000), unsigned(n % 1000));
 }

@@ -29,9 +29,15 @@ void setupKey(const uint8_t unitSecret[KEY_SIZE], const uint8_t unitPublic[KEY_S
 void setupSeal(const uint8_t key[KEY_SIZE], uint8_t nonceByte, const uint8_t* plain, size_t len, uint8_t* out);
 // plainOut gets len - TAG_SIZE bytes. False when it was changed or the key is wrong.
 bool setupOpen(const uint8_t key[KEY_SIZE], uint8_t nonceByte, const uint8_t* sealed, size_t len, uint8_t* plainOut);
-// The six digits a unit shows during setup, from its public key, so the tool
-// can tell it is talking to that unit: "482 913".
-void setupCode(const uint8_t unitPublic[KEY_SIZE], char out[8]);
+// The six digits a unit and the tool both show during setup ("482 913"), so
+// the person can tell nothing on the Wi-Fi sits between them. The tool first
+// sends only commit = BLAKE2b-256(tool public || tool nonce), the unit then
+// picks its nonce, and only then does the tool reveal its key and nonce: neither
+// a fake tool nor a fake unit can choose its key to make the codes match.
+constexpr size_t PAIR_NONCE_SIZE = 16;
+void pairCommit(const uint8_t toolPublic[KEY_SIZE], const uint8_t toolNonce[PAIR_NONCE_SIZE], uint8_t out[32]);
+void pairCode(const uint8_t toolPublic[KEY_SIZE], const uint8_t unitPublic[KEY_SIZE],
+              const uint8_t toolNonce[PAIR_NONCE_SIZE], const uint8_t unitNonce[PAIR_NONCE_SIZE], char out[8]);
 
 // The packets one message becomes: pieces back to back, MAX_PACKET apart.
 struct Sealed {

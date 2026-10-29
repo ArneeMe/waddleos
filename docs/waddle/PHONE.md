@@ -41,8 +41,7 @@ to Kari use keys the old secret cannot open.
 - **R2. The device is part of the sender byte.** The T5 sends as its member
   number (1–32), the phone as member number + 128. Everything that counts
   messages uses the sender byte: the nonce (so the two never reuse one), the
-  "previous message" chain, duplicates, sync, FETCH, and the "removed" record in
-  groups. Names, keys and conversations use the person (sender byte − 128).
+  "previous message" chain, duplicates, sync and FETCH. Names, keys and conversations use the person (sender byte − 128).
   Packets are always addressed to the person, so both devices may open them.
   Protocol version 4.
 - **R3. Notes to self.** Every key or group change a device makes (new sender
@@ -173,9 +172,8 @@ be on.
 T5. Arne's T5 makes the new key.
 
 **C6. A late message from Ola after he left.** A message he wrote under key 1
-arrives later. Both of Kari's devices accept it only if its counter is at or
-below the last one seen from that sender byte when he left (R2; the "removed"
-record is per device).
+arrives after he left. Both of Kari's devices drop it: once out, nothing from him
+in that group shows (the counter in it proves nothing).
 
 **C7. A group message reaches Kari's phone before its key.** Kept, opened when
 the note or invitation arrives (works today).

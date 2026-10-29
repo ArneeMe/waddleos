@@ -162,12 +162,19 @@ class FakeUnit:
         self.welcome = None
 
     def get(self, path):
-        assert path.startswith("/api/mesh/identity?tool=")
-        return {"publicKey": self.public.hex()}
+        assert path.startswith("/api/mesh/identity?commit=")
+        self.commit, self.nonce, self.code, self.tool = bytes.fromhex(path.split("=")[1]), os.urandom(16), None, None
+        return {"publicKey": self.public.hex(), "nonce": self.nonce.hex()}
 
     def post(self, path, doc):
+        if path == "/api/mesh/pair":
+            tool, tool_nonce = bytes.fromhex(doc["tool"]), bytes.fromhex(doc["nonce"])
+            assert wm.pair_commit(tool, tool_nonce) == self.commit
+            self.tool, self.code = tool, wm.pair_code(tool, self.public, tool_nonce, self.nonce)
+            return "OK"
         if path == "/api/mesh/join":
             tool = bytes.fromhex(doc["tool"])
+            assert tool == self.tool
             key = hashlib.blake2b(wm.x25519(self.secret, tool) + tool + self.public, digest_size=32).digest()
             inner = json.loads(wm.aead_open(key, wm.setup_nonce(2), bytes.fromhex(doc["box"])))
             self.invite = wm.read_link(inner["invite"])
@@ -230,6 +237,9 @@ class EndToEnd(unittest.TestCase):
         for key, answer in self.answers.items():
             if key in prompt:
                 return answer.pop(0) if isinstance(answer, list) else answer
+        if "setup code" in prompt:
+            # The person compares with the unit's screen.
+            return "y" if any(u.code and u.code in prompt for u in self.units.values()) else "n"
         if "(y/n)" in prompt:
             return "y"
         raise AssertionError("unexpected question: " + prompt)

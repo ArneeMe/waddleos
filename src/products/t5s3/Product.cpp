@@ -33,9 +33,9 @@ void registerWebRoutes(WebServer& server) { mesh::web::registerRoutes(server); }
 const char* firmwareName() { return "waddleos-t5.bin"; }
 
 std::string transferNote() {
-  char code[8];
-  mesh::setupCode(mesh::identity().publicKey, code);
-  return std::string("Oppsettkode: ") + code;
+  // Shown once `waddle mesh` on a computer has started setup.
+  const char* code = mesh::web::setupCode();
+  return code ? std::string("Oppsettkode: ") + code : "";
 }
 
 namespace {

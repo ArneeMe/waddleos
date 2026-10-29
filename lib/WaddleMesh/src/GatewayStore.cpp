@@ -174,7 +174,7 @@ void GatewayStore::handle(const uint8_t* raw, const size_t len, Result& r) {
 
 bool GatewayStore::relay(const uint8_t* raw, const size_t len, RawPacket& out) {
   Header h;
-  if (!ours(raw, len, h) || h.hops == 0 || h.type == Type::SyncReq || !seen_.remember(h)) return false;
+  if (!ours(raw, len, h) || h.hops == 0 || h.type == Type::SyncReq || !seen_.remember(h, raw + HEADER_SIZE, len - HEADER_SIZE)) return false;
   out.len = uint8_t(len);
   memcpy(out.data, raw, len);
   out.data[3] = uint8_t((out.data[3] & 0xF0) | (h.hops - 1));

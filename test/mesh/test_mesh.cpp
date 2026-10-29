@@ -187,9 +187,15 @@ static void testSetupBox() {
   CHECK(!setupOpen(k1, 1, box, strlen(json) + TAG_SIZE, back));  // other nonce
   box[0] ^= 1;
   CHECK(!setupOpen(k1, 2, box, strlen(json) + TAG_SIZE, back));
-  char code[8];
-  setupCode(unitPublic, code);
+  uint8_t toolNonce[PAIR_NONCE_SIZE], unitNonce[PAIR_NONCE_SIZE];
+  fill(toolNonce, sizeof(toolNonce), 20);
+  fill(unitNonce, sizeof(unitNonce), 40);
+  char code[8], other[8];
+  pairCode(toolPublic, unitPublic, toolNonce, unitNonce, code);
   CHECK(strlen(code) == 7 && code[3] == ' ');
+  unitNonce[0] ^= 1;
+  pairCode(toolPublic, unitPublic, toolNonce, unitNonce, other);
+  CHECK(strcmp(code, other) != 0);
 }
 
 static void testGroups() {
@@ -345,6 +351,12 @@ static void testRadioRules() {
   h.pieceIndex = 1;
   h.pieceCount = 2;
   CHECK(seen.remember(h));
+  // A forged packet with a copied header does not hide the real one.
+  const uint8_t real[] = {1, 2, 3}, forged[] = {9, 9, 9};
+  h.counter = 6;
+  CHECK(seen.remember(h, forged, sizeof(forged)));
+  CHECK(seen.remember(h, real, sizeof(real)));
+  CHECK(!seen.remember(h, real, sizeof(real)));
 
   uint32_t save = 0;
   CounterReserve fresh(0);
@@ -544,10 +556,18 @@ static void writeVectors(const char* path) {
   setupKey(aSecret, aPublic, toolPublic, boxKey);
   uint8_t box[KEY_SIZE + TAG_SIZE];
   setupSeal(boxKey, 1, senderKey, KEY_SIZE, box);
+  uint8_t toolNonce[PAIR_NONCE_SIZE], unitNonce[PAIR_NONCE_SIZE], commit[32];
+  fill(toolNonce, sizeof(toolNonce), 20);
+  fill(unitNonce, sizeof(unitNonce), 40);
+  pairCommit(toolPublic, toolNonce, commit);
   char code[8];
-  setupCode(aPublic, code);
-  std::fprintf(f, "  \"setup\": {\"toolSecret\": \"%s\", \"key\": \"%s\", \"senderKeyBox\": \"%s\", \"code\": \"%s\"},\n",
-               hex(toolSecret, KEY_SIZE).c_str(), hex(boxKey, KEY_SIZE).c_str(), hex(box, sizeof(box)).c_str(), code);
+  pairCode(toolPublic, aPublic, toolNonce, unitNonce, code);
+  std::fprintf(f,
+               "  \"setup\": {\"toolSecret\": \"%s\", \"key\": \"%s\", \"senderKeyBox\": \"%s\", \"toolNonce\": \"%s\", "
+               "\"unitNonce\": \"%s\", \"commit\": \"%s\", \"code\": \"%s\"},\n",
+               hex(toolSecret, KEY_SIZE).c_str(), hex(boxKey, KEY_SIZE).c_str(), hex(box, sizeof(box)).c_str(),
+               hex(toolNonce, sizeof(toolNonce)).c_str(), hex(unitNonce, sizeof(unitNonce)).c_str(),
+               hex(commit, sizeof(commit)).c_str(), code);
 
   uint8_t groupKey[KEY_SIZE];
   fill(groupKey, KEY_SIZE, 3);

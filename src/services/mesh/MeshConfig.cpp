@@ -253,6 +253,36 @@ bool SealedLog::next(std::vector<uint8_t>& plain) {
 
 namespace {
 
+// The newest roster this unit took, (network << 16) | version, in flash: a
+// copied-back older roster.bin (with someone removed still in it) is refused.
+uint32_t newestRoster() {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, true);
+  const uint32_t v = prefs.getUInt("rosterVer", 0);
+  prefs.end();
+  return v;
+}
+
+void saveNewestRoster(const uint8_t network, const uint16_t version) {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putUInt("rosterVer", uint32_t(network) << 16 | version);
+  prefs.end();
+}
+
+// Everything of an earlier network: groups, keys, chats, positions.
+void forgetNetworkFiles() {
+  for (const char* dir : {"/.mesh/chat", "/.mesh/packets"}) {
+    for (const auto& name : Storage.listFiles(dir, 500)) {
+      Storage.remove((std::string(dir) + "/" + name.c_str()).c_str());
+    }
+  }
+  for (const char* path : {"/.mesh/groups.bin", "/.mesh/senders.bin", "/.mesh/positions.sealed", "/.mesh/read.bin",
+                           "/.mesh/last.bin"}) {
+    Storage.remove(path);
+  }
+}
+
 // Fills group.members from a checked roster and derives the DM keys.
 void takeMembers(Group& group, const Roster& roster) {
   const Identity& mine = identity();
@@ -313,6 +343,8 @@ bool loadGroup(Group& group) {
   JsonDocument doc;
   const char* err = deserializeJson(doc, network.data(), network.size()) ? "ikke gyldig JSON" : parseNetwork(doc, group);
   if (!err) err = takeRoster(group, roster.data(), roster.size());
+  const uint32_t newest = newestRoster();
+  if (!err && newest >> 16 == group.id && group.rosterVersion < (newest & 0xFFFF)) err = "en eldre roster enn sist";
   if (err) {
     LOG_ERR("MESH", "network: %s", err);
     group = Group{};
@@ -327,13 +359,19 @@ bool applyRoster(Group& group, const uint8_t* data, const size_t len) {
       roster.version <= group.rosterVersion) {
     return false;
   }
-  if (!roster.member(group.me)) {
-    // I was taken out: keep the old roster, so the history still has names.
+  const RosterEntry* self = roster.member(group.me);
+  if (!self || memcmp(self->publicKey, identity().publicKey, KEY_SIZE) != 0) {
+    // I was taken out (my number may be someone else's now). The roster
+    // without me is saved, so the unit is out after a restart too (loadGroup);
+    // the chats stay, for when it is let back in as the same number.
     LOG_INF("MESH", "This unit is no longer in the network");
+    saveSealed(ROSTER_PATH, std::vector<uint8_t>(data, data + len));
+    saveNewestRoster(group.id, roster.version);
     group.configured = false;
     return true;
   }
   if (!saveSealed(ROSTER_PATH, std::vector<uint8_t>(data, data + len))) return false;
+  saveNewestRoster(group.id, roster.version);
   takeMembers(group, roster);
   group.roster.assign(data, data + len);
   LOG_INF("MESH", "Roster version %u: %u members", roster.version, unsigned(roster.members.size()));
@@ -365,6 +403,10 @@ bool readLink(const std::string& link, Invitation& inv) {
 const char* startJoin(const std::string& link, const std::string& name, std::string& boxHex, char code[8]) {
   Invitation inv;
   if (!readLink(link, inv)) return "lenken er ikke en invitasjon";
+  // Only a unit outside any network joins: someone on the Wi-Fi cannot move a
+  // unit that is in one to another network.
+  Group current;
+  if (loadGroup(current)) return "enheten er allerede med i et nettverk";
   if (name.empty() || name.size() > ROSTER_NAME) return "navnet må være 1-20 tegn";
   const Identity& mine = identity();
   uint8_t k[KEY_SIZE];
@@ -407,6 +449,19 @@ const char* finishJoin(const std::string& boxHex) {
   std::vector<uint8_t> roster(strlen(rosterHex) / 2);
   if (roster.empty() || !fromHex(rosterHex, roster.data(), roster.size())) return "rosteren mangler";
   if (const char* err = takeRoster(check, roster.data(), roster.size())) return err;
+  // Another network, or another number in it: the old chats and groups would
+  // show under the wrong people. Back in the same network as the same number
+  // (after being taken out): the history stays.
+  std::vector<uint8_t> before;
+  JsonDocument old;
+  Group previous;
+  const bool same = loadSealed(NETWORK_PATH, before) && !deserializeJson(old, before.data(), before.size()) &&
+                    !parseNetwork(old, previous) && previous.id == check.id && previous.me == check.me &&
+                    memcmp(previous.adminSign, check.adminSign, SIGN_KEY_SIZE) == 0;
+  if (!same) forgetNetworkFiles();
+  // The others forgot my old sender key when I left (or never had it).
+  newSenderKey();
+  saveNewestRoster(check.id, check.rosterVersion);
   // Saved without the roster, which has a file of its own.
   doc.remove("roster");
   std::string network;

@@ -134,12 +134,19 @@ int sim::httpExchange(const std::string& body, std::string& answer, std::string&
   return status;
 }
 
+namespace mesh {
+struct SimAccess {
+  static uint32_t control(Node& n, uint8_t to, const std::string& text) { return n.sendControl(to, text); }
+};
+}  // namespace mesh
+
 static void dump() {
   auto& node = mesh::Node::get();
   const auto& group = node.group();
   JsonDocument doc;
   doc["me"] = group.me;
   doc["configured"] = group.configured;
+  doc["rosterVersion"] = group.rosterVersion;
   doc["unread"] = node.store().totalUnread();
   doc["sosActive"] = node.sosActive();
   doc["sosReceivedBy"] = node.sosReceivedBy();
@@ -321,6 +328,14 @@ int main(int argc, char** argv) {
       static mesh::Sealed sealed;
       mesh::seal(h, key.data(), roster.data(), roster.size(), sealed);
       for (int i = 0; i < sealed.count; i++) std::cout << "packet " << hex(sealed.packets[i], sealed.lengths[i]) << "\n";
+    } else if (cmd == "control") {
+      // A control DM as a misbehaving member would send it (hex of the text).
+      int to = 0;
+      std::string textHex;
+      in >> to >> textHex;
+      std::string text(textHex.size() / 2, '\0');
+      mesh::fromHex(textHex.c_str(), reinterpret_cast<uint8_t*>(&text[0]), text.size());
+      std::cout << "counter " << mesh::SimAccess::control(node, uint8_t(to), text) << "\n";
     } else if (cmd == "group") {
       int bits = 0;
       in >> bits >> std::ws;

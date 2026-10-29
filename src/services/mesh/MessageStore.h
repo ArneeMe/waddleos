@@ -7,6 +7,7 @@
 //   /.mesh/chat/<conversation>.sealed  what the screens show: messages and their
 //                                      delivery states, as appended records
 //   /.mesh/read.bin                    how many messages of each conversation were seen
+//   /.mesh/last.bin                    the newest counter from each member (lastCounter)
 //
 // All sealed with the unit's storage key (MeshConfig.h: appendSealed, SealedLog),
 // so the card alone shows nothing, not even who wrote to whom.
@@ -65,14 +66,19 @@ class MessageStore {
 
   // Raw packets, for sync answers.
   void savePacket(uint8_t sender, const uint8_t* raw, size_t len);
-  bool hasPacket(const Header& h);
+  // This exact packet is stored (a different one with the same header, a
+  // forgery or the real one, does not count).
+  bool hasPacket(const Header& h, const uint8_t* raw, size_t len);
   // Every stored MSG piece from sender with a counter above `after`, oldest first.
   // `readableBy` drops DMs between two other members.
   std::vector<std::vector<uint8_t>> packetsAfter(uint8_t sender, uint32_t after, uint8_t readableBy, size_t limit);
   // Every stored MSG piece from sender to recipient (a group's waiting messages).
   std::vector<std::vector<uint8_t>> packetsTo(uint8_t sender, uint8_t recipient);
-  // The highest MSG counter stored from sender.
+  // The highest MSG counter from sender that opened (or was mine, or for a group
+  // I am not in), for sync requests. Packets that did not open do not count: a
+  // forged one with a high counter would hide the sender's real messages.
   uint32_t lastCounter(uint8_t sender) const { return isMember(sender) ? lastCounter_[sender - 1] : 0; }
+  void confirmCounter(uint8_t sender, uint32_t counter);
 
   // Chat history.
   void addMessage(uint8_t conversation, const ChatMessage& m);

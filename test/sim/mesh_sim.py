@@ -95,6 +95,7 @@ class World:
         self.now = 1000
         self.links = set()
         self.drop = None  # drop(raw, sender, receiver) -> True to lose a packet
+        self.roster_only = None
         self.air = []  # (who sent, raw) waiting to be heard next step
         self.store = Store(os.path.join(self.dir, "server.db"))
         self.server = Server(self.store, GROUP)
@@ -155,8 +156,10 @@ class World:
         assert u.cmd("welcome " + box) == ["joined"]
         self.broadcast_roster(roster)
 
-    def broadcast_roster(self, roster):
-        """The server sends a new roster out over LoRa (here: straight into the air)."""
+    def broadcast_roster(self, roster, only=None):
+        """The server sends a new roster out over LoRa (here: straight into the air,
+        to every unit, or only to the units in `only`)."""
+        self.roster_only = only
         for line in self.units[min(self.units)].cmd("admin-packets %d %s %d %s" % (
                 GROUP, self.network_key.hex(), self.roster_version, roster)):
             self.air.append((GATEWAY, bytes.fromhex(line.split()[1])))
@@ -208,7 +211,8 @@ class World:
             for n, u in self.units.items():
                 # The roster from the admin reaches every unit (in the field: the
                 # server sends it at each unit's next sync).
-                roster = sender == GATEWAY and packet_type(raw) == P.ROSTER
+                roster = sender == GATEWAY and packet_type(raw) == P.ROSTER and (
+                    self.roster_only is None or n in self.roster_only)
                 if n != sender and u.alive and (self.hears(sender, n) or roster):
                     if not (self.drop and self.drop(raw, sender, n)):
                         u.cmd("rx " + raw.hex())
@@ -637,6 +641,88 @@ class MeshTests(unittest.TestCase):
                     self.assertNotIn(b"Kari", data, f)
                     checked += 1
         self.assertGreater(checked, 10)
+
+    def test_a_member_cannot_take_over_or_make_up_a_group(self):
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(10)
+        w.units[1].cmd("group %d Hytta" % 0b10)  # Arne and Kari
+        w.run(15)
+        gid = list(w.units[2].state()["groups"].values())[0]["id"]
+
+        def invitation(group_id, members, name):
+            return (b"\0G" + group_id.to_bytes(2, "little") + bytes([1, 1]) + members.to_bytes(4, "little") +
+                    os.urandom(32) + name).hex()
+
+        # Ola, not in it, says the group starts afresh with him in it, and makes
+        # up a group under Arne's id.
+        w.units[3].cmd("control 2 " + invitation(gid, 0b111, b"Kapret"))
+        w.units[3].cmd("control 2 " + invitation(1 * 256 + 77, 0b110, b"Falsk"))
+        w.run(15)
+        groups = list(w.units[2].state()["groups"].values())
+        self.assertEqual([(g["id"], g["name"], g["members"]) for g in groups], [(gid, "Hytta", 0b011)])
+        self.assertEqual(w.units[3].state().get("groups", {}), {})
+
+    def test_lost_key_is_asked_for(self):
+        """Arne's sender key never reaches Kari and someone forges her
+        confirmation: she asks for it when his message comes."""
+        w = self.w
+        w.all_in_range()
+        lost = set()
+
+        def drop(raw, sender, receiver):
+            h = P.parse_header(raw)
+            if h.type == P.MSG and h.sender == 1 and h.recipient == 2 and (collecting or h.counter in lost):
+                lost.add(h.counter)
+                return True
+            return False
+
+        collecting = True
+        w.drop = drop
+        w.begin()
+        w.run(5)
+        collecting = False
+        self.assertTrue(lost)
+        for i, c in enumerate(sorted(lost)):
+            h = P.Header(type=P.ACK, group=GROUP, sender=2, recipient=1, counter=4000000000 + i)
+            w.air.append((2, h.pack() + P.Ack(1, c, 1).pack()))
+        w.run(20)
+        w.units[1].cmd("send 0 Til alle")
+        w.run(30)
+        self.assertEqual(w.units[2].texts(0), ["Til alle"])
+
+    def test_units_pass_a_new_roster_on(self):
+        """Out of the gateway's reach, a unit that missed a new roster gets it
+        from another unit's sync answer."""
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(10)
+        before = w.units[2].state()["rosterVersion"]
+        w.link(1, 2, False)  # Kari away while it comes (units relay it too)
+        w.link(2, 3, False)
+        w.broadcast_roster(w.signed_roster(), only={1})
+        w.run(5)
+        w.all_in_range()
+        self.assertEqual(w.units[1].state()["rosterVersion"], before + 1)
+        self.assertEqual(w.units[2].state()["rosterVersion"], before)
+        w.units[2].cmd("check")
+        w.run(20)
+        self.assertEqual(w.units[2].state()["rosterVersion"], before + 1)
+
+    def test_removed_unit_stays_out_after_a_restart(self):
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(10)
+        w.remove(3)
+        w.run(10)
+        self.assertFalse(w.units[3].state()["configured"])
+        w.units[3].stop()
+        w.units[3].start()
+        w.units[3].cmd("begin")
+        self.assertFalse(w.units[3].state()["configured"])
 
     def test_unsent_message_survives_a_restart(self):
         w = self.w

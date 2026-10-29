@@ -13,6 +13,7 @@ import ipaddress
 import json
 import logging
 import ssl
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -22,6 +23,7 @@ log = logging.getLogger("waddlemesh.web")
 
 MAX_BODY = 64 * 1024
 MAX_JOIN_BODY = 4096
+JOINS_PER_ADDRESS = 3  # join requests per address per hour
 MAX_JOIN_BOX = 1024  # bytes, sealed
 
 
@@ -66,11 +68,21 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code, doc):
         self._send(code, json.dumps(doc).encode(), "application/json")
 
+    def _length(self, limit):
+        """The body's length, or None when missing, negative or over limit."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return None
+        return length if 0 <= length <= limit else None
+
     def _join(self):
         """POST /api/join {"invite", "from", "box"}: kept for the admin's `waddle mesh approve`."""
-        length = int(self.headers.get("Content-Length", "0"))
-        if length > MAX_JOIN_BODY:
+        length = self._length(MAX_JOIN_BODY)
+        if length is None:
             return self._send(413, b"")
+        if not self._local() and not self.server.allow_join(self.client_address[0]):
+            return self._json(429, {"error": "too many requests"})
         try:
             doc = json.loads(self.rfile.read(length))
         except ValueError:
@@ -98,8 +110,8 @@ class Handler(BaseHTTPRequestHandler):
         if member is None:
             time.sleep(1)  # slow down guessing
             return self._send(401, b"")
-        length = int(self.headers.get("Content-Length", "0"))
-        if length > MAX_BODY:
+        length = self._length(MAX_BODY)
+        if length is None:
             return self._send(413, b"")
         try:
             packets = P.unframe(self.rfile.read(length))
@@ -282,9 +294,25 @@ class WebServer(ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.mesh = mesh
         self.gateway_status = gateway_status
+        self.join_times = {}  # address -> times of its join requests in the last hour
+        self.join_lock = threading.Lock()
         if cert:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             ctx.load_cert_chain(cert, key)
             # Handshake in the request's own thread, so a slow unit blocks nobody.
             self.socket = ctx.wrap_socket(self.socket, server_side=True, do_handshake_on_connect=False)
+
+    def allow_join(self, address, now=None):
+        """At most JOINS_PER_ADDRESS join requests per internet address per hour,
+        so nobody fills the waiting list from outside."""
+        now = now or time.time()
+        with self.join_lock:
+            times = [t for t in self.join_times.get(address, []) if now - t < 3600]
+            if len(times) >= JOINS_PER_ADDRESS:
+                self.join_times[address] = times
+                return False
+            self.join_times[address] = times + [now]
+            if len(self.join_times) > 1000:  # forget quiet addresses
+                self.join_times = {a: t for a, t in self.join_times.items() if t and now - t[-1] < 3600}
+            return True

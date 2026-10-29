@@ -38,23 +38,27 @@ void AirtimeBudget::spend(const uint32_t airtime, const uint32_t nowMs) {
   next_ = (next_ + 1) % ENTRIES;
 }
 
-uint64_t SeenPackets::key(const Header& h) {
+uint64_t SeenPackets::key(const Header& h, const uint8_t* body, const size_t bodyLen) {
+  // 11 bits of the body (FNV-1a), so a packet with a copied header and other
+  // contents counts as a different one.
+  uint32_t hash = 2166136261u;
+  for (size_t i = 0; i < bodyLen; i++) hash = (hash ^ body[i]) * 16777619u;
   // Never 0, so an empty entry never matches.
-  return (uint64_t(1) << 63) | (uint64_t(h.type) << 48) | (uint64_t(h.sender) << 40) | (uint64_t(h.pieceIndex) << 32) |
-         h.counter;
+  return (uint64_t(1) << 63) | (uint64_t(hash & 0x7FF) << 52) | (uint64_t(h.type) << 48) | (uint64_t(h.sender) << 40) |
+         (uint64_t(h.pieceIndex) << 32) | h.counter;
 }
 
-bool SeenPackets::contains(const Header& h) const {
-  const uint64_t k = key(h);
+bool SeenPackets::contains(const Header& h, const uint8_t* body, const size_t bodyLen) const {
+  const uint64_t k = key(h, body, bodyLen);
   for (const uint64_t e : keys_) {
     if (e == k) return true;
   }
   return false;
 }
 
-bool SeenPackets::remember(const Header& h) {
-  if (contains(h)) return false;
-  keys_[next_] = key(h);
+bool SeenPackets::remember(const Header& h, const uint8_t* body, const size_t bodyLen) {
+  if (contains(h, body, bodyLen)) return false;
+  keys_[next_] = key(h, body, bodyLen);
   next_ = (next_ + 1) % ENTRIES;
   return true;
 }

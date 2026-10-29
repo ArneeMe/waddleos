@@ -13,7 +13,7 @@ fi
 san="-fsanitize=address,undefined"
 gcc -O1 $san -c lib/monocypher/src/monocypher.c -o "$out/monocypher.o"
 gcc -O1 $san -Ilib/monocypher/src -c lib/monocypher/src/monocypher-ed25519.c -o "$out/monocypher-ed25519.o"
-g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -Wno-maybe-uninitialized $san \
+g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -Wno-maybe-uninitialized $san -DMESH_SIM \
   -Itest/sim/stubs -Isrc -Ilib/WaddleMesh/src -Ilib/monocypher/src -isystem "$json" \
   test/sim/sim_node.cpp src/services/mesh/MeshNode.cpp src/services/mesh/MessageStore.cpp \
   src/services/mesh/MeshConfig.cpp src/services/mesh/MeshGroups.cpp lib/WaddleMesh/src/*.cpp "$out/monocypher.o" "$out/monocypher-ed25519.o" -o "$out/sim_node"

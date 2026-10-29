@@ -16,7 +16,6 @@ constexpr int MAX_GROUPS = 16;
 constexpr int MAX_GROUP_KEYS = 6;  // key numbers kept per group; the oldest goes first
 constexpr size_t GROUP_NAME = 24;
 constexpr int MAX_NOTICES = 8;  // unconfirmed invitations and notices per group
-constexpr int MAX_REMOVED = 8;  // members who left, remembered per group
 
 struct GroupKey {
   uint8_t number = 0;  // 0 = unused
@@ -33,29 +32,18 @@ struct Notice {
   uint32_t counter = 0;
 };
 
-// A member who left or was taken out: the first key number they do not have,
-// and their newest message counter then. What they sent before still opens
-// (also when it arrives late); anything newer is dropped.
-struct Removed {
-  uint8_t member = 0;  // 0 = unused
-  uint8_t atKey = 0;
-  uint32_t counter = 0;
-};
-
 struct ChatGroup {
   uint16_t id = 0;      // creator × 256 + count (MeshPacket.h groupId); 0 = free slot
   Members members = 0;  // me included
   bool left = false;    // I left: kept to read the history, no longer written to
   char name[GROUP_NAME] = "";
   GroupKey keys[MAX_GROUP_KEYS];
-  Removed removed[MAX_REMOVED];
   Notice notices[MAX_NOTICES];
 
+  // Only members' messages are shown. One who left or was taken out still has
+  // the old keys, so their messages are dropped from then on, also ones they
+  // wrote before that arrive late (the counter they carry proves nothing).
   bool has(uint8_t member) const { return members & memberBit(member); }
-  // Whether a message from member, with this key number and counter, may be shown.
-  bool accepts(uint8_t member, uint8_t number, uint32_t counter) const;
-  void markRemoved(uint8_t member, uint8_t atKey, uint32_t counter);
-  void clearRemoved(uint8_t member);
   void setNotice(uint8_t member, char kind, uint8_t about, uint32_t counter);
   // True when counter was my notice to member (now confirmed, so forgotten).
   bool confirm(uint8_t member, uint32_t counter);

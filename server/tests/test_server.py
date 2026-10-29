@@ -732,6 +732,36 @@ class JoinWebTests(unittest.TestCase):
                              200)
         self.assertEqual(self.request("/api/join", {"invite": "ff" * 8, "from": "aa" * 32, "box": "bb"})[0], 429)
 
+    def test_join_requests_limited_per_internet_address(self):
+        for _ in range(3):
+            self.assertTrue(self.web.allow_join("203.0.113.5", now=1000))
+        self.assertFalse(self.web.allow_join("203.0.113.5", now=1000))
+        self.assertTrue(self.web.allow_join("203.0.113.6", now=1000))
+        self.assertTrue(self.web.allow_join("203.0.113.5", now=1000 + 3601))
+
+    def test_negative_length_is_refused(self):
+        import http.client
+        port = self.web.server_address[1]
+        for path in ("/api/join", "/api/packets"):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.putrequest("POST", path)
+            c.putheader("Content-Length", "-1")
+            c.putheader("Authorization", "Bearer " + TOKEN_1)
+            c.endheaders()
+            self.assertIn(c.getresponse().status, (401, 413), path)
+            c.close()
+
+    def test_wifi_copy_replaces_a_forged_lora_copy(self):
+        raw = packets("group message")[0][0]
+        h = P.parse_header(raw)
+        forged = raw[:-1] + bytes([raw[-1] ^ 1])
+        store = self.mesh.store
+        self.assertTrue(store.add_packet(h, forged, "lora"))
+        self.assertFalse(store.add_packet(h, forged, "lora"))
+        self.assertTrue(store.add_packet(h, raw, "wifi"))
+        self.assertEqual(store.messages_after(h.sender, 0, 2), [raw])
+        self.assertFalse(store.add_packet(h, raw, "wifi"))
+
     def test_roster_for_members_only(self):
         self.assertEqual(self.request("/api/roster", token=TOKEN_1)[0], 401)
         set_roster(self.mesh.store, 1, [(1, "Arne", TOKEN_1)])

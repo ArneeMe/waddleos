@@ -8,12 +8,16 @@
 #include <SecureHttpClient.h>
 #include <WiFi.h>
 #include <esp_random.h>
+#ifdef BOARD_HAS_PSRAM
+#include <esp_heap_caps.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <new>
 
 #include "MeshGps.h"
 #include "MeshRadio.h"
@@ -28,6 +32,7 @@ namespace mesh {
 namespace {
 
 constexpr const char* POSITIONS_PATH = "/.mesh/positions.sealed";
+constexpr const char* ROSTER_PACKETS_PATH = "/.mesh/rosterpk.bin";
 constexpr size_t MAX_OUTBOX = 40;
 constexpr size_t MAX_PENDING = 20;
 constexpr size_t MAX_SYNC_ANSWER = 8;
@@ -76,8 +81,17 @@ bool samePacket(const uint8_t* a, const uint8_t* b) {
 }  // namespace
 
 Node& Node::get() {
+  // About 17 KB with 32 members: in PSRAM, keeping the internal heap free.
+#ifdef BOARD_HAS_PSRAM
+  static Node* node = [] {
+    void* p = heap_caps_malloc(sizeof(Node), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? new (p) Node() : new Node();
+  }();
+  return *node;
+#else
   static Node node;
   return node;
+#endif
 }
 
 void Node::begin() {
@@ -203,6 +217,7 @@ void Node::sendSealed(const Header& h, const uint8_t* key, const uint8_t* plain,
     if (store) store_.savePacket(group_.me, sealed->packets[i], sealed->lengths[i]);
     queue(sealed->packets[i], sealed->lengths[i], 0, false);
   }
+  if (store) store_.confirmCounter(group_.me, h.counter);
 }
 
 void Node::sendAck(const uint8_t toMember, const uint8_t ackedSender, const uint32_t counter, const AckState state) {
@@ -402,9 +417,9 @@ const uint8_t* Node::keyFor(const Header& h) const {
   if (h.recipient == group_.me) return from->pairKey;
   if (h.recipient == GROUP_TO) {
     // Not (yet) mine: the packet is kept until the key comes. A member who was
-    // taken out can no longer write, except under keys from before.
+    // taken out can no longer write.
     const int slot = groups_.find(h.groupId);
-    if (slot < 0 || !groups_.at(slot).accepts(h.sender, h.key, h.counter)) return nullptr;
+    if (slot < 0 || !groups_.at(slot).has(h.sender)) return nullptr;
     return groups_.at(slot).key(h.key);
   }
   return nullptr;  // a DM between two others
@@ -428,7 +443,7 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
                                [&](const Outgoing& o) { return o.cancelIfHeard && samePacket(o.raw.data(), raw); }),
                 outbox_.end());
 
-  if (!seen_.remember(h)) {
+  if (!seen_.remember(h, raw + HEADER_SIZE, len - HEADER_SIZE)) {
     // A message we already have came again straight from its sender (a retry,
     // not someone's relay or a stored copy): the sender missed our ACK.
     if (h.type == Type::Msg && h.hops == DEFAULT_HOPS && h.pieceIndex == h.pieceCount - 1 &&
@@ -449,7 +464,7 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
   const size_t bodyLen = len - HEADER_SIZE;
   switch (h.type) {
     case Type::Msg: {
-      if (!isMember(h.sender) || store_.hasPacket(h)) return;
+      if (!isMember(h.sender) || store_.hasPacket(h, raw, len)) return;
       store_.savePacket(h.sender, raw, len);  // kept to help other units catch up
       const uint8_t* joined = nullptr;
       size_t joinedLen = 0;
@@ -471,6 +486,14 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
       break;
     case Type::Roster: {
       // From the admin's tool through the server (or a unit passing it on).
+      // The pieces are kept, to pass the roster on to units that missed it.
+      if (h.sender != SERVER || h.counter < ROSTER_COUNTER + group_.rosterVersion) break;
+      Header first;
+      if (!rosterPieces_.empty() &&
+          (!readHeader(rosterPieces_[0].data(), rosterPieces_[0].size(), first) || first.counter != h.counter)) {
+        rosterPieces_.clear();
+      }
+      if (rosterPieces_.size() < MAX_PIECES) rosterPieces_.emplace_back(raw, raw + len);
       const uint8_t* joined = nullptr;
       size_t joinedLen = 0;
       if (pieces_.add(h, raw, len, now, &joined, &joinedLen)) handleRoster(h, joined, joinedLen);
@@ -482,12 +505,18 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
 
 void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t len) {
   const uint8_t* key = keyFor(h);
-  if (!key || len < TAG_SIZE + MSG_PREFIX) return;
+  if (!key) {
+    missingKey(h);
+    return;
+  }
+  if (len < TAG_SIZE + MSG_PREFIX) return;
   std::vector<uint8_t> plain(len - TAG_SIZE);
   if (!open(h, key, cipher, len, plain.data())) {
     LOG_ERR("MESH", "Message %u/%lu failed its check (wrong key or changed)", h.sender, (unsigned long)h.counter);
     return;
   }
+  // Only now does its counter count for syncs (MessageStore::lastCounter).
+  store_.confirmCounter(h.sender, h.counter);
   const int found = conversationOf(h);
   if (found < 0) return;
   const uint8_t conversation = uint8_t(found);
@@ -499,8 +528,8 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
   m.text.assign(reinterpret_cast<const char*>(plain.data() + MSG_PREFIX), plain.size() - MSG_PREFIX);
   // A group invitation or a member leaving, not a message to show.
   if (!m.text.empty() && m.text[0] == '\0' && h.recipient == group_.me) {
-    sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
-    handleControl(h.sender, m.text);
+    // Not confirmed when it cannot be taken yet: it comes again at their next check.
+    if (handleControl(h.sender, m.text)) sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
     return;
   }
   if (store_.hasMessage(conversation, h.sender, h.counter)) return;
@@ -524,7 +553,11 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
 void Node::handlePosition(const Header& h, const uint8_t* cipher, const size_t len) {
   const Member* from = group_.member(h.sender);
   const uint8_t* key = senders_.key(h.sender, h.key);
-  if (!from || !from->present || !key || h.recipient != GROUP || len != POS_SIZE + TAG_SIZE) return;
+  if (!from || !from->present || h.recipient != GROUP || len != POS_SIZE + TAG_SIZE) return;
+  if (!key) {
+    missingKey(h);
+    return;
+  }
   uint8_t plain[POS_SIZE];
   if (!open(h, key, cipher, len, plain)) return;
   Position p;
@@ -568,6 +601,7 @@ uint8_t Node::conversationOfMine(const uint32_t counter) {
 void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
   Ack ack;
   if (!readAck(body, len, ack) || ack.sender != group_.me) return;
+  controlWaiting_.erase(std::remove(controlWaiting_.begin(), controlWaiting_.end(), ack.counter), controlWaiting_.end());
   // An answer to my SOS: who has it, and who has seen it.
   if (std::find(sosCounters_.begin(), sosCounters_.end(), ack.counter) != sosCounters_.end()) {
     if (h.sender == SERVER) {
@@ -599,6 +633,15 @@ void Node::handleSyncReq(const Header& h, const uint8_t* body, const size_t len)
   if (!isMember(h.sender) || !readSyncReq(body, len, req)) return;
   if (req.battery) members_[h.sender - 1].battery = req.battery;
   size_t sent = 0;
+  // Their roster is older (it may take someone out): it goes first, whole.
+  if (req.rosterVersion < group_.rosterVersion) {
+    for (const auto& raw : savedRosterPackets()) {
+      std::vector<uint8_t> copy = raw;
+      copy[3] &= 0xF0;
+      queue(copy.data(), copy.size(), randomBetween(1500, 4000) + uint32_t(sent) * 300, true);
+      sent++;
+    }
+  }
   for (uint8_t s = 1; s <= MAX_MEMBERS && sent < MAX_SYNC_ANSWER; s++) {
     if (s == h.sender) continue;
     for (const auto& raw : store_.packetsAfter(s, req.lastCounter[s - 1], h.sender, MAX_SYNC_ANSWER - sent)) {
@@ -677,6 +720,8 @@ constexpr char SENDER_KEY = 'S';
 constexpr char INVITE = 'G';
 constexpr char LEAVE = 'L';
 constexpr char REMOVE = 'R';                   // "please take this member out" to the lowest member
+constexpr char ASK_KEY = 'K';                  // "send me this key": group id (0 = your sender key), number
+constexpr uint32_t ASK_KEY_AGAIN_MS = 6 * 3600 * 1000UL;
 constexpr uint8_t NEW_GROUP = 1;               // invitation flags: a group starting afresh
 constexpr size_t INVITE_SIZE = 10 + KEY_SIZE;  // 0, 'G', id (2), key number, flags, members (4), key; then the name
 
@@ -691,6 +736,13 @@ std::string idBytes(const uint16_t id) { return std::string{char(id & 0xFF), cha
 uint16_t readId(const std::string& text, const size_t at) {
   return uint16_t(uint8_t(text[at]) | (uint8_t(text[at + 1]) << 8));
 }
+std::string invitation(const ChatGroup& g, const GroupKey& k, const bool fresh) {
+  std::string p = std::string{'\0', INVITE} + idBytes(g.id) + char(k.number) + char(fresh ? NEW_GROUP : 0);
+  for (int i = 0; i < 4; i++) p += char((g.members >> (8 * i)) & 0xFF);
+  p.append(reinterpret_cast<const char*>(k.key), KEY_SIZE);
+  p += g.name;
+  return p;
+}
 }  // namespace
 
 uint32_t Node::sendControl(const uint8_t to, const std::string& payload) {
@@ -702,8 +754,11 @@ uint32_t Node::sendControl(const uint8_t to, const std::string& payload) {
   plain += payload;
   const Header h = header(Type::Msg, to);
   sendSealed(h, m->pairKey, reinterpret_cast<const uint8_t*>(plain.data()), plain.size(), true);
-  if (pending_.size() >= MAX_PENDING) pending_.erase(pending_.begin());
-  pending_.push_back(Pending{h.counter, to, 0, millis() + RETRY_MS[0]});
+  // Not in pending_ (31 key DMs would push the user's own retries out): the
+  // ones that must arrive are sent again at each check until confirmed. Until
+  // someone answers, it also goes up with each Wi-Fi sync.
+  if (controlWaiting_.size() >= 64) controlWaiting_.erase(controlWaiting_.begin());
+  controlWaiting_.push_back(h.counter);
   if (controlCounters_.size() >= 64) controlCounters_.erase(controlCounters_.begin());
   controlCounters_.push_back(h.counter);
   return h.counter;
@@ -724,10 +779,7 @@ void Node::sendToMember(const int slot, const uint8_t to, const char kind, const
   if (kind == INVITE) {
     const GroupKey* k = g.newest();
     if (!k) return;
-    p = std::string{'\0', INVITE} + idBytes(g.id) + char(k->number) + char(k->number == 1 ? NEW_GROUP : 0);
-    for (int i = 0; i < 4; i++) p += char((g.members >> (8 * i)) & 0xFF);
-    p.append(reinterpret_cast<const char*>(k->key), KEY_SIZE);
-    p += g.name;
+    p = invitation(g, *k, k->number == 1);
   } else {
     p = std::string{'\0', kind} + idBytes(g.id) + char(about);
   }
@@ -751,9 +803,7 @@ void Node::rotate(const int slot) {
 void Node::takeOut(const int slot, const uint8_t member) {
   ChatGroup& g = groups_.at(slot);
   if (!g.has(member)) return;
-  const GroupKey* newest = g.newest();
   g.members &= ~memberBit(member);
-  g.markRemoved(member, uint8_t((newest ? newest->number : 0) + 1), store_.lastCounter(member));
   for (auto& n : g.notices) {
     if (n.member == member) n = Notice{};
   }
@@ -761,21 +811,25 @@ void Node::takeOut(const int slot, const uint8_t member) {
   if (!g.left && lowest(g.members) == group_.me) rotate(slot);
 }
 
-void Node::handleControl(const uint8_t from, const std::string& text) {
-  if (text.size() < 3) return;
+bool Node::handleControl(const uint8_t from, const std::string& text) {
+  if (text.size() < 3) return true;
   if (text[1] == SENDER_KEY) {
-    if (text.size() < 3 + KEY_SIZE) return;
+    if (text.size() < 3 + KEY_SIZE) return true;
     if (senders_.add(from, uint8_t(text[2]), reinterpret_cast<const uint8_t*>(&text[3]))) {
       senders_.save();
       LOG_INF("MESH", "Sender key %u from %u", uint8_t(text[2]), from);
       openWaitingFrom(from);
     }
     changes_++;
-    return;
+    return true;
   }
-  if (text.size() < 4) return;
+  if (text.size() < 5) return true;
   const uint16_t id = readId(text, 2);
-  if (!isMember(groupCreator(id))) return;
+  if (text[1] == ASK_KEY) {
+    answerKeyRequest(from, id, uint8_t(text[4]));
+    return true;
+  }
+  if (!isMember(groupCreator(id))) return true;
   int slot = groups_.find(id);
   if (text[1] == INVITE && text.size() >= INVITE_SIZE) {
     const uint8_t number = uint8_t(text[4]);
@@ -783,11 +837,23 @@ void Node::handleControl(const uint8_t from, const std::string& text) {
     Members members = 0;
     for (int i = 0; i < 4; i++) members |= Members(uint8_t(text[6 + i])) << (8 * i);
     const uint8_t* key = reinterpret_cast<const uint8_t*>(&text[10]);
-    if (!number || !(members & memberBit(from)) || !(members & memberBit(group_.me))) return;
-    // A new group (or an old id used again): start the slot afresh.
-    if (slot < 0 || (fresh && groups_.at(slot).key(1) && memcmp(groups_.at(slot).key(1), key, KEY_SIZE) != 0)) {
-      slot = slot < 0 ? groups_.take(id) : slot;
-      if (slot < 0) return;
+    if (!number || !(members & memberBit(from)) || !(members & memberBit(group_.me))) return true;
+    // Only its creator starts a group, or starts an id of theirs afresh: nobody
+    // else can make up a group under someone's id or take one over.
+    const bool creator = from == groupCreator(id);
+    if (slot < 0) {
+      // A later key from another member may come before the creator's first:
+      // not confirmed, so it comes again after the creator's.
+      if (!creator) return false;
+      slot = groups_.take(id);
+      if (slot < 0) return true;
+      groups_.at(slot) = ChatGroup{};
+      groups_.at(slot).id = id;
+      groups_.at(slot).members = members;
+      store_.clear(uint8_t(CONV_GROUPS + slot));
+    } else if (fresh && creator && groups_.at(slot).key(1) &&
+               memcmp(groups_.at(slot).key(1), key, KEY_SIZE) != 0) {
+      // The creator used an id again (they had left the old group).
       groups_.at(slot) = ChatGroup{};
       groups_.at(slot).id = id;
       groups_.at(slot).members = members;
@@ -795,15 +861,11 @@ void Node::handleControl(const uint8_t from, const std::string& text) {
     }
     ChatGroup& g = groups_.at(slot);
     // Only a member can change the group, and only with a newer key.
-    if (!g.has(from)) return;
+    if (!g.has(from)) return true;
     const GroupKey* newest = g.newest();
     const uint8_t held = newest ? newest->number : 0;
     const bool replaced = g.addKey(number, from, key);
     if (number > held || (number == held && replaced)) {
-      for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-        if (g.has(n) && !(members & memberBit(n))) g.markRemoved(n, number, store_.lastCounter(n));
-        if (members & memberBit(n)) g.clearRemoved(n);
-      }
       g.members = members;
       g.left = false;  // added (again) with a key made after I left
       if (text.size() > INVITE_SIZE) strlcpy(g.name, text.c_str() + INVITE_SIZE, sizeof(g.name));
@@ -812,20 +874,94 @@ void Node::handleControl(const uint8_t from, const std::string& text) {
     LOG_INF("MESH", "Group %04x: key %u from %u", id, number, from);
     openWaiting(id);
     changes_++;
-    return;
+    return true;
   }
-  if (slot < 0) return;
+  if (slot < 0) return true;
   ChatGroup& g = groups_.at(slot);
-  if (!g.has(from)) return;
+  if (!g.has(from)) return true;
   if (text[1] == LEAVE) {
     takeOut(slot, from);
-  } else if (text[1] == REMOVE && text.size() >= 5) {
+  } else if (text[1] == REMOVE) {
     // Asked to take someone out: only the lowest of those who stay does it.
     const uint8_t member = uint8_t(text[4]);
-    if (!isMember(member) || member == group_.me || !g.has(member)) return;
+    if (!isMember(member) || member == group_.me || !g.has(member)) return true;
     if (lowest(g.members & ~memberBit(member)) == group_.me) takeOut(slot, member);
   }
   changes_++;
+  return true;
+}
+
+// --- Asking for a key that is missing ----------------------------------------
+//
+// A key DM that got lost, or whose confirmation was forged (ACKs carry no
+// proof), would leave a member without a key for good. So a unit that gets a
+// message under a key number it lacks asks for it ('K'), at most every few hours.
+
+void Node::missingKey(const Header& h) {
+  const Member* from = group_.member(h.sender);
+  if (!group_.configured || !from || !from->present || !h.key) return;
+  if (h.recipient == GROUP) {
+    askForKey(h.sender, 0, h.key);
+  } else if (h.recipient == GROUP_TO) {
+    const int slot = groups_.find(h.groupId);
+    if (slot < 0) {
+      // Its invitation never came: the creator sends it again if I am in it.
+      // Its counter counts, so syncs move past groups I am not in.
+      store_.confirmCounter(h.sender, h.counter);
+      if (isMember(groupCreator(h.groupId)) && groupCreator(h.groupId) != group_.me) {
+        askForKey(groupCreator(h.groupId), h.groupId, h.key);
+      }
+      return;
+    }
+    const ChatGroup& g = groups_.at(slot);
+    if (!g.left && g.has(group_.me) && g.has(h.sender) && !g.key(h.key)) askForKey(h.sender, h.groupId, h.key);
+  }
+}
+
+void Node::askForKey(const uint8_t to, const uint16_t groupId, const uint8_t number) {
+  const uint32_t id = uint32_t(to) << 24 | uint32_t(groupId) << 8 | number;
+  const uint32_t now = millis();
+  auto it = std::find_if(askedKeys_.begin(), askedKeys_.end(), [&](const AskedKey& a) { return a.id == id; });
+  if (it != askedKeys_.end()) {
+    if (now - it->atMs < ASK_KEY_AGAIN_MS) return;
+    it->atMs = now;
+  } else {
+    if (askedKeys_.size() >= 32) {
+      // Full: the oldest goes, unless all are recent (a flood of made-up numbers).
+      auto oldest = std::min_element(askedKeys_.begin(), askedKeys_.end(),
+                                     [](const AskedKey& a, const AskedKey& b) { return a.atMs < b.atMs; });
+      if (now - oldest->atMs < ASK_KEY_AGAIN_MS) return;
+      askedKeys_.erase(oldest);
+    }
+    askedKeys_.push_back(AskedKey{id, now});
+  }
+  LOG_INF("MESH", "Asking %u for key %u of %04x", to, number, groupId);
+  sendControl(to, std::string{'\0', ASK_KEY} + idBytes(groupId) + char(number));
+}
+
+void Node::answerKeyRequest(const uint8_t from, const uint16_t groupId, const uint8_t number) {
+  if (!groupId) {
+    // My sender key: sent again (and no longer counted as confirmed).
+    if (number != identity().senderNumber) return;
+    senderKeyConfirmed_ &= ~memberBit(from);
+    saveKeyConfirmations();
+    sendSenderKey(from);
+    return;
+  }
+  const int slot = groups_.find(groupId);
+  if (slot < 0) return;
+  ChatGroup& g = groups_.at(slot);
+  if (g.left || !g.has(from) || !g.has(group_.me)) return;
+  const GroupKey* newest = g.newest();
+  if (newest && newest->number == number) {
+    sendToMember(slot, from, INVITE, 0);
+    groups_.save();
+    return;
+  }
+  for (const auto& k : g.keys) {
+    // An older key, for history: once, not kept as a notice.
+    if (k.number && k.number == number) sendControl(from, invitation(g, k, false));
+  }
 }
 
 bool Node::confirmControl(const uint8_t from, const uint32_t counter) {
@@ -969,8 +1105,33 @@ void Node::handleRoster(const Header& h, const uint8_t* cipher, const size_t len
   std::vector<uint8_t> plain(len - TAG_SIZE);
   if (!open(h, group_.networkKey, cipher, len, plain.data())) return;
   const Members before = group_.everyone();
-  if (!applyRoster(group_, plain.data(), plain.size())) return;
-  rosterChanged(before);
+  const bool changed = applyRoster(group_, plain.data(), plain.size());
+  // The pieces of the roster I have now, to pass on (handleSyncReq).
+  if (h.counter == ROSTER_COUNTER + group_.rosterVersion && rosterPieces_.size() == h.pieceCount) {
+    std::vector<uint8_t> framed;
+    for (const auto& piece : rosterPieces_) {
+      framed.push_back(uint8_t(piece.size()));
+      framed.insert(framed.end(), piece.begin(), piece.end());
+    }
+    saveSealed(ROSTER_PACKETS_PATH, framed);
+  }
+  rosterPieces_.clear();
+  if (changed) rosterChanged(before);
+}
+
+std::vector<std::vector<uint8_t>> Node::savedRosterPackets() const {
+  std::vector<std::vector<uint8_t>> out;
+  std::vector<uint8_t> framed;
+  if (!loadSealed(ROSTER_PACKETS_PATH, framed)) return out;
+  for (size_t at = 0; at < framed.size();) {
+    const size_t n = framed[at];
+    Header h;
+    if (at + 1 + n > framed.size() || !readHeader(&framed[at + 1], n, h)) break;
+    if (h.counter != ROSTER_COUNTER + group_.rosterVersion) return {};  // an older one
+    out.emplace_back(framed.begin() + long(at + 1), framed.begin() + long(at + 1 + n));
+    at += 1 + n;
+  }
+  return out;
 }
 
 void Node::rosterChanged(const Members before) {
@@ -1083,10 +1244,13 @@ void Node::runWifiSync() {
     body += char(len);
     body.append(reinterpret_cast<const char*>(raw), len);
   };
-  for (const auto& p : pending_) {
-    for (const auto& raw : store_.packetsAfter(group_.me, p.counter - 1, group_.me, MAX_PIECES)) {
+  std::vector<uint32_t> mine;
+  for (const auto& p : pending_) mine.push_back(p.counter);
+  mine.insert(mine.end(), controlWaiting_.begin(), controlWaiting_.end());
+  for (const uint32_t counter : mine) {
+    for (const auto& raw : store_.packetsAfter(group_.me, counter - 1, group_.me, MAX_PIECES)) {
       Header h;
-      if (readHeader(raw.data(), raw.size(), h) && h.counter == p.counter) add(raw.data(), raw.size());
+      if (readHeader(raw.data(), raw.size(), h) && h.counter == counter) add(raw.data(), raw.size());
     }
   }
   SyncReq req;

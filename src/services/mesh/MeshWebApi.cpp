@@ -4,6 +4,8 @@
 #include <HalPowerManager.h>
 #include <Logging.h>
 
+#include <esp_random.h>
+
 #include <cstring>
 #include <vector>
 
@@ -17,7 +19,21 @@ namespace mesh::web {
 
 namespace {
 bool groupChanged = false;
+
+// The setup code (MeshCrypto.h, pairCode): the tool's commitment, my nonce,
+// then its key and nonce, and the six digits for the screen.
+struct Pairing {
+  uint8_t commit[32] = {};
+  uint8_t unitNonce[PAIR_NONCE_SIZE] = {};
+  uint8_t tool[KEY_SIZE] = {};
+  bool committed = false;
+  bool paired = false;
+  char code[8] = "";
+};
+Pairing pairing;
 }  // namespace
+
+const char* setupCode() { return pairing.paired ? pairing.code : nullptr; }
 
 bool takeGroupChanged() {
   const bool changed = groupChanged;
@@ -37,6 +53,8 @@ std::string openFromTool(const String& body) {
       !fromHex(sealed["tool"] | "", tool, KEY_SIZE) || !(boxHex = sealed["box"] | nullptr)) {
     return "";
   }
+  // Only from the tool whose code the person compared on the screen.
+  if (!pairing.paired || memcmp(tool, pairing.tool, KEY_SIZE) != 0) return "";
   const size_t boxLen = strlen(boxHex) / 2;
   if (boxLen <= TAG_SIZE) return "";
   std::vector<uint8_t> box(boxLen);
@@ -59,6 +77,13 @@ void registerRoutes(WebServer& server) {
     const Group& group = Node::get().group();
     JsonDocument doc;
     doc["publicKey"] = toHex(id.publicKey, KEY_SIZE);
+    // A tool starting setup: its commitment in, my nonce out (a new one each time).
+    if (fromHex(server.arg("commit").c_str(), pairing.commit, sizeof(pairing.commit))) {
+      esp_fill_random(pairing.unitNonce, sizeof(pairing.unitNonce));
+      pairing.committed = true;
+      pairing.paired = false;
+      doc["nonce"] = toHex(pairing.unitNonce, sizeof(pairing.unitNonce));
+    }
     doc["configured"] = group.configured;
     if (group.configured) {
       doc["network"] = group.id;
@@ -74,6 +99,28 @@ void registerRoutes(WebServer& server) {
     String out;
     serializeJson(doc, out);
     server.send(200, "application/json", out);
+  });
+
+  // The tool shows its key and nonce; the screen shows the code to compare.
+  server.on("/api/mesh/pair", HTTP_POST, [&server] {
+    JsonDocument in;
+    const String& body = server.arg("plain");
+    uint8_t tool[KEY_SIZE], toolNonce[PAIR_NONCE_SIZE], commit[32];
+    if (body.length() > 1024 || deserializeJson(in, body.c_str(), body.length()) ||
+        !fromHex(in["tool"] | "", tool, KEY_SIZE) || !fromHex(in["nonce"] | "", toolNonce, PAIR_NONCE_SIZE)) {
+      server.send(400, "text/plain", "ikke JSON");
+      return;
+    }
+    pairCommit(tool, toolNonce, commit);
+    if (!pairing.committed || memcmp(commit, pairing.commit, sizeof(commit)) != 0) {
+      server.send(409, "text/plain", "passer ikke med det verktøyet lovet");
+      return;
+    }
+    pairing.committed = false;
+    memcpy(pairing.tool, tool, KEY_SIZE);
+    pairCode(tool, identity().publicKey, toolNonce, pairing.unitNonce, pairing.code);
+    pairing.paired = true;
+    server.send(200, "text/plain", "OK");
   });
 
   // `waddle mesh join`, step 1: the invitation (sealed by the tool) in, the
