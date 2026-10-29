@@ -338,16 +338,23 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(self.mesh.store.roster()[0], 3)
         self.assertIsNone(self.mesh.member_for_token(kari["server"]["token"]))
         self.assertEqual([m.number for m in self.mesh.roster().members], [1, 3])
-        # The next newcomer gets the lowest free number: Kari's.
-        self.answers = {"Address on the unit's screen": "10.0.0.4"}
-        link = next(w.strip("'") for w in self.tool("invite", "Per").split() if w.startswith("'waddle://"))
-        t = threading.Thread(target=lambda: wm.main(["join", link, "--name", "Per"]), daemon=True)
-        with contextlib.redirect_stdout(io.StringIO()):
-            t.start()
-            self.wait_for_request()
-            self.tool("approve")
-            t.join(10)
-        self.assertEqual(self.units["10.0.0.4"].welcome["me"], 2)
+        # The next newcomer gets a number nobody had; Kari's is kept for her.
+        def join(name, ip):
+            self.answers = {"Address on the unit's screen": ip}
+            link = next(w.strip("'") for w in self.tool("invite", name).split() if w.startswith("'waddle://"))
+            t = threading.Thread(target=lambda: wm.main(["join", link, "--name", name]), daemon=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                t.start()
+                self.wait_for_request()
+                self.tool("approve")
+                t.join(10)
+
+        join("Per", "10.0.0.4")
+        self.assertEqual(self.units["10.0.0.4"].welcome["me"], 4)
+        # Kari, with new keys on her unit, is invited again: her old number.
+        self.units["10.0.0.2"] = FakeUnit(b"kari again")
+        join("Kari", "10.0.0.2")
+        self.assertEqual(self.units["10.0.0.2"].welcome["me"], 2)
 
     def test_wrong_certificate_is_refused(self):
         url = self.free_port()

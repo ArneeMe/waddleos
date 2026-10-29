@@ -61,6 +61,9 @@ struct Group {  // the network
 const Identity& identity();
 // A new sender key (number + 1), after someone left the network.
 void newSenderKey();
+// A new secret and sender key, when this unit is taken out of the network. The
+// files on the SD card stay readable (their key is separate).
+void newIdentity();
 // The end of the reserved counter range saved in flash (0 on a new unit).
 uint32_t savedCounterLimit();
 void saveCounterLimit(uint32_t limit);
