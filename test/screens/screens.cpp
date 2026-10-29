@@ -518,16 +518,18 @@ int main(int argc, char** argv) {
     show(chat, "t5-chat-gruppe");
   }
   {
-    // The group's members, with "Fjern" tapped once on Ola (asks "Sikker?").
+    // The group's members, and "Forlat gruppe".
     GroupInfoActivity info(renderer, mappedInputManager, ARNE_KARI_OLA);
-    show(info, "t5-gruppe", [](Activity& screen) {
-      sim::tap(460, 330);  // Ola's "Fjern"
-      screen.loop();
-    });
+    show(info, "t5-gruppe");
   }
   {
     MapActivity map(renderer, mappedInputManager);
     show(map, "t5-kart");
+  }
+  {
+    // Kari, tapped on the map.
+    PersonActivity person(renderer, mappedInputManager, KARI);
+    show(person, "t5-person");
   }
   {
     // Per sends an SOS from 2 km west.

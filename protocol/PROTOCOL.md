@@ -37,8 +37,8 @@ number itself.
   number, sealed with the DM key of the member with themselves. The unit does
   this only once a phone is paired.
 - **Only the unit makes new keys:** a new sender key when someone leaves, and a
-  new group key when it is the lowest member. A phone that would be the one to
-  make a group key asks its unit (`'R'` to itself). After someone left, the
+  new group key when it is the lowest member (it gets the same leave message,
+  so it does it for the phone). After someone left, the
   phone does not write to everyone until its unit's new sender key arrives.
 - **Group ids:** a unit counts 0–127, the phone 128–255, so they never pick the
   same.
@@ -209,7 +209,6 @@ each.
 | `0x00 'S'` key number, key (32) | my sender key |
 | `0x00 'G'` group id (u16), key number, flags (bit 0 = a new group), member bits (u32), key (32), name | a group's key |
 | `0x00 'L'` group id (u16), 0 | I leave the group |
-| `0x00 'R'` group id (u16), member | please take this member out (to the lowest remaining member) |
 | `0x00 'K'` group id (u16, 0 = your sender key), key number | please send me this key |
 
 A unit that gets a message under a key number it lacks asks the sender for it
@@ -351,9 +350,8 @@ accept step.
 - **Leaving:** `'L'` to each other member. The remaining member with the lowest
   number makes the next key number and invites those who remain. The one who
   left keeps what they already had, but cannot open anything new.
-- **Removing** (a lost unit): any member chooses "Fjern"; their unit sends `'R'`
-  to the lowest remaining member, who takes them out and makes the next key. A
-  member gone from the roster is taken out the same way.
+- **Nobody takes others out:** each member leaves a group themselves. A lost
+  unit leaves every group when the admin takes it out of the roster.
 - **After someone is out:** units drop all their group messages, also late
   arrivals of ones written before (the counter in them proves nothing).
 

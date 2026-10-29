@@ -15,15 +15,13 @@ enum class Control : char {
   SenderKey = 'S',  // my sender key
   Invite = 'G',     // a group's key (and who is in it)
   Leave = 'L',      // I leave the group
-  Remove = 'R',     // please take this member out (to the lowest remaining member)
   AskKey = 'K',     // please send me this key
 };
 
 struct ControlMsg {
   Control kind = Control::SenderKey;
-  uint16_t groupId = 0;    // G, L, R, K (K: 0 = your sender key)
+  uint16_t groupId = 0;    // G, L, K (K: 0 = your sender key)
   uint8_t keyNumber = 0;   // S, G, K
-  uint8_t member = 0;      // R: who to take out
   bool fresh = false;      // G: a group starting afresh (key number 1)
   Members members = 0;     // G: everyone in the group, the sender included
   uint8_t key[KEY_SIZE] = {};  // S, G

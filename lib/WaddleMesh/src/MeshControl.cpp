@@ -36,10 +36,6 @@ std::string writeControl(const ControlMsg& c) {
       putId(out, c.groupId);
       out += '\0';
       break;
-    case Control::Remove:
-      putId(out, c.groupId);
-      out += char(c.member);
-      break;
     case Control::AskKey:
       putId(out, c.groupId);
       out += char(c.keyNumber);
@@ -68,11 +64,9 @@ bool readControl(const std::string& text, ControlMsg& out) {
       out.name = text.substr(INVITE_SIZE);
       return true;
     case Control::Leave:
-    case Control::Remove:
     case Control::AskKey:
       if (text.size() < SHORT_SIZE) return false;
       out.groupId = readId(text);
-      if (out.kind == Control::Remove) out.member = uint8_t(text[4]);
       if (out.kind == Control::AskKey) out.keyNumber = uint8_t(text[4]);
       return true;
   }

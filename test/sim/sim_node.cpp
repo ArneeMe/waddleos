@@ -16,7 +16,7 @@
 //   admin-roster <seed> <network> <version> <n:name:public>...   prints "roster <hex>"
 //   admin-welcome <box secret> <password> <unit public> <json hex> prints "welcome <hex>"
 //   admin-packets <network> <network key> <version> <roster hex>  prints "packet <hex>" per piece
-//   leave <conv> | remove <conv> <member>
+//   leave <conv>
 //   read <conv>            the user opened the conversation
 //   sos | cancel | seen <member>
 //   wifi <0|1>             a known Wi-Fi network is (not) in range
@@ -397,10 +397,6 @@ int main(int argc, char** argv) {
       int conv = 0;
       in >> conv;
       node.leaveGroup(uint8_t(conv));
-    } else if (cmd == "remove") {
-      int conv = 0, member = 0;
-      in >> conv >> member;
-      node.removeFromGroup(uint8_t(conv), uint8_t(member));
     } else if (cmd == "trip") {
       int on = 0;
       in >> on;

@@ -326,20 +326,6 @@ class FourUnitTests(unittest.TestCase):
         self.assertEqual(w.units[2].texts(conv), ["Før Per gikk", "Etter Per gikk"])
         self.assertEqual(w.units[4].texts(conv), ["Før Per gikk"])  # keeps the old, not the new
 
-    def test_removing_a_lost_unit(self):
-        w = self.w
-        w.all_in_range()
-        w.begin()
-        w.run(5)
-        conv = self.make_group(1, 0b1110, "Tur")
-        w.run(20)
-        w.units[4].stop()  # Per's unit is lost
-        w.units[2].cmd("remove %d 4" % conv)
-        w.run(30)
-        for n in (1, 2, 3):
-            g = w.units[n].state()["groups"][str(conv)]
-            self.assertEqual((g["members"], g["key"]), (0b0111, 2), "unit %d" % n)
-
     def test_invitation_and_messages_wait_for_a_unit_that_was_off(self):
         w = self.w
         w.all_in_range(gateway=True)
@@ -378,32 +364,6 @@ class GroupSafetyTests(unittest.TestCase):
 
     def state(self, unit, conv):
         return self.w.units[unit].state()["groups"][str(conv)]
-
-    def test_two_removals_at_once_both_happen(self):
-        w = self.w
-        conv = self.group(1, 0b1110)
-        w.units[2].cmd("remove %d 4" % conv)  # Kari takes Per out ...
-        w.units[1].cmd("remove %d 3" % conv)  # ... while Arne takes Ola out
-        w.run(40)
-        for n in (1, 2):
-            self.assertEqual(self.state(n, conv)["members"], 0b0011, "unit %d" % n)
-        w.units[1].cmd("send %d Bare oss to" % conv)
-        w.run(20)
-        self.assertEqual(w.units[2].texts(conv), ["Bare oss to"])
-        self.assertEqual(w.units[3].texts(conv), [])
-        self.assertEqual(w.units[4].texts(conv), [])
-
-    def test_removed_member_cannot_write_or_take_over(self):
-        w = self.w
-        conv = self.group(1, 0b1110)
-        w.units[1].cmd("remove %d 4" % conv)
-        w.run(30)
-        # Per still has key 1 and can send under it, but nobody shows it as new.
-        w.units[4].cmd("send %d Hei, jeg er her fortsatt" % conv)
-        w.run(20)
-        for n in (1, 2, 3):
-            self.assertEqual(w.units[n].texts(conv), [], "unit %d" % n)
-            self.assertEqual(self.state(n, conv)["key"], 2)
 
     def test_invitation_survives_a_restart(self):
         w = self.w

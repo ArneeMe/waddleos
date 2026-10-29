@@ -59,7 +59,9 @@ class NewGroupActivity final : public Activity {
   void openChat(uint8_t conversation);
 };
 
-// A group: its members with "Fjern" (for a lost unit), and "Forlat gruppe".
+// A group: its members, and "Forlat gruppe" (nobody takes others out: each
+// leaves themselves; a lost unit leaves every group when Arne takes it out of
+// the network).
 class GroupInfoActivity final : public Activity {
  public:
   GroupInfoActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, uint8_t conversation);
@@ -72,12 +74,10 @@ class GroupInfoActivity final : public Activity {
     int x = 0, y = 0, w = 0, h = 0;
     bool contains(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; }
   };
-  static constexpr uint8_t LEAVE = 0xFF;
   uint8_t conversation;
-  std::vector<std::pair<uint8_t, Box>> removeBoxes;  // member, its "Fjern" button
   Box leaveBox, moreBox;
   int page = 0;  // of the member list, in a large group
-  uint8_t armed = 0;  // the button tapped once (member, or LEAVE), waiting for "Sikker?"
+  bool armed = false;  // "Forlat gruppe" tapped once, waiting for "Sikker?"
   uint32_t shownChanges = 0;
 };
 
