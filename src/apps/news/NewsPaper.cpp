@@ -128,8 +128,15 @@ int enterChapter(int spine, const bool skipRead, const int spineCount) {
   return spine;
 }
 
-void openStory(const Paper& paper, std::vector<std::string>& readIds, const int index) {
+namespace {
+bool fromHome_ = false;
+}
+
+bool openedFromHome() { return fromHome_; }
+
+void openStory(const Paper& paper, std::vector<std::string>& readIds, const int index, const bool fromHome) {
   if (index < 0 || index >= static_cast<int>(paper.stories.size()) || !Storage.exists(EPUB_PATH)) return;
+  fromHome_ = fromHome;
   setRead(paper, readIds, index, true);
 
   // Chapter 0 is the front page, so story i is chapter i + 1. Saving it as the
