@@ -260,8 +260,8 @@ wrote them.
    returning member their old number (R8).
 4. The app (`phone/`, built: `waddle-mobil.apk` in each release): pairing (R1),
    conversations, writing, sync on open, on send and every 5 minutes while
-   open. Still to do: R10 (read on one, read on both), new groups from the
-   phone, notifications. It reuses the C++ node through the Android NDK rather than a
+   open, and R10 (read on one device is read on the other). Still to do: new
+   groups from the phone, notifications. It reuses the C++ node through the Android NDK rather than a
    Kotlin rewrite, so the group and key rules stay one piece of code
    (ARCHITECTURE.md, "Another device for the same code"); Kotlin does the
    screens, HTTPS and storage paths.

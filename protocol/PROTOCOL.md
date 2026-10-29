@@ -43,7 +43,9 @@ number itself.
 - **Group ids:** a unit counts 0–127, the phone 128–255, so they never pick the
   same.
 - **Over the server:** a sync gets the asking device everything from every
-  other device, its member's other one too.
+  other device, its member's other one too, and the newest "read" its other
+  device sent for each sender: what was read on one is read on both. A device
+  hearing its other device's "read" over LoRa does the same.
 - **Pairing the phone:** at home, the unit on File Transfer, the phone on the same
   Wi-Fi. The phone does the setup code like the tool (Joining, "Setup code")
   and the person compares the six digits on both screens. Then

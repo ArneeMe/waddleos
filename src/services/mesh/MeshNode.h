@@ -187,6 +187,8 @@ class Node {
   bool listeningForCheck() const;
   // A phone, or a unit with a paired phone: key and group changes also go to myself.
   bool hasOtherDevice() const;
+  // My other device read sender's message counter: its conversation is read here too.
+  void readOnOtherDevice(uint8_t sender, uint32_t counter);
   // A message is here (opened this session, or in its chat).
   bool haveMessage(const Header& h) const;
   void handlePosition(const Header& h, const uint8_t* cipher, size_t len);

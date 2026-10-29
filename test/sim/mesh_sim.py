@@ -999,6 +999,17 @@ class PhoneTests(unittest.TestCase):
         w.run(20)
         self.assertEqual(w.units[3].texts(0), ["Alle fra mobilen"])
 
+    def test_read_on_the_phone_is_read_on_the_unit(self):
+        w, phone = self.w, self.phone
+        w.units[1].cmd("send 2 Har du lest?")
+        w.run(20)
+        self.assertEqual(w.units[2].state()["unread"], 1)
+        self.sync(phone)
+        phone.cmd("read 1")
+        self.sync(phone)
+        self.sync(w.units[2])
+        self.assertEqual(w.units[2].state()["unread"], 0)
+
     def test_groups_and_new_keys_reach_the_phone(self):
         w, phone = self.w, self.phone
         conv = int(w.units[2].cmd("group %d Tur" % 0b101)[0].split()[1])  # Kari, Arne, Ola

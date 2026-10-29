@@ -63,6 +63,16 @@ std::string Node::serverRequest() {
       if (readHeader(raw.data(), raw.size(), h) && h.counter == counter) add(raw.data(), raw.size());
     }
   }
+  // My "delivered" and "read" waiting for the radio go up too. A device with
+  // no radio (the phone) sends them only this way, so they leave its queue.
+  for (const auto& o : outbox_) {
+    if ((o.raw[1] & 0x0F) == uint8_t(Type::Ack) && o.raw[4] == network_.myDevice()) add(o.raw.data(), o.raw.size());
+  }
+  if (!radio::isUp()) {
+    outbox_.erase(std::remove_if(outbox_.begin(), outbox_.end(),
+                                 [&](const Outgoing& o) { return (o.raw[1] & 0x0F) == uint8_t(Type::Ack); }),
+                  outbox_.end());
+  }
   SyncReq req;
   for (int slot = 0; slot < MAX_DEVICES; slot++) req.lastCounter[slot] = store_.lastCounter(slotDevice(slot));
   req.battery = battery();
