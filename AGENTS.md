@@ -24,24 +24,33 @@ together (firmware, arnee.me, the `waddle` command) and
 - Branch from `waddle`, open a pull request into `waddle` in `ArneeMe/waddleos`.
   Never open anything in `crosspoint-reader/crosspoint-reader`.
 - Commit and push feature branches without asking. Never force-push `waddle`.
-- Write short, factual PR descriptions with a "test on the reader" list.
+- Write short, factual PR descriptions, in Norwegian.
 - Compile before pushing: in a cloud session run `bash scripts/cloud-setup.sh`
   once (a few minutes), then `pio run -e x4pro-waddle -e t5s3-waddle -e heltec-gateway`
-  and, for mesh changes, `bash test/mesh/run.sh`, `bash test/sim/run.sh` and the
-  server tests. The PR build in GitHub Actions (`.github/workflows/waddle-build.yml`)
+  and, for mesh changes, `bash test/mesh/run.sh`, `bash test/sim/run.sh`,
+  `bash test/phone/build.sh` and the server tests. The PR build in GitHub Actions (`.github/workflows/waddle-build.yml`)
   checks again, one job per device; compiler errors show up as annotations on
   the `build (<device>)` check runs. Each PR's firmware is published as a
-  `pr-<n>` pre-release that Arne installs with `waddle update --pr <n>`.
-- Only Arne can flash and look at the devices. Every firmware change adds its
-  "how to check it on the device" items to `docs/waddle/TESTING.md` in the same PR.
-- Show a preview (image mockup) before changing anything visual.
-- Explain things plainly; Arne is not a C++ or firmware specialist.
+  `pr-<n>` pre-release that Arne installs with `waddle update --pr <n>`
+  (the phone app as `waddle-mobil.apk` in the same release).
+- Only Arne can flash and look at the devices, and he is not testing on them
+  for now: no "test on the device" lists. `docs/waddle/TESTING.md` stays as the
+  list for when he does.
+- Show a preview (image mockup) before changing anything visual: T5 screens
+  from `bash test/screens/run.sh`, phone screens drawn from the Kotlin layout.
+- Explain things plainly; Arne is not a C++ or firmware specialist. Write to
+  him in Norwegian, short and direct, without filler or AI-sounding phrasing.
 
 ## Code
 
 - `src/` is split into `core/` (shared), `apps/` (one folder per app) and
-  `products/` (one folder per device; `x4pro/` is the reader). WaddleOS base code
-  is in `src/core/waddle/`. Upstream code may be edited directly.
+  `products/` (one folder per device; `x4pro/` is the reader, `t5s3/` the mesh
+  unit). WaddleOS base code is in `src/core/waddle/`; the mesh node (shared by
+  the T5, the phone app and the simulator) is in `src/services/mesh/`. Upstream
+  code may be edited directly.
+- `phone/` is the Android app (the member's second device, docs/waddle/PHONE.md):
+  the same mesh C++ through the NDK, Kotlin screens. It cannot be built in a
+  cloud session (Android SDK downloads are blocked); CI builds it.
 - `WADDLE` and `WADDLE_PRIVATE` are always on. Old `#if WADDLE` blocks may be
   simplified to plain code. A change in `core/` must build for both devices.
 - User-facing text goes through `tr(STR_*)` with Norwegian in
