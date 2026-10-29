@@ -257,5 +257,8 @@ wrote them.
 3. The Pi and the tool: R6, R5's upload. Done: `waddle mesh approve` giving a
    returning member their old number (R8).
 4. The app: pairing, sync on open and now and then, conversations, writing,
-   R7 and R10.
+   R7 and R10. It reuses the C++ node through the Android NDK rather than a
+   Kotlin rewrite, so the group and key rules stay one piece of code
+   (ARCHITECTURE.md, "Another device for the same code"); Kotlin does the
+   screens, HTTPS and storage paths.
 5. The sim: one person with two devices, and the scenarios above as tests.

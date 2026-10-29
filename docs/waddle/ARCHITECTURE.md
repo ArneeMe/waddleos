@@ -201,11 +201,23 @@ Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOC
   each member in an invitation DM. Leaving or "Fjern" makes the next key number
   for those left (only the lowest member makes it); every unit keeps the old
   ones for the history.
-- **Node** (`services/mesh/MeshNode.cpp`): one loop for radio and Wi-Fi alike:
-  decrypt, store (`/.mesh/`), ACK (delivered, read), relay with a random delay,
-  retry after 30 s, 2 min, 8 min, then try the server over Wi-Fi. SYNC_REQ on
-  start and wake; the server and other units answer with what is missing. A gap
-  in a sender's chain is fetched on purpose (FETCH).
+- **Node** (`services/mesh/`): one loop for radio and Wi-Fi alike: decrypt,
+  store (`/.mesh/`), ACK (delivered, read), relay with a random delay, retry
+  after 30 s, 2 min, 8 min, then try the server over Wi-Fi. SYNC_REQ on start and
+  wake; the server and other units answer with what is missing. A gap in a
+  sender's chain is fetched on purpose (FETCH). One class in four files:
+  `MeshNode.cpp` (start, checks, sending, timers, loop), `MeshReceive.cpp`
+  (packets in, ACKs, answering others), `MeshKeys.cpp` (groups, keys, control
+  DMs, roster), `MeshServerSync.cpp` (the Pi over HTTPS); shared limits in
+  `MeshNodeInternal.h`. Packet formats, crypto and control DMs are in
+  `lib/WaddleMesh/`.
+- **Another device for the same code** (the phone, PHONE.md): it compiles the
+  node, `MessageStore`, `MeshConfig`, `MeshGroups` and `lib/WaddleMesh` as they
+  are, and supplies what the T5 gets from Arduino and the board: `millis()`,
+  `esp_random`, `Preferences`, `HalStorage`, `radio::`/`gps::` (no-ops on a
+  phone), the clock and the battery. `test/sim/stubs/` is a working example
+  (the simulator runs the real node this way). It does HTTPS itself with
+  `Node::serverRequest()` and `Node::takeServerAnswer()`.
 - **Sleep:** the T5 light-sleeps with the radio listening (`product::sleep()` in
   `products/t5s3/Product.cpp`): packets are handled without waking the screen;
   a button or an incoming SOS wakes it.
