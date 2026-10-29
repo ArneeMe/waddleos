@@ -16,6 +16,7 @@
 #include "MeshConfig.h"
 #include "MeshGps.h"
 #include "MeshNode.h"
+#include "MeshPairing.h"
 #include "MeshRadio.h"
 #include "core/waddle/WaddleVersion.h"
 
@@ -23,21 +24,9 @@ namespace mesh::web {
 
 namespace {
 bool networkChanged = false;
-
-// The setup code (MeshCrypto.h, pairCode): the tool's commitment, my nonce,
-// then its key and nonce, and the six digits for the screen.
-struct Pairing {
-  uint8_t commit[32] = {};
-  uint8_t unitNonce[PAIR_NONCE_SIZE] = {};
-  uint8_t tool[KEY_SIZE] = {};
-  bool committed = false;
-  bool paired = false;
-  char code[8] = "";
-};
-Pairing pairing;
 }  // namespace
 
-const char* setupCode() { return pairing.paired ? pairing.code : nullptr; }
+const char* setupCode() { return pairing::code(); }
 
 bool takeNetworkChanged() {
   const bool changed = networkChanged;
@@ -51,26 +40,8 @@ namespace {
 // "box": hex, sealed with the setup key, nonce byte 2}. Empty on failure.
 std::string openFromTool(const String& body) {
   JsonDocument sealed;
-  uint8_t tool[KEY_SIZE];
-  const char* boxHex = nullptr;
-  if (body.length() == 0 || body.length() > 4096 || deserializeJson(sealed, body.c_str(), body.length()) ||
-      !fromHex(sealed["tool"] | "", tool, KEY_SIZE) || !(boxHex = sealed["box"] | nullptr)) {
-    return "";
-  }
-  // Only from the tool whose code the person compared on the screen.
-  if (!pairing.paired || memcmp(tool, pairing.tool, KEY_SIZE) != 0) return "";
-  const size_t boxLen = strlen(boxHex) / 2;
-  if (boxLen <= TAG_SIZE) return "";
-  std::vector<uint8_t> box(boxLen);
-  std::string plain(boxLen - TAG_SIZE, '\0');
-  uint8_t key[KEY_SIZE];
-  const Identity& id = identity();
-  boxKey(id.secret, id.publicKey, tool, key);
-  if (!fromHex(boxHex, box.data(), boxLen) ||
-      !openBox(key, 2, box.data(), boxLen, reinterpret_cast<uint8_t*>(&plain[0]))) {
-    return "";
-  }
-  return plain;
+  if (body.length() == 0 || body.length() > 8192 || deserializeJson(sealed, body.c_str(), body.length())) return "";
+  return pairing::open(sealed["tool"] | "", sealed["box"] | "");
 }
 
 }  // namespace
@@ -82,12 +53,8 @@ void registerRoutes(WebServer& server) {
     JsonDocument doc;
     doc["publicKey"] = toHex(id.publicKey, KEY_SIZE);
     // A tool starting setup: its commitment in, my nonce out (a new one each time).
-    if (fromHex(server.arg("commit").c_str(), pairing.commit, sizeof(pairing.commit))) {
-      esp_fill_random(pairing.unitNonce, sizeof(pairing.unitNonce));
-      pairing.committed = true;
-      pairing.paired = false;
-      doc["nonce"] = toHex(pairing.unitNonce, sizeof(pairing.unitNonce));
-    }
+    const std::string nonce = pairing::start(server.arg("commit").c_str());
+    if (!nonce.empty()) doc["nonce"] = nonce;
     doc["configured"] = group.configured;
     if (group.configured) {
       doc["network"] = group.id;
@@ -147,22 +114,34 @@ void registerRoutes(WebServer& server) {
   server.on("/api/mesh/pair", HTTP_POST, [&server] {
     JsonDocument in;
     const String& body = server.arg("plain");
-    uint8_t tool[KEY_SIZE], toolNonce[PAIR_NONCE_SIZE], commit[32];
-    if (body.length() > 1024 || deserializeJson(in, body.c_str(), body.length()) ||
-        !fromHex(in["tool"] | "", tool, KEY_SIZE) || !fromHex(in["nonce"] | "", toolNonce, PAIR_NONCE_SIZE)) {
+    if (body.length() > 1024 || deserializeJson(in, body.c_str(), body.length())) {
       server.send(400, "text/plain", "ikke JSON");
       return;
     }
-    pairCommit(tool, toolNonce, commit);
-    if (!pairing.committed || memcmp(commit, pairing.commit, sizeof(commit)) != 0) {
+    if (!pairing::reveal(in["tool"] | "", in["nonce"] | "")) {
       server.send(409, "text/plain", "passer ikke med det verktøyet lovet");
       return;
     }
-    pairing.committed = false;
-    memcpy(pairing.tool, tool, KEY_SIZE);
-    pairCode(tool, identity().publicKey, toolNonce, pairing.unitNonce, pairing.code);
-    pairing.paired = true;
     server.send(200, "text/plain", "OK");
+  });
+
+  // The member's phone, after the code on this screen matched the phone's: a
+  // sealed copy of this unit's keys and network (protocol/PROTOCOL.md, "Devices").
+  server.on("/api/mesh/phone", HTTP_POST, [&server] {
+    if (openFromTool(server.arg("plain")).empty()) {
+      server.send(400, "text/plain", "ikke forseglet");
+      return;
+    }
+    const std::string copy = phoneCopy();
+    if (copy.empty()) {
+      server.send(409, "text/plain", "enheten er ikke med i et nettverk");
+      return;
+    }
+    JsonDocument out;
+    out["box"] = pairing::seal(copy, PHONE_COPY_NONCE);
+    String text;
+    serializeJson(out, text);
+    server.send(200, "application/json", text);
   });
 
   // `waddle mesh join`, step 1: the invitation (sealed by the tool) in, the

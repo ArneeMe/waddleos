@@ -31,18 +31,22 @@
 #include <ArduinoJson.h>
 #include <monocypher.h>
 #include <SecureHttpClient.h>
+#include <esp_random.h>
 
 #include <filesystem>
+#include <memory>
 #include <iostream>
 #include <random>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include <MeshPairClient.h>
 #include <MeshRoster.h>
 
 #include "services/mesh/MeshGps.h"
 #include "services/mesh/MeshNode.h"
+#include "services/mesh/MeshPairing.h"
 #include "services/mesh/MeshRadio.h"
 #include "services/mesh/MeshSettings.h"
 
@@ -56,6 +60,8 @@ std::vector<std::vector<uint8_t>> rxQueue;
 }  // namespace sim
 
 namespace {
+
+std::unique_ptr<mesh::PairClient> pairClient;  // pairing as the phone
 
 std::string hex(const uint8_t* p, size_t n) {
   static const char* d = "0123456789abcdef";
@@ -336,17 +342,47 @@ int main(int argc, char** argv) {
       std::string text(textHex.size() / 2, '\0');
       mesh::fromHex(textHex.c_str(), reinterpret_cast<uint8_t*>(&text[0]), text.size());
       std::cout << "counter " << mesh::SimAccess::control(node, uint8_t(to), text) << "\n";
-    } else if (cmd == "become-phone") {
-      // This copy of a unit's card and flash is the member's phone from now on
-      // (what pairing will hand over, until it exists).
-      std::vector<uint8_t> raw;
-      JsonDocument doc;
-      if (mesh::loadSealed("/.mesh/network.bin", raw) && !deserializeJson(doc, raw.data(), raw.size())) {
-        doc["phone"] = true;
-        std::string out;
-        serializeJson(doc, out);
-        mesh::saveSealed("/.mesh/network.bin", std::vector<uint8_t>(out.begin(), out.end()));
-      }
+    } else if (cmd == "pair-start") {
+      // The unit's side of pairing a phone (what MeshWebApi does over HTTP).
+      std::string commit;
+      in >> commit;
+      std::cout << "nonce " << mesh::pairing::start(commit) << " public "
+                << mesh::toHex(mesh::identity().publicKey, mesh::KEY_SIZE) << "\n";
+    } else if (cmd == "pair-reveal") {
+      std::string tool, nonce;
+      in >> tool >> nonce;
+      std::cout << (mesh::pairing::reveal(tool, nonce) ? std::string("code ") + mesh::pairing::code() : "refused")
+                << "\n";
+    } else if (cmd == "pair-phone") {
+      std::string requestHex;
+      in >> requestHex;
+      const auto request = unhex(requestHex);
+      JsonDocument body;
+      deserializeJson(body, request.data(), request.size());
+      const bool ok = !mesh::pairing::open(body["tool"] | "", body["box"] | "").empty();
+      std::cout << (ok ? "box " + mesh::pairing::seal(mesh::phoneCopy(), mesh::PHONE_COPY_NONCE) : "refused") << "\n";
+    } else if (cmd == "pairc-begin") {
+      // The phone's side.
+      uint8_t random[mesh::KEY_SIZE + mesh::PAIR_NONCE_SIZE];
+      esp_fill_random(random, sizeof(random));
+      pairClient = std::make_unique<mesh::PairClient>(random);
+      std::cout << "commit " << pairClient->commitHex() << "\n";
+    } else if (cmd == "pairc-answer") {
+      std::string pub, nonce;
+      in >> pub >> nonce;
+      char code[8] = "";
+      pairClient->unitAnswer(pub, nonce, code);
+      std::cout << "tool " << pairClient->toolHex() << " nonce " << pairClient->nonceHex() << " code " << code
+                << "\n";
+    } else if (cmd == "pairc-request") {
+      const std::string request = pairClient->sealRequest("{}");
+      std::cout << "request " << hex(reinterpret_cast<const uint8_t*>(request.data()), request.size()) << "\n";
+    } else if (cmd == "pairc-finish") {
+      std::string box, copy;
+      in >> box;
+      const char* err = !pairClient->open(box, mesh::PHONE_COPY_NONCE, copy) ? "the box does not open"
+                                                                            : mesh::takePhoneCopy(copy);
+      std::cout << (err ? std::string("error ") + err : "paired") << "\n";
     } else if (cmd == "twin") {
       int on = 0;
       in >> on;

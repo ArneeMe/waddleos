@@ -44,6 +44,15 @@ number itself.
   same.
 - **Over the server:** a sync gets the asking device everything from every
   other device, its member's other one too.
+- **Pairing the phone:** at home, the unit on File Transfer, the phone on the same
+  Wi-Fi. The phone does the setup code like the tool (Joining, "Setup code")
+  and the person compares the six digits on both screens. Then
+  `POST /api/mesh/phone` with a body sealed by the phone's one-time key: the unit
+  answers `{"box": hex}`, sealed for that key with nonce byte 5, holding JSON with
+  `secret`, `senderKey`, `senderKeyNumber`, `network` (as in the welcome, with
+  `"phone": true` and a `counterFloor` of now) and `roster`. The unit then sends
+  its notes to self. Everything else (the others' sender keys, groups, the
+  history) the phone gets from the server's sync, from the start.
 
 ## Header (14 bytes, never encrypted)
 
