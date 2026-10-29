@@ -72,6 +72,11 @@ class MessageStore {
   // Every stored MSG piece from sender with a counter above `after`, oldest first.
   // `readableBy` drops DMs between two other members.
   std::vector<std::vector<uint8_t>> packetsAfter(uint8_t sender, uint32_t after, uint8_t readableBy, size_t limit);
+  // Others' packets heard over LoRa, for the server at the next Wi-Fi sync
+  // (PHONE.md, R5): kept in /.mesh/upload.sealed until it has them.
+  void keepForUpload(const uint8_t* raw, size_t len);
+  std::vector<std::vector<uint8_t>> toUpload(size_t limit);
+  void uploaded(size_t count);
   // The stored pieces of one message.
   std::vector<std::vector<uint8_t>> piecesOf(uint8_t sender, uint32_t counter);
   // Every stored MSG piece from sender to recipient (a group's waiting messages).
@@ -104,6 +109,7 @@ class MessageStore {
  private:
   uint8_t me_ = 0;
   uint32_t lastCounter_[MAX_DEVICES] = {};  // by deviceSlot()
+  size_t uploadCount_ = 0;
   ConversationSummary summaries_[CONVERSATIONS];
   uint32_t seen_[CONVERSATIONS] = {};  // read.bin
   // Newest message hash per conversation and sender (only pairs that have written).
