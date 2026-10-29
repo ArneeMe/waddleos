@@ -172,6 +172,15 @@ class Store:
                 "SELECT raw FROM acks WHERE acked_sender = ? AND acked_counter >= ? AND COALESCE(at, 0) >= ?"
                 " ORDER BY acked_counter", (member, from_counter, since))]
 
+    def reads_by(self, device, since=0):
+        """The newest "read" each device sent for each other sender (one covers
+        the earlier messages): for the same member's other device."""
+        with self.lock:
+            return [bytes(r[0]) for r in self.db.execute(
+                "SELECT raw FROM acks a WHERE by_member = ? AND state = 3 AND COALESCE(at, 0) >= ? AND"
+                " acked_counter = (SELECT MAX(acked_counter) FROM acks b WHERE b.by_member = a.by_member"
+                " AND b.acked_sender = a.acked_sender AND b.state = 3)", (device, since))]
+
     def last_sync(self, member):
         """When member last synced over LoRa (unix seconds), 0 for never."""
         with self.lock:

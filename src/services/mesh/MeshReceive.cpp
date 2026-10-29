@@ -268,7 +268,13 @@ uint8_t Node::conversationOfMine(const uint32_t counter) {
 
 void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
   Ack ack;
-  if (!readAck(body, len, ack) || ack.sender != network_.myDevice()) return;
+  if (!readAck(body, len, ack)) return;
+  // My other device read someone's message: read here too (PHONE.md, R10).
+  if (isDevice(h.sender) && person(h.sender) == network_.me && h.sender != network_.myDevice()) {
+    if (ack.state == AckState::Read && isDevice(ack.sender)) readOnOtherDevice(ack.sender, ack.counter);
+    return;
+  }
+  if (ack.sender != network_.myDevice()) return;
   controlWaiting_.erase(std::remove(controlWaiting_.begin(), controlWaiting_.end(), ack.counter), controlWaiting_.end());
   // An answer to my SOS: who has it, and who has seen it.
   if (std::find(sosCounters_.begin(), sosCounters_.end(), ack.counter) != sosCounters_.end()) {
@@ -294,6 +300,16 @@ void Node::handleAck(const Header& h, const uint8_t* body, const size_t len) {
   pending_.erase(std::remove_if(pending_.begin(), pending_.end(),
                                 [&](const Pending& p) { return p.counter == ack.counter; }),
                  pending_.end());
+}
+
+void Node::readOnOtherDevice(const uint8_t sender, const uint32_t counter) {
+  const auto pieces = store_.piecesOf(sender, counter);
+  Header h;
+  if (pieces.empty() || !readHeader(pieces[0].data(), pieces[0].size(), h)) return;
+  const int conversation = conversationOf(h);
+  if (conversation < 0 || !store_.summary(uint8_t(conversation)).unread) return;
+  store_.markRead(uint8_t(conversation));  // "read" covers the earlier ones too
+  changes_++;
 }
 
 void Node::handleSyncReq(const Header& h, const uint8_t* body, const size_t len) {

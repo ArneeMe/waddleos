@@ -172,6 +172,8 @@ class Server:
         for counter in self.store.newest_whole_messages(device, since=since):
             out.append(self._ack(device, counter, P.STORED, member))
         out += self.store.acks_for(device, max(0, req.last_counter.get(device, 0) - 50), since)
+        # What its member read on the other device (PHONE.md, R10).
+        out += self.store.reads_by(device ^ P.PHONE, since)
         out = [no_hops(raw) for raw in out[:limit]]
         log.info("sync for device %d via %s: %d packets", device, via, len(out))
         return out
