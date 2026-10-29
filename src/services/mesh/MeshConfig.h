@@ -92,6 +92,15 @@ const char* startJoin(const std::string& link, const std::string& name, std::str
 // The admin's welcome: opens it with the kept invitation and saves the network.
 const char* finishJoin(const std::string& boxHex);
 
+// Pairing a phone (protocol/PROTOCOL.md, "Devices"): the unit's copy of its
+// identity, sender key and network for its phone (JSON), sealed by the caller
+// with PHONE_COPY_NONCE; "" when the unit is not in a network. Marks the unit as
+// having a phone (hasTwin).
+constexpr uint8_t PHONE_COPY_NONCE = 5;
+std::string phoneCopy();
+// The phone's side: takes that copy as its own (as the member's phone). Error text, or nullptr.
+const char* takePhoneCopy(const std::string& json);
+
 // Files on the SD card sealed with the unit's storage key. Saved beside the
 // file (path.tmp) and swapped in whole, so a power cut leaves the old file or the
 // new one, never half of one; loading falls back to a complete path.tmp.

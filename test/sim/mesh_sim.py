@@ -166,18 +166,21 @@ class World:
         self.all_hear_gateway = True
 
     def add_phone(self, n):
-        """Member n's phone: a copy of their unit's keys and network, as pairing
-        hands them over. It has no radio here, only Wi-Fi to the server."""
+        """Member n pairs their phone (PHONE.md): the code on the unit's screen
+        matches the phone's, then the unit hands over a sealed copy of its keys.
+        The phone has no radio here, only Wi-Fi to the server."""
         u = self.units[n]
-        u.stop()
         phone = n | P.PHONE
-        shutil.copytree(u.dir, os.path.join(self.dir, "unit%d" % phone))
-        u.start()
-        u.cmd("time %d" % self.now)
-        u.cmd("twin 1")
-        u.cmd("begin")
         p = Unit(self, phone, u.name)
-        p.cmd("become-phone")
+        commit = p.cmd("pairc-begin")[0].split()[1]
+        answer = u.cmd("pair-start " + commit)[0].split()
+        tool = p.cmd("pairc-answer %s %s" % (answer[3], answer[1]))[0].split()
+        unit_code = u.cmd("pair-reveal %s %s" % (tool[1], tool[3]))
+        assert unit_code == ["code " + " ".join(tool[5:7])], (unit_code, tool)
+        request = p.cmd("pairc-request")[0].split()[1]
+        box = u.cmd("pair-phone " + request)[0].split()
+        assert box[0] == "box", box
+        assert p.cmd("pairc-finish " + box[1]) == ["paired"]
         p.cmd("time %d" % self.now)
         p.cmd("wifi 1")
         p.cmd("begin")

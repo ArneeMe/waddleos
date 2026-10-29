@@ -8,6 +8,7 @@
 #include <monocypher.h>
 
 #include <cstring>
+#include <ctime>
 
 namespace mesh {
 
@@ -519,6 +520,70 @@ const char* startJoin(const std::string& link, const std::string& name, std::str
   // Kept until the welcome comes.
   const auto* raw = reinterpret_cast<const uint8_t*>(&inv);
   return saveSealed(JOIN_PATH, std::vector<uint8_t>(raw, raw + sizeof(inv))) ? nullptr : "kunne ikke lagre";
+}
+
+std::string phoneCopy() {
+  std::vector<uint8_t> network, roster;
+  JsonDocument net;
+  if (!loadSealed(NETWORK_PATH, network) || !loadSealed(ROSTER_PATH, roster) ||
+      deserializeJson(net, network.data(), network.size())) {
+    return "";
+  }
+  Network check;
+  if (!loadNetwork(check)) return "";
+  const Identity& mine = identity();
+  JsonDocument doc;
+  doc["secret"] = toHex(mine.secret, KEY_SIZE);
+  doc["senderKey"] = toHex(mine.senderKey, KEY_SIZE);
+  doc["senderKeyNumber"] = mine.senderKeyNumber;
+  net["phone"] = true;
+  // The phone's counters start now: above anything either device used.
+  const time_t now = time(nullptr);
+  net["counterFloor"] = uint32_t(now > 1600000000 ? now : 0);
+  doc["network"] = net;
+  doc["roster"] = toHex(roster.data(), roster.size());
+  std::string out;
+  serializeJson(doc, out);
+  setHasTwin(true);
+  return out;
+}
+
+const char* takePhoneCopy(const std::string& json) {
+  JsonDocument doc;
+  if (deserializeJson(doc, json)) return "ikke gyldig JSON";
+  uint8_t secret[KEY_SIZE], sender[KEY_SIZE];
+  const int senderNumber = doc["senderKeyNumber"] | 0;
+  if (!fromHex(doc["secret"] | "", secret, KEY_SIZE) || !fromHex(doc["senderKey"] | "", sender, KEY_SIZE) ||
+      senderNumber < 1 || senderNumber > 255) {
+    return "nøklene mangler";
+  }
+  const char* rosterHex = doc["roster"] | "";
+  std::vector<uint8_t> roster(strlen(rosterHex) / 2);
+  if (roster.empty() || !fromHex(rosterHex, roster.data(), roster.size())) return "rosteren mangler";
+  JsonDocument net;
+  net.set(doc["network"]);
+  net["phone"] = true;
+  Network check;
+  if (const char* err = parseNetwork(net, check)) return err;
+  // The unit's identity becomes mine.
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putBytes("secret", secret, KEY_SIZE);
+  prefs.putBytes("sender", sender, KEY_SIZE);
+  prefs.putUInt("senderNum", uint32_t(senderNumber));
+  if (check.counterFloor > prefs.getUInt("counter", 0)) prefs.putUInt("counter", check.counterFloor);
+  prefs.end();
+  loaded = false;  // identity() reads it again
+  if (const char* err = takeRoster(check, roster.data(), roster.size())) return err;
+  std::string network;
+  serializeJson(net, network);
+  if (!saveSealed(NETWORK_PATH, std::vector<uint8_t>(network.begin(), network.end())) ||
+      !saveSealed(ROSTER_PATH, roster)) {
+    return "kunne ikke lagre";
+  }
+  saveNewestRoster(check.id, check.rosterVersion);
+  LOG_INF("MESH", "Paired as member %u's phone", check.me);
+  return nullptr;
 }
 
 const char* finishJoin(const std::string& boxHex) {
