@@ -5,6 +5,7 @@
 // what the user writes. Runs from the main loop and during light sleep.
 // See protocol/PROTOCOL.md for the rules it follows.
 
+#include <MeshControl.h>
 #include <MeshCrypto.h>
 #include <MeshPacket.h>
 #include <MeshRadioRules.h>

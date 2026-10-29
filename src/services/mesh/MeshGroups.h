@@ -27,7 +27,7 @@ struct GroupKey {
 // Sent again on each check, also after a restart, until it is.
 struct Notice {
   uint8_t member = 0;  // 0 = unused
-  uint8_t kind = 0;    // 'G', 'L' or 'R' (MeshNode.cpp)
+  uint8_t kind = 0;    // Control::Invite, Leave or Remove (MeshControl.h)
   uint8_t about = 0;   // for 'R': the member to take out
   uint32_t counter = 0;
 };
