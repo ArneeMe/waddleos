@@ -144,3 +144,7 @@ ReaderSettings::StatusBarSpec ReaderSettings::statusBarSpec() const { return {};
 
 extern "C" uint32_t uzlib_adler32(const void*, unsigned int, uint32_t prev) { return prev; }
 extern "C" uint32_t uzlib_crc32(const void*, unsigned int, uint32_t crc) { return crc; }
+
+// The screens behind the settings rows are not drawn here.
+#include "products/t5s3/T5SettingsActivity.h"
+void openT5Setting(T5SettingsActivity::Row) {}
