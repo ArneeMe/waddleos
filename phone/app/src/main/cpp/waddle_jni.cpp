@@ -181,6 +181,48 @@ JNIEXPORT jint JNICALL Java_me_arnee_waddle_Mesh_syncAnswer(JNIEnv* env, jclass,
   return jint(node().takeServerAnswer(bytes, uint32_t(date)));
 }
 
+// --- Groups ------------------------------------------------------------------
+
+// The others in the network: [{"number", "name"}], by name.
+JNIEXPORT jstring JNICALL Java_me_arnee_waddle_Mesh_members(JNIEnv* env, jclass) {
+  JsonDocument doc;
+  JsonArray list = doc.to<JsonArray>();
+  const auto& net = node().network();
+  for (uint8_t n = 1; net.configured && n <= mesh::MAX_MEMBERS; n++) {
+    if (n == net.me || !net.member(n)->present) continue;
+    JsonObject o = list.add<JsonObject>();
+    o["number"] = n;
+    o["name"] = net.name(n);
+  }
+  return jstr(env, json(doc));
+}
+
+// A new group of me and these members (bit n-1 = member n): its conversation, or -1.
+JNIEXPORT jint JNICALL Java_me_arnee_waddle_Mesh_createGroup(JNIEnv* env, jclass, jlong members, jstring name) {
+  tick();
+  return node().createGroup(mesh::Members(members), str(env, name));
+}
+
+// A group's members and whether I left it: {"members": [names], "left": bool}.
+JNIEXPORT jstring JNICALL Java_me_arnee_waddle_Mesh_group(JNIEnv* env, jclass, jint conv) {
+  JsonDocument doc;
+  if (mesh::isGroupConversation(uint8_t(conv))) {
+    const auto& g = node().groups().at(conv - mesh::CONV_FIRST_GROUP);
+    const auto& net = node().network();
+    JsonArray names = doc["members"].to<JsonArray>();
+    for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
+      if (g.members & mesh::memberBit(n)) names.add(std::string(net.name(n)) + (n == net.me ? " (deg)" : ""));
+    }
+    doc["left"] = g.left;
+  }
+  return jstr(env, json(doc));
+}
+
+JNIEXPORT void JNICALL Java_me_arnee_waddle_Mesh_leaveGroup(JNIEnv*, jclass, jint conv) {
+  tick();
+  if (mesh::isGroupConversation(uint8_t(conv))) node().leaveGroup(uint8_t(conv));
+}
+
 // Where and how to reach the Pi: {"url", "token", "cert"}.
 JNIEXPORT jstring JNICALL Java_me_arnee_waddle_Mesh_server(JNIEnv* env, jclass) {
   JsonDocument doc;

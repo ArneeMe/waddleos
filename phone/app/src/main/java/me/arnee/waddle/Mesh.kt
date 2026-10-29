@@ -31,6 +31,14 @@ object Mesh {
     @JvmStatic external fun send(conv: Int, text: String): Boolean
     @JvmStatic external fun markRead(conv: Int)
 
+    /** [{"number", "name"}]: the others in the network. */
+    @JvmStatic external fun members(): String
+    /** A group of me and these members (bit n-1 = member n): its conversation, or -1. */
+    @JvmStatic external fun createGroup(members: Long, name: String): Int
+    /** {"members": [names], "left"} */
+    @JvmStatic external fun group(conv: Int): String
+    @JvmStatic external fun leaveGroup(conv: Int)
+
     /** The body for the Pi's POST /api/packets. */
     @JvmStatic external fun syncRequest(): ByteArray
     /** The Pi's answer and its Date (unix seconds); returns how many packets. */

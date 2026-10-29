@@ -40,7 +40,14 @@ class ChatActivity : Activity() {
         setContentView(page)
         Mesh.run {
             val title = Mesh.title(conv)
-            main.post { header.addView(Ui.header(this, title) { finish() }) }
+            main.post {
+                val bar = Ui.header(this, if (conv > 32) "$title  ›" else title) { finish() }
+                // A group: its members and "Forlat gruppe".
+                if (conv > 32) bar.setOnClickListener {
+                    startActivity(android.content.Intent(this, GroupActivity::class.java).putExtra("conv", conv))
+                }
+                header.addView(bar)
+            }
         }
     }
 

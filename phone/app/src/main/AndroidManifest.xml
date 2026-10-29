@@ -24,5 +24,7 @@
             android:name=".ChatActivity"
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".PairActivity" />
+        <activity android:name=".NewGroupActivity" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".GroupActivity" />
     </application>
 </manifest>
