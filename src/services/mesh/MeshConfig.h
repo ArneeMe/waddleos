@@ -82,13 +82,17 @@ const char* startJoin(const std::string& link, const std::string& name, std::str
 // The admin's welcome: opens it with the kept invitation and saves the network.
 const char* finishJoin(const std::string& boxHex);
 
-// Files on the SD card sealed with a key derived from this unit's secret.
+// Files on the SD card sealed with the unit's storage key. Saved beside the
+// file (path.tmp) and swapped in whole, so a power cut leaves the old file or the
+// new one, never half of one; loading falls back to a complete path.tmp.
 bool saveSealed(const char* path, const std::vector<uint8_t>& plain);
 bool loadSealed(const char* path, std::vector<uint8_t>& plain);
 
 // Append-only files of sealed records, same key: [length u16][nonce 12]
-// [ciphertext][tag 16] per record. A record cut short by a power cut, or one that
-// does not open, ends the reading there.
+// [ciphertext][tag 16] per record. A record that does not open is skipped; one
+// cut short by a power cut ends the file (repairSealedLog cuts it off, so what is
+// added later can be read).
+constexpr size_t MAX_SEALED_RECORD = 2048;  // longer than any record: a chat message is ~1 KB
 bool appendSealed(const char* path, const uint8_t* plain, size_t len);
 class SealedLog {
  public:
@@ -97,11 +101,17 @@ class SealedLog {
   explicit operator bool() const { return bool(file_); }
   // The next record, false at the end.
   bool next(std::vector<uint8_t>& plain);
+  // Where the last whole record ends (all of the file when nothing is cut short).
+  size_t goodEnd() const { return goodEnd_; }
+  size_t fileSize() { return file_ ? file_.fileSize() : 0; }
 
  private:
   HalFile file_;
   uint8_t key_[KEY_SIZE];
+  size_t goodEnd_ = 0;
 };
+// Reads the log through and cuts off a record left half-written. Call at start.
+void repairSealedLog(const char* path);
 
 // Hex and base64url helpers.
 std::string toHex(const uint8_t* data, size_t len);

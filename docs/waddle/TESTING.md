@@ -153,6 +153,15 @@ Joining (protocol 3: up to 32 members):
       the gateway does not keep or pass it on (it learned the members from the
       Pi's PING while the Pi was on).
 
+Power cuts and long messages:
+- [ ] Send messages to a unit and pull its battery (or USB) a few times while
+      they arrive. After each start: no messages missing, groups still there.
+- [ ] With 9+ members: a group with member 9 or higher shows its name and
+      "levert til alle" / "lest" correctly.
+- [ ] A long message (3+ pieces) to a unit that is half out of range: it either
+      arrives whole or stays "sendt"; never "levert" without the other unit
+      showing it.
+
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
       "SOS fra …" with distance. "Avbryt SOS" ends it on both.

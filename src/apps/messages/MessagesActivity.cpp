@@ -22,7 +22,7 @@ constexpr int TEXT_FONT = NOTOSANS_14_FONT_ID;
 mesh::Node& node() { return mesh::Node::get(); }
 
 // Member bits of everyone in the group.
-uint8_t everyone() { return node().group().everyone(); }
+mesh::Members everyone() { return node().group().everyone(); }
 
 bool isDm(const uint8_t conversation) { return mesh::isDmConversation(conversation); }
 
@@ -32,11 +32,11 @@ const mesh::ChatGroup* chatGroup(const uint8_t conversation) {
 
 // What the sender sees under their own message.
 std::string deliveryText(const mesh::ChatMessage& m, const uint8_t conversation) {
-  const uint8_t me = mesh::memberBit(node().group().me);
+  const mesh::Members me = mesh::memberBit(node().group().me);
   const mesh::ChatGroup* g = chatGroup(conversation);
-  const uint8_t wanted = conversation == mesh::CONV_GROUP ? uint8_t(everyone() & ~me)
-                         : g                              ? uint8_t(g->members & ~me)
-                                                          : mesh::memberBit(conversation);
+  const mesh::Members wanted = conversation == mesh::CONV_GROUP ? everyone() & ~me
+                               : g                              ? g->members & ~me
+                                                                : mesh::memberBit(conversation);
   std::string when = meshui::timeText(m.time);
   if (!when.empty()) when += " · ";
   if (m.readBy && (m.readBy & wanted) == wanted) return when + "lest";

@@ -127,7 +127,8 @@ class Node {
   SenderKeys senders_;
   std::vector<Fetch> fetches_;  // missing messages to ask the server for over Wi-Fi
   std::vector<uint32_t> controlCounters_;  // my invitations and notices this session
-  std::vector<uint32_t> controlWaiting_;   // of those, the ones nobody has answered yet
+  std::vector<uint32_t> controlWaiting_;
+  std::vector<uint64_t> opened_;  // sender << 32 | counter of messages opened lately   // of those, the ones nobody has answered yet
   uint32_t senderKeyCounters_[MAX_MEMBERS] = {};  // my sender key DM to each member, until confirmed
   Members senderKeyConfirmed_ = 0;                 // who has my current sender key
   MessageStore store_;
@@ -173,6 +174,8 @@ class Node {
   void sendPosition(Type type, bool cancelled);
   void handle(const uint8_t* raw, size_t len, int rssi, bool viaWifi);
   void handleMessage(const Header& h, const uint8_t* cipher, size_t len);
+  // A message is here (opened this session, or in its chat).
+  bool haveMessage(const Header& h) const;
   void handlePosition(const Header& h, const uint8_t* cipher, size_t len);
   void handleAck(const Header& h, const uint8_t* body, size_t len);
   void handleSyncReq(const Header& h, const uint8_t* body, size_t len);

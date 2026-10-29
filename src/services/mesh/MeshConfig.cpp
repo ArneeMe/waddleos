@@ -198,15 +198,23 @@ bool saveSealed(const char* path, const std::vector<uint8_t>& plain) {
   crypto_wipe(&ctx, sizeof(ctx));
   crypto_wipe(key, sizeof(key));
   Storage.mkdir("/.mesh");
-  HalFile f = Storage.open(path, O_WRONLY | O_CREAT | O_TRUNC);
-  if (!f) return false;
-  const bool ok = f.write(out.data(), out.size()) == out.size();
-  f.close();
-  if (!ok) LOG_ERR("MESH", "Could not write %s", path);
-  return ok;
+  const std::string tmp = std::string(path) + ".tmp";
+  HalFile f = Storage.open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC);
+  if (!f) {
+    LOG_ERR("MESH", "Could not write %s", path);
+    return false;
+  }
+  const bool written = f.write(out.data(), out.size()) == out.size();
+  if (!f.close() || !written || !Storage.replaceFile(tmp.c_str(), path)) {
+    LOG_ERR("MESH", "Could not write %s; the old one stays", path);
+    Storage.remove(tmp.c_str());
+    return false;
+  }
+  return true;
 }
 
-bool loadSealed(const char* path, std::vector<uint8_t>& plain) {
+namespace {
+bool openSealedFile(const char* path, std::vector<uint8_t>& plain) {
   HalFile f = Storage.open(path, O_RDONLY);
   if (!f) return false;
   std::vector<uint8_t> data(f.fileSize());
@@ -225,10 +233,22 @@ bool loadSealed(const char* path, std::vector<uint8_t>& plain) {
   if (bad) LOG_ERR("MESH", "%s did not open (another unit's card?)", path);
   return !bad;
 }
+}  // namespace
+
+bool loadSealed(const char* path, std::vector<uint8_t>& plain) {
+  if (openSealedFile(path, plain)) return true;
+  // A power cut between removing the old file and renaming the new one leaves
+  // only path.tmp; it opened, so it is whole.
+  const std::string tmp = std::string(path) + ".tmp";
+  if (!Storage.exists(tmp.c_str()) || !openSealedFile(tmp.c_str(), plain)) return false;
+  Storage.remove(path);
+  Storage.replaceFile(tmp.c_str(), path);
+  return true;
+}
 
 bool appendSealed(const char* path, const uint8_t* plain, const size_t len) {
   const size_t sealed = 12 + len + TAG_SIZE;
-  if (sealed > 0xFFFF) return false;
+  if (sealed > MAX_SEALED_RECORD) return false;
   std::vector<uint8_t> out(2 + sealed);
   out[0] = uint8_t(sealed);
   out[1] = uint8_t(sealed >> 8);
@@ -260,19 +280,45 @@ SealedLog::~SealedLog() {
 
 bool SealedLog::next(std::vector<uint8_t>& plain) {
   if (!file_) return false;
-  uint8_t head[2];
-  if (file_.read(head, 2) != 2) return false;
-  const size_t sealed = size_t(head[0]) | size_t(head[1]) << 8;
-  if (sealed < 12 + TAG_SIZE) return false;
-  std::vector<uint8_t> data(sealed);
-  if (file_.read(data.data(), sealed) != int(sealed)) return false;
-  plain.assign(sealed - 12 - TAG_SIZE, 0);
-  crypto_aead_ctx ctx;
-  crypto_aead_init_ietf(&ctx, key_, data.data());
-  const int bad = crypto_aead_read(&ctx, plain.data(), data.data() + sealed - TAG_SIZE, nullptr, 0,
-                                   data.data() + 12, plain.size());
-  crypto_wipe(&ctx, sizeof(ctx));
-  return !bad;
+  std::vector<uint8_t> data;
+  for (;;) {
+    uint8_t head[2];
+    if (file_.read(head, 2) != 2) return false;
+    const size_t sealed = size_t(head[0]) | size_t(head[1]) << 8;
+    // Longer than any record: not a record start (cut short before it).
+    if (sealed < 12 + TAG_SIZE || sealed > MAX_SEALED_RECORD) return false;
+    data.resize(sealed);
+    if (file_.read(data.data(), sealed) != int(sealed)) return false;
+    goodEnd_ += 2 + sealed;
+    plain.assign(sealed - 12 - TAG_SIZE, 0);
+    crypto_aead_ctx ctx;
+    crypto_aead_init_ietf(&ctx, key_, data.data());
+    const int bad = crypto_aead_read(&ctx, plain.data(), data.data() + sealed - TAG_SIZE, nullptr, 0,
+                                     data.data() + 12, plain.size());
+    crypto_wipe(&ctx, sizeof(ctx));
+    if (!bad) return true;
+    // A damaged record (the card changed a bit): skip it, keep the rest.
+  }
+}
+
+void repairSealedLog(const char* path) {
+  size_t size = 0, good = 0;
+  {
+    SealedLog log(path);
+    if (!log) return;
+    std::vector<uint8_t> plain;
+    while (log.next(plain)) {
+    }
+    size = log.fileSize();
+    good = log.goodEnd();
+  }
+  if (good >= size) return;
+  LOG_ERR("MESH", "%s: cut off %u bytes left half-written", path, unsigned(size - good));
+  HalFile f = Storage.open(path, O_RDWR);
+  if (f) {
+    f.truncate(good);
+    f.close();
+  }
 }
 
 // --- The network ----------------------------------------------------------------

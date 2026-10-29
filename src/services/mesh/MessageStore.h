@@ -72,6 +72,8 @@ class MessageStore {
   // Every stored MSG piece from sender with a counter above `after`, oldest first.
   // `readableBy` drops DMs between two other members.
   std::vector<std::vector<uint8_t>> packetsAfter(uint8_t sender, uint32_t after, uint8_t readableBy, size_t limit);
+  // The stored pieces of one message.
+  std::vector<std::vector<uint8_t>> piecesOf(uint8_t sender, uint32_t counter);
   // Every stored MSG piece from sender to recipient (a group's waiting messages).
   std::vector<std::vector<uint8_t>> packetsTo(uint8_t sender, uint8_t recipient);
   // The highest MSG counter from sender that opened (or was mine, or for a group

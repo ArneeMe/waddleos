@@ -337,11 +337,11 @@ int main(int argc, char** argv) {
       mesh::fromHex(textHex.c_str(), reinterpret_cast<uint8_t*>(&text[0]), text.size());
       std::cout << "counter " << mesh::SimAccess::control(node, uint8_t(to), text) << "\n";
     } else if (cmd == "group") {
-      int bits = 0;
+      unsigned long bits = 0;
       in >> bits >> std::ws;
       std::string name;
       std::getline(in, name);
-      std::cout << "conv " << int(node.createGroup(uint8_t(bits), name)) << "\n";
+      std::cout << "conv " << int(node.createGroup(mesh::Members(bits), name)) << "\n";
     } else if (cmd == "leave") {
       int conv = 0;
       in >> conv;

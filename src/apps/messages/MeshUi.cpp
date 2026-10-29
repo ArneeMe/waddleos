@@ -119,7 +119,7 @@ std::string conversationName(const uint8_t conversation) {
   if (!mesh::isGroupConversation(conversation)) return group.name(conversation);
   const auto& g = mesh::Node::get().groups().at(conversation - mesh::CONV_GROUPS);
   if (g.name[0]) return g.name;
-  const uint8_t bits = g.members;
+  const mesh::Members bits = g.members;
   std::vector<std::string> names;
   if (bits & mesh::memberBit(group.me)) names.push_back("Du");
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
