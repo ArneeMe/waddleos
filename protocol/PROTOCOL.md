@@ -206,7 +206,9 @@ sealed with a key of their own, so the chats survive a new identity. Joining ano
 one as another number, clears the old groups, keys and chats; it makes a new
 sender key either way.
 - **Someone new:** it sends them its sender key (`'S'`). The newcomer sends
-  theirs to everyone.
+  theirs to everyone. Such key DMs to many go out at random times over a minute:
+  every unit hears the new roster at once, and LoRa has no "wait for a free
+  channel".
 - **Someone gone:** it takes them out of every group (see "Groups"), makes a new
   sender key and sends it to everyone left, so the one who left cannot open new
   messages to everyone.
@@ -346,7 +348,9 @@ negative or too large length is refused.
 - Gateway → Pi: `RX <rssi> <snr> <hex packet>`
 - Pi → gateway: `TX <hex packet>`, answered with `OK` or `ERR <reason>`
 - Gateway → Pi on start: `HELLO waddle-gateway <version> <front end>`
-- Pi → gateway every 10 s: `PING <network id>`, answered with
+- Pi → gateway every 10 s: `PING <network id> <member bits>` (hex, member 1 =
+  bit 0, from the roster; the gateway saves both, and alone it keeps, relays and
+  answers only members' packets), answered with
   `PONG <kept packets> <version> <front end>`. The gateway saves the network id.
 
 **Standalone.** When the gateway hears no line from the Pi for 30 s (a power

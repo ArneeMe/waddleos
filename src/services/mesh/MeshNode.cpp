@@ -207,7 +207,8 @@ void Node::queue(const uint8_t* raw, const size_t len, const uint32_t delayMs, c
   outbox_.push_back(Outgoing{std::vector<uint8_t>(raw, raw + len), millis() + delayMs, cancelIfHeard});
 }
 
-void Node::sendSealed(const Header& h, const uint8_t* key, const uint8_t* plain, const size_t len, const bool store) {
+void Node::sendSealed(const Header& h, const uint8_t* key, const uint8_t* plain, const size_t len, const bool store,
+                      const uint32_t delayMs) {
   auto sealed = std::make_unique<Sealed>();
   if (!seal(h, key, plain, len, *sealed)) return;
   for (int i = 0; i < sealed->count; i++) {
@@ -215,7 +216,7 @@ void Node::sendSealed(const Header& h, const uint8_t* key, const uint8_t* plain,
     readHeader(sealed->packets[i], sealed->lengths[i], piece);
     seen_.remember(piece);  // never relay our own packet back
     if (store) store_.savePacket(group_.me, sealed->packets[i], sealed->lengths[i]);
-    queue(sealed->packets[i], sealed->lengths[i], 0, false);
+    queue(sealed->packets[i], sealed->lengths[i], delayMs, false);
   }
   if (store) store_.confirmCounter(group_.me, h.counter);
 }
@@ -722,6 +723,9 @@ constexpr char LEAVE = 'L';
 constexpr char REMOVE = 'R';                   // "please take this member out" to the lowest member
 constexpr char ASK_KEY = 'K';                  // "send me this key": group id (0 = your sender key), number
 constexpr uint32_t ASK_KEY_AGAIN_MS = 6 * 3600 * 1000UL;
+// Key DMs to many members: spread over this long (all units hear a new member
+// list at once, and LoRa has no "wait until the air is free").
+constexpr uint32_t KEY_SPREAD_MS = 60000;
 constexpr uint8_t NEW_GROUP = 1;               // invitation flags: a group starting afresh
 constexpr size_t INVITE_SIZE = 10 + KEY_SIZE;  // 0, 'G', id (2), key number, flags, members (4), key; then the name
 
@@ -745,7 +749,7 @@ std::string invitation(const ChatGroup& g, const GroupKey& k, const bool fresh) 
 }
 }  // namespace
 
-uint32_t Node::sendControl(const uint8_t to, const std::string& payload) {
+uint32_t Node::sendControl(const uint8_t to, const std::string& payload, const uint32_t delayMs) {
   const Member* m = group_.member(to);
   if (!m || !m->present || to == group_.me) return 0;
   // A DM like any other (ACKs, retries, sync), never shown as a message.
@@ -753,7 +757,7 @@ uint32_t Node::sendControl(const uint8_t to, const std::string& payload) {
   put32(reinterpret_cast<uint8_t*>(&plain[0]), unixNow());
   plain += payload;
   const Header h = header(Type::Msg, to);
-  sendSealed(h, m->pairKey, reinterpret_cast<const uint8_t*>(plain.data()), plain.size(), true);
+  sendSealed(h, m->pairKey, reinterpret_cast<const uint8_t*>(plain.data()), plain.size(), true, delayMs);
   // Not in pending_ (31 key DMs would push the user's own retries out): the
   // ones that must arrive are sent again at each check until confirmed. Until
   // someone answers, it also goes up with each Wi-Fi sync.
@@ -764,13 +768,13 @@ uint32_t Node::sendControl(const uint8_t to, const std::string& payload) {
   return h.counter;
 }
 
-void Node::sendSenderKey(const uint8_t to) {
+void Node::sendSenderKey(const uint8_t to, const uint32_t delayMs) {
   const Member* m = group_.member(to);
   if (!m || !m->present || to == group_.me) return;
   const Identity& mine = identity();
   std::string p{'\0', SENDER_KEY, char(mine.senderNumber)};
   p.append(reinterpret_cast<const char*>(mine.senderKey), KEY_SIZE);
-  senderKeyCounters_[to - 1] = sendControl(to, p);
+  senderKeyCounters_[to - 1] = sendControl(to, p, delayMs);
 }
 
 void Node::sendToMember(const int slot, const uint8_t to, const char kind, const uint8_t about) {
@@ -987,7 +991,9 @@ void Node::resendUnconfirmed() {
   if (!group_.configured) return;
   // My sender key, to everyone who has not confirmed it.
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-    if (n != group_.me && group_.member(n)->present && !(senderKeyConfirmed_ & memberBit(n))) sendSenderKey(n);
+    if (n != group_.me && group_.member(n)->present && !(senderKeyConfirmed_ & memberBit(n))) {
+      sendSenderKey(n, randomBetween(0, KEY_SPREAD_MS));
+    }
   }
   bool changed = false;
   for (int slot = 0; slot < MAX_GROUPS; slot++) {
@@ -1159,7 +1165,9 @@ void Node::rosterChanged(const Members before) {
   senderKeyConfirmed_ &= before & now;
   saveKeyConfirmations();
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-    if (n != group_.me && (now & memberBit(n)) && !(senderKeyConfirmed_ & memberBit(n))) sendSenderKey(n);
+    if (n != group_.me && (now & memberBit(n)) && !(senderKeyConfirmed_ & memberBit(n))) {
+      sendSenderKey(n, randomBetween(1000, KEY_SPREAD_MS));
+    }
   }
   changes_++;
 }

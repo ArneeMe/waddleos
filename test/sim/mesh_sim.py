@@ -767,6 +767,7 @@ class MeshTests(unittest.TestCase):
         w.all_in_range()
         w.begin()
         w.units[2].cmd("gps 60.0 10.8")
+        w.run(70)  # sender keys go out spread over a minute
         w.units[2].cmd("trip 1")
         w.run(10)
         kari = w.units[1].state()["members"]["2"]

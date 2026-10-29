@@ -48,6 +48,10 @@ class GatewayStore {
 
   void setGroup(uint8_t group) { group_ = group; }
   uint8_t group() const { return group_; }
+  // Who is in the network (from the Pi's PING; 0 = not known: everyone counts).
+  // Alone, the gateway keeps, relays and answers only their packets.
+  void setMembers(Members members) { members_ = members; }
+  Members members() const { return members_; }
 
   // A packet heard over LoRa while the Pi is away. Stores it when it is kept,
   // and fills r with what to send back: a "stored" ACK, or the answer to a
@@ -76,6 +80,7 @@ class GatewayStore {
   void answerSync(uint8_t member, const SyncReq& req, Result& r) const;
 
   uint8_t group_;
+  Members members_ = 0;
   CounterReserve counters_;
   SeenPackets seen_;
   uint32_t nextSeq_ = 1;

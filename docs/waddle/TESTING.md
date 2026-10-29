@@ -149,6 +149,10 @@ Joining (protocol 3: up to 32 members):
       counts), and no group.json. Put the card back: the conversations are all
       there.
 
+- [ ] Gateway alone (Pi off): a unit taken out of the network sends a message;
+      the gateway does not keep or pass it on (it learned the members from the
+      Pi's PING while the Pi was on).
+
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
       "SOS fra …" with distance. "Avbryt SOS" ends it on both.
