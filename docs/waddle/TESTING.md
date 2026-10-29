@@ -131,8 +131,10 @@ Joining (protocol 3: up to 32 members):
 - [ ] With 6+ members: Hjem shows "Alle" and the three most recent contacts;
       Meldinger lists everyone, newest first; Ny gruppe scrolls ("Vis flere").
 - [ ] Kart lists the nearest first and "og N til" when they do not fit.
-- [ ] Taking out a SD card and reading it on a computer: /.mesh/*.bin are
-      unreadable (sealed), and no group.json.
+- [ ] Taking out a SD card and reading it on a computer: nothing in /.mesh/ is
+      readable (keys, `chat/*.sealed`, `packets/*.sealed`, positions, read
+      counts), and no group.json. Put the card back: the conversations are all
+      there.
 
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows

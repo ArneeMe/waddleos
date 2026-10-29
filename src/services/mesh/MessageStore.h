@@ -2,11 +2,14 @@
 
 // Messages on the SD card, so they survive restarts.
 //
-//   /.mesh/packets/<sender>.bin  every MSG packet as it was sent or received,
-//                                 [length][packet] records, to answer sync requests
-//   /.mesh/chat/<conversation>.log what the screens show: messages and their
-//                                 delivery states, as appended records
-//   /.mesh/read.txt               how many messages of each conversation were seen
+//   /.mesh/packets/<sender>.sealed     every MSG packet as it was sent or received,
+//                                      to answer sync requests
+//   /.mesh/chat/<conversation>.sealed  what the screens show: messages and their
+//                                      delivery states, as appended records
+//   /.mesh/read.bin                    how many messages of each conversation were seen
+//
+// All sealed with the unit's storage key (MeshConfig.h: appendSealed, SealedLog),
+// so the card alone shows nothing, not even who wrote to whom.
 //
 // A conversation is everyone (0), a DM with member 1-32, or a group made on a
 // unit (CONV_GROUPS + its slot in ChatGroups, MeshGroups.h).

@@ -613,6 +613,31 @@ class MeshTests(unittest.TestCase):
         for n in (2, 3):
             self.assertFalse(w.units[n].state()["members"]["1"]["sos"])
 
+    def test_card_shows_no_messages(self):
+        """Everything on the SD card is sealed: no text, no names, no positions."""
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(5)
+        w.units[1].cmd("send 0 Hemmelig til alle")
+        w.units[1].cmd("send 2 Hemmelig til Kari")
+        w.run(15)
+        w.units[2].cmd("read 1")
+        w.run(5)
+        self.assertEqual(w.units[2].texts(1), ["Hemmelig til Kari"])
+        checked = 0
+        for n in (1, 2):
+            for root, _, files in os.walk(w.units[n].dir):
+                for f in files:
+                    if "/.mesh" not in os.path.join(root, f):
+                        continue
+                    with open(os.path.join(root, f), "rb") as fh:
+                        data = fh.read()
+                    self.assertNotIn(b"Hemmelig", data, f)
+                    self.assertNotIn(b"Kari", data, f)
+                    checked += 1
+        self.assertGreater(checked, 10)
+
     def test_unsent_message_survives_a_restart(self):
         w = self.w
         w.begin()  # nobody in range
