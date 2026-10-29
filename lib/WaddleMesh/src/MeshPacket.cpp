@@ -13,7 +13,8 @@ size_t writeHeader(const Header& h, uint8_t* out) {
   out[5] = h.recipient;
   put32(out + 6, h.counter);
   out[10] = uint8_t(((h.pieceIndex & 0x0F) << 4) | (h.pieceCount & 0x0F));
-  out[11] = h.key;
+  put16(out + 11, h.groupId);
+  out[13] = h.key;
   return HEADER_SIZE;
 }
 
@@ -21,7 +22,7 @@ bool readHeader(const uint8_t* in, size_t len, Header& h) {
   if (len < HEADER_SIZE || len > MAX_PACKET) return false;
   if (in[0] != MAGIC || (in[1] >> 4) != VERSION) return false;
   const uint8_t type = in[1] & 0x0F;
-  if (type < uint8_t(Type::Msg) || type > uint8_t(Type::Fetch)) return false;
+  if (type < uint8_t(Type::Msg) || type > uint8_t(Type::Roster)) return false;
   h.type = Type(type);
   h.group = in[2];
   h.hops = in[3] & 0x0F;
@@ -31,11 +32,15 @@ bool readHeader(const uint8_t* in, size_t len, Header& h) {
   h.counter = get32(in + 6);
   h.pieceIndex = in[10] >> 4;
   h.pieceCount = in[10] & 0x0F;
-  h.key = in[11];
+  h.groupId = get16(in + 11);
+  h.key = in[13];
   if (h.pieceCount == 0 || h.pieceIndex >= h.pieceCount) return false;
   if (!h.fragmented && h.pieceCount != 1) return false;
   if (h.sender != SERVER && !isMember(h.sender)) return false;
-  if (h.recipient != GROUP && h.recipient != SERVER && !isMember(h.recipient) && !isGroup(h.recipient)) return false;
+  if (h.recipient != GROUP && h.recipient != SERVER && h.recipient != GROUP_TO && !isMember(h.recipient)) return false;
+  // A group id only on group packets, and made by a member.
+  if ((h.recipient == GROUP_TO) != (h.groupId != 0)) return false;
+  if (h.groupId && !isMember(groupCreator(h.groupId))) return false;
   return true;
 }
 
@@ -44,7 +49,7 @@ void associatedData(const Header& h, uint8_t out[AAD_SIZE]) {
   writeHeader(h, full);
   memcpy(out, full, 3);         // magic, version/type, group
   memcpy(out + 3, full + 4, 6);  // sender, recipient, counter
-  out[9] = full[11];             // key number
+  memcpy(out + 9, full + 11, 3);  // group id, key number
 }
 
 void nonce(const Header& h, uint8_t out[12]) {
@@ -91,19 +96,32 @@ bool readAck(const uint8_t* in, size_t len, Ack& a) {
   return true;
 }
 
-void writeSyncReq(const SyncReq& s, uint8_t out[SYNC_REQ_SIZE]) {
-  for (int i = 0; i < MAX_MEMBERS; i++) put32(out + 4 * i, s.lastCounter[i]);
-  out[4 * MAX_MEMBERS] = s.battery;
-  out[4 * MAX_MEMBERS + 1] = s.build;
-  out[4 * MAX_MEMBERS + 2] = s.flags;
+size_t writeSyncReq(const SyncReq& s, uint8_t out[SYNC_REQ_MAX]) {
+  out[0] = s.battery;
+  out[1] = s.build;
+  out[2] = s.flags;
+  put16(out + 3, s.rosterVersion);
+  size_t n = SYNC_REQ_HEAD;
+  for (uint8_t m = 1; m <= MAX_MEMBERS; m++) {
+    if (!s.lastCounter[m - 1]) continue;
+    out[n] = m;
+    put32(out + n + 1, s.lastCounter[m - 1]);
+    n += 5;
+  }
+  return n;
 }
 
 bool readSyncReq(const uint8_t* in, size_t len, SyncReq& s) {
-  if (len != SYNC_REQ_SIZE) return false;
-  for (int i = 0; i < MAX_MEMBERS; i++) s.lastCounter[i] = get32(in + 4 * i);
-  s.battery = in[4 * MAX_MEMBERS];
-  s.build = in[4 * MAX_MEMBERS + 1];
-  s.flags = in[4 * MAX_MEMBERS + 2];
+  if (len < SYNC_REQ_HEAD || len > SYNC_REQ_MAX || (len - SYNC_REQ_HEAD) % 5) return false;
+  s = SyncReq{};
+  s.battery = in[0];
+  s.build = in[1];
+  s.flags = in[2];
+  s.rosterVersion = get16(in + 3);
+  for (size_t i = SYNC_REQ_HEAD; i < len; i += 5) {
+    if (!isMember(in[i])) return false;
+    s.lastCounter[in[i] - 1] = get32(in + i + 1);
+  }
   return true;
 }
 

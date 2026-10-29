@@ -5,6 +5,7 @@
 #include <HalPowerManager.h>
 
 #include <algorithm>
+#include <vector>
 
 #include "apps/map/MapActivity.h"
 #include "apps/messages/MeshUi.h"
@@ -37,12 +38,24 @@ T5HomeActivity::T5HomeActivity(GfxRenderer& renderer, MappedInputManager& mapped
 
 void T5HomeActivity::onEnter() {
   Activity::onEnter();
-  // "Alle", then each contact in member order, so they stay in place.
+  // "Alle", then the three contacts most recently written with (or heard);
+  // the rest are in Meldinger.
   chatCount = 0;
   if (node().configured()) {
     chats[chatCount++] = mesh::CONV_GROUP;
-    for (uint8_t m = 1; m <= mesh::MAX_MEMBERS && chatCount < 4; m++) {
-      if (m != node().group().me && node().group().member(m)->present) chats[chatCount++] = m;
+    std::vector<uint8_t> people;
+    for (uint8_t m = 1; m <= mesh::MAX_MEMBERS; m++) {
+      if (m != node().group().me && node().group().member(m)->present) people.push_back(m);
+    }
+    auto recent = [](const uint8_t m) {
+      const uint32_t wrote = node().store().summary(m).lastTime;
+      return wrote ? uint64_t(wrote) << 1 | 1 : uint64_t(node().member(m).heardAtMs);
+    };
+    std::stable_sort(people.begin(), people.end(), [&](const uint8_t a, const uint8_t b) {
+      return recent(a) > recent(b);
+    });
+    for (const uint8_t m : people) {
+      if (chatCount < 4) chats[chatCount++] = m;
     }
   }
   if (!available(focus)) focus = T_MESSAGES;
@@ -175,7 +188,7 @@ void T5HomeActivity::render(RenderLock&&) {
     renderer.drawText(SMALL_FONT_ID, b.x + 16, b.y + 36, under.c_str(), !dark);
     y += 70;
   } else {
-    renderer.drawText(SMALL_FONT_ID, SIDE, y, "Ikke satt opp: kjør \"waddle mesh setup\"");
+    renderer.drawText(SMALL_FONT_ID, SIDE, y, "Ikke med i et nettverk: kjør \"waddle mesh join\"");
     y += 30;
   }
   renderer.drawLine(SIDE, y, width - SIDE, y, 2, true);

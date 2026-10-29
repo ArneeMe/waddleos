@@ -2,12 +2,13 @@
 
 #include <WebServer.h>
 
-// The mesh unit's setup endpoints on the file transfer web server, used by
-// `waddle mesh setup` on Arne's computer (local network only, while File
-// Transfer is open on the unit):
+// The mesh unit's endpoints on the file transfer web server, used by `waddle
+// mesh join` and `check` on a computer (local network only, while File
+// Transfer is open on the unit; protocol/PROTOCOL.md, "Joining"):
 //
-//   GET  /api/mesh/identity   {"publicKey": hex, "senderKey": hex, "configured": bool, ...}
-//   POST /api/mesh/group      the group JSON (see MeshConfig.h); saved and loaded at once
+//   GET  /api/mesh/identity   {"publicKey": hex, "configured": bool, "radio", "gps", ...}
+//   POST /api/mesh/join       the invitation, sealed by the tool -> the sealed request
+//   POST /api/mesh/welcome    the admin's sealed welcome; the unit starts in the network
 namespace mesh::web {
 
 void registerRoutes(WebServer& server);

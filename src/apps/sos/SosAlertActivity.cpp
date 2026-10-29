@@ -2,6 +2,8 @@
 
 #include <GfxRenderer.h>
 
+#include <vector>
+
 #include "apps/messages/MeshUi.h"
 #include "core/MappedInputManager.h"
 #include "core/fontIds.h"
@@ -58,21 +60,31 @@ void SosActivity::render(RenderLock&&) {
   renderer.clearScreen();
   renderer.fillRect(0, 0, width, height, true);
   waddle::drawPixelText(renderer, (width - waddle::pixelTextWidth("SOS", 20)) / 2, 160, "SOS", 20, false);
-  // Who has it: "Mottatt av Kari og serveren", then "Sett av Kari".
-  auto names = [](const uint8_t bits) {
-    std::string out;
-    int n = 0;
+  // Who has it: "Mottatt av Kari og serveren", then "Sett av Kari". With many,
+  // three names and how many more.
+  auto names = [](const mesh::Members bits, const bool server) {
+    std::vector<std::string> who;
     for (uint8_t m = 1; m <= mesh::MAX_MEMBERS; m++) {
-      if (bits & (1u << (m - 1))) out += std::string(n++ ? ", " : "") + node().group().name(m);
+      if (bits & mesh::memberBit(m)) who.push_back(node().group().name(m));
     }
-    if (bits & mesh::Node::SERVER_BIT) out += std::string(n ? " og " : "") + "serveren";
-    return out;
+    const size_t total = who.size() + (server ? 1 : 0);
+    if (who.size() > 3) {
+      const size_t more = who.size() - 3;
+      who.resize(3);
+      who.push_back(std::to_string(more) + " til");
+    }
+    if (server) who.push_back("serveren");
+    std::string out;
+    for (size_t i = 0; i < who.size(); i++) out += (i == 0 ? "" : i + 1 == who.size() ? " og " : ", ") + who[i];
+    return total ? out : std::string();
   };
-  const uint8_t received = node().sosReceivedBy();
-  const uint8_t seen = node().sosSeenBy();
-  const std::string got = received ? "Mottatt av " + names(received) : std::string("Ingen svar ennå");
+  const mesh::Members received = node().sosReceivedBy();
+  const mesh::Members seen = node().sosSeenBy();
+  const bool server = node().sosOnServer();
+  const std::string got =
+      received || server ? "Mottatt av " + names(received, server) : std::string("Ingen svar ennå");
   renderer.drawCenteredText(UI_12_FONT_ID, 330, got.c_str(), false, EpdFontFamily::BOLD);
-  if (seen) renderer.drawCenteredText(UI_12_FONT_ID, 370, ("Sett av " + names(seen)).c_str(), false);
+  if (seen) renderer.drawCenteredText(UI_12_FONT_ID, 370, ("Sett av " + names(seen, false)).c_str(), false);
   renderer.drawCenteredText(UI_12_FONT_ID, 410, "Sendes på nytt hvert minutt", false);
   const auto& fix = mesh::gps::lastFix();
   if (fix.valid) {

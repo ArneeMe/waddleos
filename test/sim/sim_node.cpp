@@ -10,6 +10,12 @@
 //   loop                   run the node once; radio sends come out as "tx <hex>"
 //   send <conv> <text>     write a message (conv 0 = everyone, 1-4 = DM, 5+ = a group)
 //   group <bits> <name>    make a group of me and these members; prints "conv <n>"
+//   join <link> <name>     the unit's side of joining; prints "join <public> <box> <code>"
+//   welcome <hex>          the admin's welcome; the unit starts in the network
+// The admin's side, done by the test driver through any unit (pure functions):
+//   admin-roster <seed> <network> <version> <n:name:public>...   prints "roster <hex>"
+//   admin-welcome <box secret> <password> <unit public> <json hex> prints "welcome <hex>"
+//   admin-packets <network> <network key> <version> <roster hex>  prints "packet <hex>" per piece
 //   leave <conv> | remove <conv> <member>
 //   read <conv>            the user opened the conversation
 //   sos | cancel | seen <member>
@@ -23,6 +29,7 @@
 //   dump                   print the unit's state as one JSON line
 
 #include <ArduinoJson.h>
+#include <monocypher.h>
 #include <SecureHttpClient.h>
 
 #include <filesystem>
@@ -31,6 +38,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include <MeshRoster.h>
 
 #include "services/mesh/MeshGps.h"
 #include "services/mesh/MeshNode.h"
@@ -135,7 +144,10 @@ static void dump() {
   doc["sosActive"] = node.sosActive();
   doc["sosReceivedBy"] = node.sosReceivedBy();
   doc["sosSeenBy"] = node.sosSeenBy();
+  doc["sosOnServer"] = node.sosOnServer();
   doc["busy"] = node.busy();
+  doc["outbox"] = node.outboxSize();
+  doc["wifiSync"] = node.wifiSyncRunning();
   doc["listensAlways"] = node.listensAlways();
   doc["msUntilCheck"] = node.msUntilCheck();
   doc["lastCheck"] = node.lastCheckUnix();
@@ -235,6 +247,80 @@ int main(int argc, char** argv) {
       simFix.latE7 = int32_t(lat * 1e7);
       simFix.lonE7 = int32_t(lon * 1e7);
       simFix.time = uint32_t(time(nullptr));
+    } else if (cmd == "join") {
+      std::string link, name, box;
+      in >> link >> std::ws;
+      std::getline(in, name);
+      char code[8] = "";
+      const char* err = mesh::startJoin(link, name, box, code);
+      if (err) {
+        std::cout << "error " << err << "\n";
+      } else {
+        std::cout << "join " << hex(mesh::identity().publicKey, 32) << " " << box << " " << code << "\n";
+      }
+    } else if (cmd == "welcome") {
+      std::string box;
+      in >> box;
+      const char* err = mesh::finishJoin(box);
+      std::cout << (err ? std::string("error ") + err : std::string("joined")) << "\n";
+      if (!err) node.begin();
+    } else if (cmd == "admin-roster") {
+      std::string seedHex, item;
+      int network = 0, version = 0;
+      in >> seedHex >> network >> version;
+      const auto seed = unhex(seedHex);
+      mesh::Roster r;
+      r.network = uint8_t(network);
+      r.version = uint16_t(version);
+      while (in >> item) {
+        // number:name:public
+        const size_t a = item.find(':'), b = item.rfind(':');
+        mesh::RosterEntry e;
+        e.number = uint8_t(std::stoi(item.substr(0, a)));
+        e.admin = e.number == 1;
+        e.name = item.substr(a + 1, b - a - 1);
+        mesh::fromHex(item.substr(b + 1).c_str(), e.publicKey, 32);
+        r.members.push_back(e);
+      }
+      const auto bytes = mesh::writeRoster(r, seed.data());
+      std::cout << "roster " << hex(bytes.data(), bytes.size()) << "\n";
+    } else if (cmd == "admin-sign") {
+      std::string seedHex;
+      in >> seedHex;
+      uint8_t pub[32];
+      mesh::signPublicKey(unhex(seedHex).data(), pub);
+      std::cout << "sign " << hex(pub, 32) << "\n";
+    } else if (cmd == "admin-welcome") {
+      std::string boxSecretHex, passwordHex, unitHex, jsonHex;
+      in >> boxSecretHex >> passwordHex >> unitHex >> jsonHex;
+      const auto boxSecret = unhex(boxSecretHex), password = unhex(passwordHex), unit = unhex(unitHex);
+      const auto json = unhex(jsonHex);
+      uint8_t adminPublic[32], k[32];
+      mesh::publicKey(boxSecret.data(), adminPublic);
+      // The admin's side of the join key: X25519(admin secret, unit public) gives the same.
+      uint8_t input[32 + mesh::PASSWORD_SIZE + 64];
+      crypto_x25519(input, boxSecret.data(), unit.data());
+      memcpy(input + 32, password.data(), mesh::PASSWORD_SIZE);
+      memcpy(input + 32 + mesh::PASSWORD_SIZE, unit.data(), 32);
+      memcpy(input + 64 + mesh::PASSWORD_SIZE, adminPublic, 32);
+      crypto_blake2b(k, 32, input, sizeof(input));
+      std::vector<uint8_t> box(json.size() + mesh::TAG_SIZE);
+      mesh::setupSeal(k, 4, json.data(), json.size(), box.data());
+      std::cout << "welcome " << hex(box.data(), box.size()) << "\n";
+    } else if (cmd == "admin-packets") {
+      int network = 0, version = 0;
+      std::string keyHex, rosterHex;
+      in >> network >> keyHex >> version >> rosterHex;
+      const auto key = unhex(keyHex), roster = unhex(rosterHex);
+      mesh::Header h;
+      h.type = mesh::Type::Roster;
+      h.group = uint8_t(network);
+      h.sender = mesh::SERVER;
+      h.recipient = mesh::GROUP;
+      h.counter = 0x40000000u + uint32_t(version);
+      static mesh::Sealed sealed;
+      mesh::seal(h, key.data(), roster.data(), roster.size(), sealed);
+      for (int i = 0; i < sealed.count; i++) std::cout << "packet " << hex(sealed.packets[i], sealed.lengths[i]) << "\n";
     } else if (cmd == "group") {
       int bits = 0;
       in >> bits >> std::ws;

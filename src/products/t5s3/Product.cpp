@@ -47,7 +47,7 @@ bool sosFromButton = false;
 
 void loop() {
   auto& node = mesh::Node::get();
-  // A new group from `waddle mesh setup`: load it without a restart.
+  // Just joined a network (`waddle mesh join`): start it without a restart.
   if (mesh::web::takeGroupChanged()) node.begin();
   node.loop();
 

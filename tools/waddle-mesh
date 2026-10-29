@@ -1,51 +1,70 @@
 #!/usr/bin/env python3
-"""waddle mesh: set up the mesh units (LilyGO T5) as one group.
+"""waddle mesh: the mesh network of LilyGO T5 units (up to 32 members).
 
   waddle mesh new-unit [gateway] [--pr N] [--port P] [file.bin]
                          put WaddleOS on a new unit (or the gateway) over USB,
                          then check that it works
-  waddle mesh setup      ask each unit for its keys, give every unit the group,
-                         and tell the Pi server about the units
-  waddle mesh check      ask every unit how it is (radio, GPS, battery, version)
-  waddle mesh reset-keys after a unit is lost: the others make new keys and are
-                         set up again without it
+  waddle mesh setup      make the network (the first time) and add your own
+                         units on this Wi-Fi straight away
+  waddle mesh invite NAME
+                         a link for someone new, to send by Signal
+  waddle mesh join LINK [--name N]
+                         (the newcomer) join with that link: your unit on
+                         File Transfer -> Join a Network
+  waddle mesh approve    let in those who asked to join
+  waddle mesh remove NAME
+                         take someone out of the network
+  waddle mesh members    who is in the network
+  waddle mesh check      ask every unit set up here how it is
   waddle mesh server [--pr N]
                          update the Pi server over SSH and check it came back
 
-Every unit must show File Transfer -> Join a Network (on the same Wi-Fi as this
-computer) while setup runs. Each unit made its own keys on first start; its
-private DM key never leaves it. Uses only the Python standard library.
+The admin's keys stay on this computer (~/.config/waddle/admin.json). Each unit
+made its own keys on first start; its private key never leaves it. The Pi only
+passes on sealed packets. Uses only the Python standard library.
 """
 
+import base64
 import hashlib
 import hmac
+import http.client
 import json
 import os
 import secrets
 import shlex
 import shutil
+import ssl
 import struct
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
-CONFIG = os.path.expanduser("~/.config/waddle/mesh-group.json")
+CONFIG_DIR = os.path.expanduser("~/.config/waddle")
+ADMIN = os.path.join(CONFIG_DIR, "admin.json")  # the admin's keys, the roster and open invitations
+MESH = os.path.join(CONFIG_DIR, "mesh.json")    # the Pi and the units set up from here (for check)
 REPO = "ArneeMe/waddleos"
 CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "waddleos")
 # The whole flash (bootloader, partitions, app) for a device that has never run WaddleOS.
 FULL_IMAGES = {"t5": "waddleos-t5-full.bin", "gateway": "waddle-gateway-full.bin"}
+# The server's commands on the Pi, as its own user so the database stays its own.
+PI_CMD = "cd /opt/waddlemesh && sudo -u waddlemesh python3 -m waddlemesh --config /etc/waddlemesh.json"
+PI_ROOT_CMD = "cd /opt/waddlemesh && sudo python3 -m waddlemesh --config /etc/waddlemesh.json"
+POLL_S = 10  # `join` asks the server this often whether the admin let them in
+MAX_MEMBERS = 32
+NAME_MAX = 20  # bytes of UTF-8 in the roster
 
 TTY = sys.stdout.isatty()
 B, G, R, Y, C, DIM, N = (("\033[1m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m")
                          if TTY else ("",) * 7)
 
 
-# --- Setup handover crypto -----------------------------------------------------
-# The units' keys travel over the home Wi-Fi sealed with a one-time key
-# (lib/WaddleMesh/src/MeshCrypto.h, "Setup"). Plain Python, so the tool needs
-# nothing installed: X25519 (RFC 7748) and ChaCha20-Poly1305 (RFC 8439).
+# --- Crypto ----------------------------------------------------------------------
+# Plain Python, so the tool needs nothing installed: X25519 (RFC 7748),
+# ChaCha20-Poly1305 (RFC 8439) and Ed25519 (RFC 8032). The same as
+# lib/WaddleMesh/src/MeshCrypto.h and MeshRoster.h on the units.
 
 _P = 2**255 - 19
 
@@ -124,9 +143,102 @@ def aead_seal(key, nonce, plain, aad=b""):
 
 def aead_open(key, nonce, sealed, aad=b""):
     cipher, tag = sealed[:-16], sealed[-16:]
-    if not hmac.compare_digest(_mac(key, nonce, aad, cipher), tag):
-        raise RuntimeError("the unit's answer did not check out (changed on the way, or not a WaddleOS unit)")
+    if len(sealed) < 16 or not hmac.compare_digest(_mac(key, nonce, aad, cipher), tag):
+        raise RuntimeError("a sealed answer did not check out (changed on the way, or the wrong key)")
     return _chacha(key, 1, nonce, cipher)
+
+
+# Ed25519, the same code as server/waddlemesh/ed25519.py.
+_ED_L = 2**252 + 27742317777372353535851937790883648493
+_ED_D = -121665 * pow(121666, _P - 2, _P) % _P
+_ED_SQRT_M1 = pow(2, (_P - 1) // 4, _P)
+
+
+def _ed_add(p, q):
+    x1, y1, z1, t1 = p
+    x2, y2, z2, t2 = q
+    a = (y1 - x1) * (y2 - x2) % _P
+    b = (y1 + x1) * (y2 + x2) % _P
+    c = 2 * t1 * t2 * _ED_D % _P
+    d = 2 * z1 * z2 % _P
+    e, f, g, h = b - a, d - c, d + c, b + a
+    return e * f % _P, g * h % _P, f * g % _P, e * h % _P
+
+
+def _ed_mul(s, p):
+    out = (0, 1, 1, 0)
+    while s:
+        if s & 1:
+            out = _ed_add(out, p)
+        p = _ed_add(p, p)
+        s >>= 1
+    return out
+
+
+def _ed_x(y, sign):
+    if y >= _P:
+        return None
+    x2 = (y * y - 1) * pow(_ED_D * y * y + 1, _P - 2, _P) % _P
+    if x2 == 0:
+        return None if sign else 0
+    x = pow(x2, (_P + 3) // 8, _P)
+    if (x * x - x2) % _P:
+        x = x * _ED_SQRT_M1 % _P
+    if (x * x - x2) % _P:
+        return None
+    return _P - x if (x & 1) != sign else x
+
+
+_ED_GY = 4 * pow(5, _P - 2, _P) % _P
+_ED_G = (_ed_x(_ED_GY, 0), _ED_GY, 1, _ed_x(_ED_GY, 0) * _ED_GY % _P)
+
+
+def _ed_encode(p):
+    zi = pow(p[2], _P - 2, _P)
+    x, y = p[0] * zi % _P, p[1] * zi % _P
+    return (y | ((x & 1) << 255)).to_bytes(32, "little")
+
+
+def _ed_decode(b):
+    y = int.from_bytes(b, "little")
+    sign, y = y >> 255, y & ((1 << 255) - 1)
+    x = _ed_x(y, sign)
+    return None if x is None else (x, y, 1, x * y % _P)
+
+
+def _ed_hash(*parts):
+    return int.from_bytes(hashlib.sha512(b"".join(parts)).digest(), "little")
+
+
+def _ed_expand(seed):
+    h = hashlib.sha512(seed).digest()
+    a = (int.from_bytes(h[:32], "little") & ((1 << 254) - 8)) | (1 << 254)
+    return a, h[32:]
+
+
+def ed25519_public(seed):
+    return _ed_encode(_ed_mul(_ed_expand(seed)[0], _ED_G))
+
+
+def ed25519_sign(seed, message):
+    a, prefix = _ed_expand(seed)
+    public = _ed_encode(_ed_mul(a, _ED_G))
+    r = _ed_hash(prefix, message) % _ED_L
+    big_r = _ed_encode(_ed_mul(r, _ED_G))
+    s = (r + _ed_hash(big_r, public, message) * a) % _ED_L
+    return big_r + s.to_bytes(32, "little")
+
+
+def ed25519_verify(public, message, signature):
+    if len(public) != 32 or len(signature) != 64:
+        return False
+    a, r = _ed_decode(public), _ed_decode(signature[:32])
+    s = int.from_bytes(signature[32:], "little")
+    if a is None or r is None or s >= _ED_L:
+        return False
+    left = _ed_mul(s, _ED_G)
+    right = _ed_add(r, _ed_mul(_ed_hash(signature[:32], public, message) % _ED_L, a))
+    return (left[0] * right[2] - right[0] * left[2]) % _P == 0 and (left[1] * right[2] - right[1] * left[2]) % _P == 0
 
 
 def setup_key(tool_secret, tool_public, unit_public):
@@ -135,13 +247,136 @@ def setup_key(tool_secret, tool_public, unit_public):
 
 
 def setup_nonce(n):
+    """Nonce for what is sealed outside packets: the byte, then 11 zeros.
+    1: a unit's sender key, 2: to the unit in setup, 3: a join request, 4: a welcome."""
     return bytes([n]) + bytes(11)
+
+
+def six_digits(data):
+    n = int.from_bytes(hashlib.blake2b(data, digest_size=32).digest()[:3], "big") % 1000000
+    return "%03d %03d" % (n // 1000, n % 1000)
 
 
 def setup_code(unit_public):
     """The six digits the unit shows on its File Transfer screen."""
-    n = int.from_bytes(hashlib.blake2b(unit_public, digest_size=32).digest()[:3], "big") % 1000000
-    return "%03d %03d" % (n // 1000, n % 1000)
+    return six_digits(unit_public)
+
+
+def join_key(shared, password, unit_public, admin_public):
+    """K = BLAKE2b-256(X25519 || password || unit public || admin public).
+    shared is X25519(admin secret, unit public), the same as the unit's side."""
+    return hashlib.blake2b(shared + password + unit_public + admin_public, digest_size=32).digest()
+
+
+def join_code(admin_public, unit_public):
+    """The six digits the newcomer's unit shows, from both public keys."""
+    return six_digits(admin_public + unit_public)
+
+
+# --- Roster and ROSTER packets (protocol/PROTOCOL.md, "The roster") -------------------
+
+
+def fit_name(name):
+    """At most 20 bytes of UTF-8, not cut inside a letter."""
+    return name.strip().encode()[:NAME_MAX].decode(errors="ignore")
+
+
+def read_roster(data, admin_sign=None):
+    """{network, version, members: [{number, admin, name, public, tokenHash}]}; the
+    signature is checked when admin_sign is given."""
+    if len(data) < 5 + 64 or data[0] != 1:
+        raise RuntimeError("not a roster")
+    body = data[:-64]
+    if admin_sign is not None and not ed25519_verify(admin_sign, body, data[-64:]):
+        raise RuntimeError("the roster is not signed by the admin")
+    roster = {"network": body[1], "version": struct.unpack_from("<H", body, 2)[0], "members": []}
+    i = 5
+    for _ in range(body[4]):
+        number, flags, size = body[i:i + 3]
+        i += 3
+        if not 1 <= number <= MAX_MEMBERS or size > NAME_MAX or i + size + 48 > len(body):
+            raise RuntimeError("a broken roster")
+        roster["members"].append({"number": number, "admin": bool(flags & 1),
+                                  "name": body[i:i + size].decode(errors="replace"),
+                                  "public": body[i + size:i + size + 32],
+                                  "tokenHash": body[i + size + 32:i + size + 48]})
+        i += size + 48
+    if i != len(body):
+        raise RuntimeError("a broken roster")
+    return roster
+
+
+def write_roster(roster, sign_seed):
+    """The signed bytes, like writeRoster() in MeshRoster.cpp."""
+    out = struct.pack("<BBHB", 1, roster["network"], roster["version"], len(roster["members"]))
+    for m in roster["members"]:
+        name = fit_name(m["name"]).encode()
+        out += bytes([m["number"], 1 if m["admin"] else 0, len(name)]) + name + m["public"] + m["tokenHash"]
+    return out + ed25519_sign(sign_seed, out)
+
+
+def header(ptype, network, sender, recipient, counter, index=0, count=1, hops=3):
+    """A 14-byte packet header (protocol/PROTOCOL.md, "Header"); no group id, key number 0."""
+    return bytes([0x57, (3 << 4) | ptype, network, (hops & 0x0F) | (0x10 if count > 1 else 0), sender,
+                  recipient]) + struct.pack("<IBHB", counter, (index << 4) | count, 0, 0)
+
+
+def packet_aad(h):
+    return h[0:3] + h[4:10] + h[11:14]
+
+
+def packet_nonce(h):
+    """Sender, recipient, counter, type, then 5 zeros."""
+    return h[4:10] + bytes([h[1] & 0x0F]) + bytes(5)
+
+
+ROSTER_TYPE = 7
+MAX_PIECE = 186  # 200-byte packets minus the header
+MAX_PIECES = 15
+
+
+def roster_packets(network_key, network, version, signed):
+    """The signed roster as ROSTER packets: sender 0 (server), to everyone, counter
+    0x40000000 + version, sealed with the network key once and cut into pieces
+    (like seal() in MeshCrypto.cpp)."""
+    counter = 0x40000000 + version
+    count = -(-(len(signed) + 16) // MAX_PIECE)
+    if count > MAX_PIECES:
+        raise RuntimeError("the roster is too long for ROSTER packets")
+    h = header(ROSTER_TYPE, network, 0, 0xFF, counter, 0, count)
+    run = aead_seal(network_key, packet_nonce(h), signed, packet_aad(h))
+    return [header(ROSTER_TYPE, network, 0, 0xFF, counter, i, count) + run[i * MAX_PIECE:(i + 1) * MAX_PIECE]
+            for i in range(count)]
+
+
+# --- Invitation links -------------------------------------------------------------
+
+
+def make_link(network, invite, password, admin_box, cert_hash, url):
+    raw = bytes([network]) + invite + password + admin_box + cert_hash + url.encode()
+    return "waddle://join/" + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def read_link(link):
+    link = link.strip()
+    if not link.startswith("waddle://join/"):
+        raise RuntimeError("not an invitation link (it starts with waddle://join/)")
+    data = link[len("waddle://join/"):]
+    try:
+        raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+    except ValueError as e:
+        raise RuntimeError("the invitation link is broken: copy all of it") from e
+    if len(raw) < 1 + 8 + 16 + 32 + 32 + 9:
+        raise RuntimeError("the invitation link is too short: copy all of it")
+    return {"network": raw[0], "invite": raw[1:9], "password": raw[9:25], "adminBox": raw[25:57],
+            "certHash": raw[57:89], "url": raw[89:].decode()}
+
+
+def cert_hash(pem):
+    return hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).digest()
+
+
+# --- Talking to units, the Pi and the server -------------------------------------------
 
 
 def say(text=""):
@@ -152,6 +387,10 @@ def ask(prompt, default=""):
     shown = f"{prompt} {DIM}[{default}]{N}: " if default else f"{prompt}: "
     answer = input(shown).strip()
     return answer or default
+
+
+def yes(prompt):
+    return ask(f"{prompt} (y/n)", "y").lower().startswith(("y", "j"))
 
 
 def unit_get(ip, path):
@@ -170,97 +409,377 @@ def unit_post(ip, path, data):
 
 
 def ssh(host, command):
-    return subprocess.run(["ssh", host, command], check=True, capture_output=True, text=True).stdout
+    run = subprocess.run(["ssh", host, command], capture_output=True, text=True)
+    if run.returncode:
+        raise RuntimeError(f"on {host}: {(run.stdout + run.stderr).strip() or 'failed'}")
+    return run.stdout
 
 
-def fetch_keys(ip):
-    """The unit's public key, and its sender key sealed for this setup only.
-    Returns (public key, sender key, setup key, tool public key): the last two
-    seal the group sent to the unit."""
+def server_request(url, cert_sha256, method, path, doc=None):
+    """HTTPS to the Pi, trusting only the certificate whose SHA-256 the invitation
+    carries (it is self-made, so no authority vouches for it). (status, JSON or None)."""
+    u = urllib.parse.urlsplit(url)
+    if u.scheme != "https":
+        raise RuntimeError(f"the server address must start with https:// ({url})")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE  # checked below, against the invitation
+    conn = http.client.HTTPSConnection(u.hostname, u.port or 443, context=ctx, timeout=20)
+    try:
+        conn.connect()
+        if not hmac.compare_digest(hashlib.sha256(conn.sock.getpeercert(binary_form=True)).digest(), cert_sha256):
+            raise RuntimeError(f"{url} is not the server in the invitation (another certificate). Stopped")
+        body = json.dumps(doc).encode() if doc is not None else None
+        conn.request(method, u.path.rstrip("/") + path, body=body, headers={"Content-Type": "application/json"})
+        r = conn.getresponse()
+        data = r.read()
+        try:
+            return r.status, json.loads(data) if data else None
+        except ValueError:
+            return r.status, None
+    finally:
+        conn.close()
+
+
+def load(path):
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def save(path, doc):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        json.dump(doc, f, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def need_admin():
+    cfg = load(ADMIN)
+    if not cfg:
+        raise RuntimeError(f"no network on this computer ({ADMIN}): run `waddle mesh setup` first")
+    return cfg
+
+
+def current_roster(cfg):
+    if cfg.get("roster"):
+        return read_roster(bytes.fromhex(cfg["roster"]), ed25519_public(bytes.fromhex(cfg["signSeed"])))
+    return {"network": cfg["network"], "version": 0, "members": []}
+
+
+def remember_unit(name, ip, number=None):
+    """Units set up from this computer, so `check` can ask them."""
+    mesh = load(MESH)
+    units = [u for u in mesh.get("units", []) if u["ip"] != ip and (number is None or u.get("number") != number)]
+    units.append({"name": name, "ip": ip, "number": number})
+    mesh["units"] = units
+    save(MESH, mesh)
+
+
+def hand_over(ip, link, name):
+    """Gives the unit the invitation, sealed for it alone (POST /api/mesh/join).
+    Returns (its public key, its sealed request, the code it shows)."""
     tool_secret = secrets.token_bytes(32)
     tool_public = x25519_public(tool_secret)
     ident = unit_get(ip, "/api/mesh/identity?tool=" + tool_public.hex())
-    if "senderKeyBox" not in ident:
-        raise RuntimeError(f"{ip} runs an older WaddleOS: update it first (waddle update)")
     unit_public = bytes.fromhex(ident["publicKey"])
+    # Someone on the Wi-Fi could pretend to be the unit and learn the invitation:
+    # the code on the unit's own screen shows it is the real one.
+    if not yes(f"  Does the unit's screen show the setup code {B}{setup_code(unit_public)}{N}?"):
+        raise RuntimeError(f"the code does not match: something else answered at {ip}. Stopped")
     key = setup_key(tool_secret, tool_public, unit_public)
-    sender = aead_open(key, setup_nonce(1), bytes.fromhex(ident["senderKeyBox"]))
-    return unit_public, sender, key, tool_public.hex()
+    sealed = aead_seal(key, setup_nonce(2), json.dumps({"invite": link, "name": name}).encode())
+    answer = json.loads(unit_post(ip, "/api/mesh/join", {"tool": tool_public.hex(), "box": sealed.hex()}))
+    if bytes.fromhex(answer["from"]) != unit_public:
+        raise RuntimeError(f"{ip} answered with another key than it showed. Stopped")
+    return unit_public, bytes.fromhex(answer["box"]), answer.get("code", "")
 
 
-def setup():
+def open_request(cfg, invite, unit_public, box):
+    """The newcomer's {"name"} and the join key K, or RuntimeError."""
+    secret = bytes.fromhex(cfg["boxSecret"])
+    password = bytes.fromhex(cfg["invites"][invite]["password"])
+    k = join_key(x25519(secret, unit_public), password, unit_public, x25519_public(secret))
+    return json.loads(aead_open(k, setup_nonce(3), box)), k
+
+
+def admit(cfg, pi, newcomers):
+    """Lets newcomers in: each gets the lowest free number and a server token; one
+    new roster is signed and put on the Pi with its ROSTER packets. Returns the
+    sealed welcome per invitation. newcomers: [{invite, public, name, key}]."""
+    roster = current_roster(cfg)
+    first = not roster["members"]
+    now = int(time.time())
+    for i, n in enumerate(newcomers):
+        if any(m["public"] == n["public"] for m in roster["members"]):
+            raise RuntimeError(f"{n['name']}'s unit is in the network already (`waddle mesh remove` it first)")
+        free = [x for x in range(1, MAX_MEMBERS + 1) if x not in {m["number"] for m in roster["members"]}]
+        if not free:
+            raise RuntimeError(f"the network is full ({MAX_MEMBERS} members)")
+        n["number"], n["token"] = free[0], secrets.token_hex(16)
+        # The first unit of a new network is the admin's own.
+        roster["members"].append({"number": free[0], "admin": first and i == 0, "name": n["name"],
+                                  "public": n["public"],
+                                  "tokenHash": hashlib.sha256(n["token"].encode()).digest()[:16]})
+    roster["members"].sort(key=lambda m: m["number"])
+    signed = upload_roster(cfg, pi, roster)
+    sign_seed, box_secret = bytes.fromhex(cfg["signSeed"]), bytes.fromhex(cfg["boxSecret"])
+    welcomes = {}
+    for n in newcomers:
+        doc = {"network": cfg["network"], "me": n["number"], "name": fit_name(n["name"]),
+               "networkKey": cfg["networkKey"], "adminSign": ed25519_public(sign_seed).hex(),
+               "adminBox": x25519_public(box_secret).hex(),
+               "server": {"url": cfg["url"], "cert": cfg["cert"], "token": n["token"]},
+               # Message counters start above this, so a unit taking a former
+               # member's number never repeats their counters.
+               "counterFloor": now, "roster": signed.hex()}
+        welcomes[n["invite"]] = aead_seal(n["key"], setup_nonce(4), json.dumps(doc).encode())
+        cfg["invites"].pop(n["invite"], None)
+    save(ADMIN, cfg)
+    return welcomes
+
+
+def upload_roster(cfg, pi, roster):
+    """Signs roster as the next version and puts it on the Pi; saves it here too."""
+    roster["version"] += 1
+    signed = write_roster(roster, bytes.fromhex(cfg["signSeed"]))
+    packets = roster_packets(bytes.fromhex(cfg["networkKey"]), cfg["network"], roster["version"], signed)
+    ssh(pi, f"{PI_CMD} set-roster {signed.hex()} {' '.join(p.hex() for p in packets)}")
+    cfg["roster"] = signed.hex()
+    save(ADMIN, cfg)
+    return signed
+
+
+def new_invitation(cfg, name):
+    invite, password = secrets.token_bytes(8), secrets.token_bytes(16)
+    cfg.setdefault("invites", {})[invite.hex()] = {"name": name, "password": password.hex(), "made": int(time.time())}
+    save(ADMIN, cfg)
+    return invite.hex(), make_link(cfg["network"], invite, password,
+                                   x25519_public(bytes.fromhex(cfg["boxSecret"])), cert_hash(cfg["cert"]), cfg["url"])
+
+
+# --- Commands: the admin ------------------------------------------------------------
+
+
+def setup(args):
     say(f"\n{B}🐧 waddle mesh setup{N}\n")
-    old = {}
-    if os.path.exists(CONFIG):
-        with open(CONFIG) as f:
-            old = json.load(f)
-        say(f"{DIM}Last setup: group {old.get('group')} with "
-            f"{', '.join(m['name'] for m in old.get('members', []))}{N}\n")
-
-    count = int(ask("How many units (2 to 4)", str(len(old.get("members", [])) or 4)))
-    if count not in (2, 3, 4):
-        raise RuntimeError("2 to 4 units")
-    say(f"\nOn every unit: {B}Meldinger{N} (or File Transfer) -> Join a Network. Each shows its address.\n")
-    members = []
-    # A person keeps their member number from setup to setup, even when someone
-    # before them is gone: the units' history and groups go by number.
-    previous = old.get("members", [])
-    taken = {m.get("number", i + 1) for i, m in enumerate(previous)}
-    free = [n for n in range(1, 5) if n not in taken]
-    for i in range(count):
-        prev = previous[i] if i < len(previous) else {}
-        n = prev.get("number", i + 1) if prev else free.pop(0)
-        name = ask(f"Unit {i + 1}: name", prev.get("name", ""))
-        ip = ask(f"Unit {i + 1}: address shown on its screen", prev.get("ip", ""))
-        say(f"{C}▸{N} Asking {name} for its keys")
-        unit_public, sender_key, box_key, tool = fetch_keys(ip)
-        code = setup_code(unit_public)
-        # Someone on the Wi-Fi could pretend to be the unit: the code on its own
-        # screen shows it is the real one.
-        if ask(f"  Does {name}'s screen show the code {B}{code}{N}? (y/n)", "y").lower() != "y":
-            raise RuntimeError(f"the code does not match: something else answered at {ip}. Stopped")
-        say(f"  {G}✓{N} {name}: key {unit_public.hex()[:16]}…")
-        members.append({"number": n, "name": name, "ip": ip, "publicKey": unit_public.hex(),
-                        "senderKey": sender_key.hex(), "boxKey": box_key, "tool": tool})
-
-    group = old.get("group") or (secrets.randbelow(254) + 1)
-
-    say(f"\n{C}▸{N} The Pi server (it stores and passes on messages; it cannot read them)")
-    pi = ask("Pi over SSH, e.g. pi@raspberrypi.local (empty = no server)", old.get("pi", ""))
-    server = {}
-    if pi:
-        url = ask("Address units use, from home and away (router forwards port 8443)",
-                  old.get("url", "https://") )
+    cfg, mesh = load(ADMIN), load(MESH)
+    if cfg:
+        roster = current_roster(cfg)
+        say(f"{DIM}Network {cfg['network']} exists, with {len(roster['members'])} members. "
+            f"Adding more of your own units.{N}\n")
+    else:
+        say("This makes a new network. Its keys stay on this computer, in " + ADMIN)
+        say(f"\n{C}▸{N} The Pi server (it stores and passes on messages; it cannot read them)")
+        pi = ask("Pi over SSH, e.g. pi@raspberrypi.local", mesh.get("pi", ""))
+        if not pi:
+            raise RuntimeError("the network needs the Pi")
+        url = ask("Address units use, from home and away (router forwards port 8443)", "https://").rstrip("/")
         cert = ssh(pi, "sudo cat /var/lib/waddlemesh/cert.pem")
         if "BEGIN CERTIFICATE" not in cert:
             raise RuntimeError("no certificate on the Pi: run server/install.sh there first")
-        tokens = {m["number"]: secrets.token_hex(16) for m in members}
-        # Each unit as number:key hash:name (the name only shows on the server's status page).
-        names = {m["number"]: m["name"] for m in members}
-        hashes = " ".join(shlex.quote(f"{n}:{hashlib.sha256(t.encode()).hexdigest()}:{names[n]}")
-                          for n, t in tokens.items())
-        ssh(pi, f"cd /opt/waddlemesh && sudo python3 -m waddlemesh set-group --config /etc/waddlemesh.json "
-                f"{group} {hashes} && sudo systemctl restart waddlemesh")
-        say(f"  {G}✓{N} Server knows group {group} and {count} units")
-        server = {"url": url.rstrip("/"), "cert": cert, "tokens": tokens}
+        sign_seed = secrets.token_bytes(32)
+        cfg = {"network": secrets.randbelow(255) + 1, "signSeed": sign_seed.hex(),
+               "boxSecret": secrets.token_bytes(32).hex(), "networkKey": secrets.token_bytes(32).hex(),
+               "url": url, "cert": cert, "roster": "", "invites": {}}
+        ssh(pi, f"{PI_ROOT_CMD} set-network {cfg['network']} {ed25519_public(sign_seed).hex()}"
+                " && sudo systemctl restart waddlemesh")
+        save(ADMIN, cfg)
+        mesh["pi"] = pi
+        save(MESH, mesh)
+        say(f"  {G}✓{N} Network {cfg['network']} made; the server knows your key")
+        say(f"  {Y}Keep a copy of {ADMIN} somewhere safe:{N} without it nobody new can join.")
 
-    say(f"\n{C}▸{N} Giving every unit the group")
-    public = [{k: m[k] for k in ("number", "name", "publicKey", "senderKey")} for m in members]
-    for m in members:
-        # Message counters start above this, so a unit taking a lost unit's number
-        # never repeats its counters.
-        doc = {"group": group, "me": m["number"], "members": public, "counterFloor": int(time.time())}
-        if server:
-            doc["server"] = {"url": server["url"], "token": server["tokens"][m["number"]], "cert": server["cert"]}
-        sealed = aead_seal(m["boxKey"], setup_nonce(2), json.dumps(doc).encode())
-        unit_post(m["ip"], "/api/mesh/group", {"tool": m["tool"], "box": sealed.hex()})
-        say(f"  {G}✓{N} {m['name']}")
+    say(f"\nOn each of your own units: {B}File Transfer -> Join a Network{N}. Each shows its address.")
+    newcomers = []
+    while len(newcomers) + len(current_roster(cfg)["members"]) < MAX_MEMBERS:
+        ip = ask(f"\nUnit {len(newcomers) + 1}: address on its screen (empty = done)")
+        if not ip:
+            break
+        name = fit_name(ask(f"Unit {len(newcomers) + 1}: name"))
+        if not name:
+            raise RuntimeError("a unit needs a name")
+        invite, link = new_invitation(cfg, name)
+        try:
+            unit_public, box, _ = hand_over(ip, link, name)
+            request, k = open_request(cfg, invite, unit_public, box)
+        except BaseException:
+            cfg["invites"].pop(invite)
+            save(ADMIN, cfg)
+            raise
+        newcomers.append({"invite": invite, "public": unit_public, "name": request.get("name") or name,
+                          "key": k, "ip": ip})
+        say(f"  {G}✓{N} {name}: key {unit_public.hex()[:16]}…")
+    if not newcomers:
+        say()
+        return 0
 
-    os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
-    with open(CONFIG, "w") as f:
-        json.dump({"group": group, "pi": pi, "url": server.get("url", ""),
-                   "members": [{k: m[k] for k in ("number", "name", "ip")} for m in members]}, f, indent=2)
-    say(f"\n{G}{B}🐧 Done!{N} Close File Transfer on each unit; they find each other over LoRa.\n")
+    say(f"\n{C}▸{N} Signing the new member list and giving it to the Pi")
+    welcomes = admit(cfg, load(MESH).get("pi") or ask("Pi over SSH"), newcomers)
+    for n in newcomers:
+        unit_post(n["ip"], "/api/mesh/welcome", {"box": welcomes[n["invite"]].hex()})
+        remember_unit(n["name"], n["ip"], n["number"])
+        say(f"  {G}✓{N} {n['name']} is member {n['number']}")
+    say(f"\n{G}{B}🐧 Done!{N} Close File Transfer on each unit; they find each other over LoRa.")
+    say(f"Someone new: {B}waddle mesh invite <name>{N}.\n")
+    return 0
+
+
+def invite(args):
+    if not args:
+        raise RuntimeError("who is it for? waddle mesh invite <name>")
+    cfg = need_admin()
+    name = fit_name(" ".join(args))
+    _, link = new_invitation(cfg, name)
+    say(f"\n{B}🐧 An invitation for {name}{N}\n")
+    say(f"Send {name} this link (Signal is good; anyone with it can join once):\n")
+    say(f"  {B}{link}{N}\n")
+    say(f"{name}: put your unit on File Transfer -> Join a Network, then on a computer on the same Wi-Fi:")
+    say(f"  curl -sfLO https://raw.githubusercontent.com/{REPO}/waddle/tools/waddle-mesh")
+    say(f"  python3 waddle-mesh join '{link}'")
+    say(f"\nThen let them in with {B}waddle mesh approve{N}.\n")
+    return 0
+
+
+def approve(args):
+    cfg = need_admin()
+    pi = load(MESH).get("pi") or ask("Pi over SSH")
+    say(f"\n{B}🐧 waddle mesh approve{N}\n")
+    waiting = json.loads(ssh(pi, f"{PI_CMD} joins") or "[]")
+    if not waiting:
+        say("Nobody is waiting.\n")
+        return 0
+    admin_box = x25519_public(bytes.fromhex(cfg["boxSecret"]))
+    newcomers = []
+    for req in waiting:
+        inv = cfg.get("invites", {}).get(req["invite"])
+        try:
+            if not inv:
+                raise RuntimeError("an unknown or used invitation")
+            unit_public = bytes.fromhex(req["from"])
+            request, k = open_request(cfg, req["invite"], unit_public, bytes.fromhex(req["box"]))
+        except (RuntimeError, ValueError, KeyError) as e:
+            say(f"  {R}✗{N} A request that does not open ({e}): forgotten")
+            ssh(pi, f"{PI_CMD} forget {shlex.quote(req['invite'])}")
+            continue
+        name = fit_name(request.get("name") or inv["name"])
+        say(f"Invitation for {B}{inv['name']}{N}: the unit calls itself {B}{name}{N}, "
+            f"code {B}{join_code(admin_box, unit_public)}{N}")
+        say(f"  {DIM}(the same six digits show on their unit; compare on the phone if you like){N}")
+        if yes(f"  Let {name} in?"):
+            newcomers.append({"invite": req["invite"], "public": unit_public, "name": name, "key": k})
+        else:
+            ssh(pi, f"{PI_CMD} forget {req['invite']}")
+            cfg["invites"].pop(req["invite"], None)
+            save(ADMIN, cfg)
+            say("  Not let in; that invitation is used up. Make a new one if it was them.")
+    if not newcomers:
+        say()
+        return 0
+    welcomes = admit(cfg, pi, newcomers)
+    for n in newcomers:
+        ssh(pi, f"{PI_CMD} welcome {n['invite']} {welcomes[n['invite']].hex()}")
+        say(f"  {G}✓{N} {n['name']} is member {n['number']}; their unit starts within 10 seconds")
+    say()
+    return 0
+
+
+def find_member(roster, who):
+    who = who.strip()
+    found = [m for m in roster["members"] if m["name"].lower() == who.lower() or str(m["number"]) == who]
+    if len(found) != 1:
+        names = ", ".join(f"{m['number']} {m['name']}" for m in roster["members"])
+        raise RuntimeError(f"no single member called {who!r} (members: {names}); give the number instead")
+    return found[0]
+
+
+def remove(args):
+    if not args:
+        raise RuntimeError("who? waddle mesh remove <name or number>")
+    cfg = need_admin()
+    roster = current_roster(cfg)
+    gone = find_member(roster, " ".join(args))
+    say(f"\n{B}🐧 waddle mesh remove{N}\n")
+    say(f"{gone['name']} (member {gone['number']}) is taken out. The other units make new keys and leave")
+    say("them out of every group, so their unit cannot open anything new.")
+    if not yes("Go on?"):
+        return 1
+    roster["members"] = [m for m in roster["members"] if m["number"] != gone["number"]]
+    upload_roster(cfg, load(MESH).get("pi") or ask("Pi over SSH"), roster)
+    mesh = load(MESH)
+    mesh["units"] = [u for u in mesh.get("units", []) if u.get("number") != gone["number"]]
+    save(MESH, mesh)
+    say(f"  {G}✓{N} Member list version {roster['version']} is on the Pi; units get it at their next check.\n")
+    return 0
+
+
+def members(args):
+    cfg = need_admin()
+    roster = current_roster(cfg)
+    say(f"\n{B}🐧 Network {cfg['network']}{N}, member list version {roster['version']}\n")
+    for m in roster["members"]:
+        admin = f" {DIM}(admin){N}" if m["admin"] else ""
+        say(f"  {m['number']:>2}  {m['name']}{admin}  {DIM}{m['public'].hex()[:16]}…{N}")
+    if not roster["members"]:
+        say("  nobody yet: waddle mesh setup")
+    waiting = cfg.get("invites", {})
+    if waiting:
+        say(f"\n  Invitations not used yet: {', '.join(i['name'] for i in waiting.values())}")
+    say()
+    return 0
+
+
+# --- Commands: the newcomer -----------------------------------------------------------
+
+
+def join(args):
+    name = args[args.index("--name") + 1] if "--name" in args else None
+    links = [a for a in args if a.startswith("waddle://")]
+    if not links:
+        raise RuntimeError("give the link: waddle mesh join 'waddle://join/…'")
+    inv = read_link(links[0])
+    say(f"\n{B}🐧 waddle mesh join{N}  {DIM}(server {inv['url']}){N}\n")
+    name = fit_name(name or ask("Your name, as the others see it"))
+    if not name:
+        raise RuntimeError("a name is needed")
+    say(f"On your unit: {B}File Transfer -> Join a Network{N} (same Wi-Fi as this computer).")
+    ip = ask("Address on the unit's screen")
+    unit_public, box, code = hand_over(ip, links[0], name)
+    if code and code != join_code(inv["adminBox"], unit_public):
+        raise RuntimeError("the unit's code does not match the invitation. Stopped")
+    say(f"  {G}✓{N} The unit has the invitation. Code: {B}{join_code(inv['adminBox'], unit_public)}{N}")
+    say(f"    {DIM}(your unit shows it too, and so does the admin's screen when they let you in){N}")
+
+    request = {"invite": inv["invite"].hex(), "from": unit_public.hex(), "box": box.hex()}
+    status, _ = server_request(inv["url"], inv["certHash"], "POST", "/api/join", request)
+    if status == 409:
+        say(f"  {Y}The server has a request for this invitation already{N} (from an earlier try?). Waiting for it.")
+    elif status == 429:
+        raise RuntimeError("the server has too many waiting requests: try again tomorrow")
+    elif status != 200:
+        raise RuntimeError(f"the server said {status}")
+    else:
+        say(f"  {G}✓{N} Asked to join")
+    remember_unit(name, ip)
+
+    say(f"\nWaiting for the admin to let you in (asks every {POLL_S} s; Ctrl+C to stop, the unit")
+    say("keeps the invitation, so run this again later). Keep the unit on File Transfer.")
+    while True:
+        try:
+            status, answer = server_request(inv["url"], inv["certHash"], "GET", f"/api/join/{inv['invite'].hex()}")
+        except OSError as e:  # the Wi-Fi or the Pi away for a moment: ask again
+            say(f"  {DIM}no answer from the server ({e}); trying again{N}")
+            status, answer = 404, None
+        if status == 200 and answer and answer.get("box"):
+            break
+        if status != 404:
+            raise RuntimeError(f"the server said {status}")
+        time.sleep(POLL_S)
+    unit_post(ip, "/api/mesh/welcome", {"box": answer["box"]})
+    say(f"\n{G}{B}🐧 You are in!{N} Close File Transfer; your unit finds the others over LoRa.\n")
     return 0
 
 
@@ -362,8 +881,8 @@ def new_unit(args):
     if not port:
         raise RuntimeError("no device on USB. Plug it in (hold BOOT while plugging in if it is not found)")
     say(f"\n{Y}This writes the whole flash of the device on {port}:{N} a unit gets new keys and must")
-    say("be set up again with `waddle mesh setup`. The SD card is not touched.")
-    if ask("Go on? (y/n)", "y").lower() != "y":
+    say("join the network again. The SD card is not touched.")
+    if not yes("Go on?"):
         return 1
     say(f"{C}▸{N} Flashing (about a minute)")
     subprocess.run([*tool, "--chip", "esp32s3", "--port", port, "--baud", "921600", "write_flash", "0x0", image],
@@ -387,19 +906,18 @@ def new_unit(args):
     say(f"  {G if ok else R}{'✓' if ok else '✗'}{N} {text}")
     if not ok:
         return 1
-    say(f"\nNext: {B}waddle mesh setup{N} with all units on File Transfer.\n")
+    say(f"\nNext: {B}waddle mesh setup{N} (your own unit) or {B}waddle mesh join <link>{N} (an invitation).\n")
     return 0
 
 
 def check(args):
-    """Asks every unit from the last setup how it is."""
-    if not os.path.exists(CONFIG):
-        raise RuntimeError("no setup yet: run `waddle mesh setup` first")
-    with open(CONFIG) as f:
-        cfg = json.load(f)
+    """Asks every unit set up from this computer how it is."""
+    units = load(MESH).get("units", [])
+    if not units:
+        raise RuntimeError("no units set up from this computer yet: `waddle mesh setup` or `join` first")
     say(f"\n{B}🐧 waddle mesh check{N}  {DIM}(each unit on File Transfer → Join a Network){N}\n")
     bad = 0
-    for m in cfg.get("members", []):
+    for m in units:
         ok, text = unit_health(m["ip"])
         bad += not ok
         say(f"  {G if ok else R}{'✓' if ok else '✗'}{N} {B}{m['name']}{N} {DIM}{m['ip']}{N}: {text}")
@@ -409,12 +927,8 @@ def check(args):
 
 def server_update(args):
     """Puts the newest server code on the Pi (or a PR's), installs and checks it."""
-    pi = None
-    if os.path.exists(CONFIG):
-        with open(CONFIG) as f:
-            pi = json.load(f).get("pi")
     pr = args[args.index("--pr") + 1] if "--pr" in args else None
-    pi = ask("Pi over SSH", pi or "")
+    pi = ask("Pi over SSH", load(MESH).get("pi", ""))
     if not pi:
         raise RuntimeError("no Pi given")
     ref = f"refs/pull/{pr}/head" if pr else "refs/heads/waddle"
@@ -434,48 +948,13 @@ def server_update(args):
     return 0
 
 
-def reset_keys(args):
-    """A unit is lost: the others make new keys, then setup runs without it."""
-    if not os.path.exists(CONFIG):
-        raise RuntimeError("no setup yet")
-    with open(CONFIG) as f:
-        cfg = json.load(f)
-    say(f"\n{B}🐧 waddle mesh reset-keys{N}\n")
-    # Configs from before numbers were saved: number them as setup did then.
-    for i, m in enumerate(cfg.get("members", [])):
-        m.setdefault("number", i + 1)
-    names = [m["name"] for m in cfg.get("members", [])]
-    lost = ask(f"Which unit is lost ({', '.join(names)})")
-    keep = [m for m in cfg.get("members", []) if m["name"] != lost]
-    if len(keep) == len(names):
-        raise RuntimeError(f"no unit called {lost!r}")
-    say(f"\nOn {', '.join(m['name'] for m in keep)}: File Transfer → Join a Network.")
-    say("They make new keys, so nothing the lost unit has opens new messages.")
-    if ask("Go on? (y/n)", "y").lower() != "y":
-        return 1
-    for m in keep:
-        ip = ask(f"{m['name']}: address", m["ip"])
-        unit_post(ip, "/api/mesh/reset-keys", {})
-        m["ip"] = ip
-        say(f"  {G}✓{N} {m['name']} has new keys")
-    cfg["members"] = keep
-    with open(CONFIG, "w") as f:
-        json.dump(cfg, f, indent=2)
-    say(f"\nNow the setup, with {len(keep)} units. Groups the lost unit was in get a new key by themselves.")
-    return setup()
+COMMANDS = {"setup": setup, "invite": invite, "join": join, "approve": approve, "remove": remove,
+            "members": members, "new-unit": new_unit, "check": check, "server": server_update}
 
 
 def main(argv):
-    if argv[:1] == ["reset-keys"]:
-        return reset_keys(argv[1:])
-    if argv[:1] == ["server"]:
-        return server_update(argv[1:])
-    if argv[:1] == ["setup"]:
-        return setup()
-    if argv[:1] == ["new-unit"]:
-        return new_unit(argv[1:])
-    if argv[:1] == ["check"]:
-        return check(argv[1:])
+    if argv and argv[0] in COMMANDS:
+        return COMMANDS[argv[0]](argv[1:])
     say(__doc__)
     return 0 if not argv or argv[0] in ("-h", "--help", "help") else 1
 
@@ -486,6 +965,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         say("\nStopped.")
         sys.exit(130)
-    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as e:
+    except (OSError, RuntimeError, ValueError, KeyError, subprocess.CalledProcessError) as e:
         say(f"\n{R}✗{N} {e}")
         sys.exit(1)

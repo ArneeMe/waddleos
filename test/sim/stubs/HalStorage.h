@@ -34,6 +34,14 @@ class HalFile {
     return c == EOF ? -1 : c;
   }
   size_t write(const void* buf, size_t n) { return f_ ? std::fwrite(buf, 1, n, f_) : 0; }
+  size_t fileSize() {
+    if (!f_) return 0;
+    const long at = std::ftell(f_);
+    std::fseek(f_, 0, SEEK_END);
+    const long size = std::ftell(f_);
+    std::fseek(f_, at, SEEK_SET);
+    return size_t(size);
+  }
   bool seek(size_t pos) { return f_ && std::fseek(f_, long(pos), SEEK_SET) == 0; }
   bool seekCur(int64_t offset) { return f_ && std::fseek(f_, long(offset), SEEK_CUR) == 0; }
   bool close() {

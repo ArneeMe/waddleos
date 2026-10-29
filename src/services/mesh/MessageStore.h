@@ -8,7 +8,7 @@
 //                                 delivery states, as appended records
 //   /.mesh/read.txt               how many messages of each conversation were seen
 //
-// A conversation is everyone (0), a DM with member 1-4, or a group made on a
+// A conversation is everyone (0), a DM with member 1-32, or a group made on a
 // unit (CONV_GROUPS + its slot in ChatGroups, MeshGroups.h).
 
 #include <MeshPacket.h>
@@ -16,6 +16,7 @@
 #include "MeshGroups.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -39,9 +40,9 @@ struct ChatMessage {
   uint8_t prevHash[4] = {};
   bool chainWarning = false;  // the previous message from this sender is missing or different
   std::string text;
-  // For my own messages: who has it (bit per member) and the server.
-  uint8_t deliveredTo = 0;
-  uint8_t readBy = 0;
+  // For my own messages: who has it and the server.
+  Members deliveredTo = 0;
+  Members readBy = 0;
   bool stored = false;
   bool sent = false;  // went out over the radio or to the server at least once
 };
@@ -94,9 +95,12 @@ class MessageStore {
   uint32_t lastCounter_[MAX_MEMBERS] = {};
   ConversationSummary summaries_[CONVERSATIONS];
   uint32_t seen_[CONVERSATIONS] = {};  // read.txt
-  // Newest message hash per conversation and sender.
-  uint8_t chain_[CONVERSATIONS][MAX_MEMBERS][4] = {};
-  uint32_t chainCounter_[CONVERSATIONS][MAX_MEMBERS] = {};
+  // Newest message hash per conversation and sender (only pairs that have written).
+  struct ChainLink {
+    uint8_t hash[4] = {};
+    uint32_t counter = 0;
+  };
+  std::map<uint16_t, ChainLink> chain_;  // key: conversation × 256 + sender
   void updateChain(uint8_t conversation, const ChatMessage& m);
 
   void saveSeen();

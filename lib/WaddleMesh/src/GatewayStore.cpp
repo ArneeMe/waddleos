@@ -167,6 +167,8 @@ void GatewayStore::handle(const uint8_t* raw, const size_t len, Result& r) {
       if (readFetch(body, bodyLen, f)) answerMessages(h.sender, f.sender, f.after, f.before, r);
       return;
     }
+    case Type::Roster:
+      return;  // the server sends the roster when it is back
   }
 }
 

@@ -37,8 +37,8 @@ class Node {
  public:
   static Node& get();
 
-  // Loads keys, group and history and starts the radio. Without a group from
-  // `waddle mesh setup` the unit stays quiet.
+  // Loads keys, the network and history and starts the radio. Before it has
+  // joined a network (`waddle mesh join`) the unit stays quiet.
   void begin();
   void loop();
   bool configured() const { return group_.configured; }
@@ -56,7 +56,7 @@ class Node {
   const ChatGroups& groups() const { return groups_; }
   // Makes a group of me and these members (bits) and invites them. Returns
   // its conversation, or CONV_GROUP when it could not.
-  uint8_t createGroup(uint8_t members, const std::string& name);
+  uint8_t createGroup(Members members, const std::string& name);
   // Leaves a group: the others are told and make a new key.
   void leaveGroup(uint8_t conversation);
   // Takes a member out (a lost unit): the rest get a new key.
@@ -67,10 +67,10 @@ class Node {
   void startSos();
   void cancelSos();
   bool sosActive() const { return sosActive_; }
-  // Who has my active SOS: bit per member (bit n-1), and SERVER_BIT for the server.
-  static constexpr uint8_t SERVER_BIT = 0x80;
-  uint8_t sosReceivedBy() const { return sosReceivedBy_; }
-  uint8_t sosSeenBy() const { return sosSeenBy_; }
+  // Who has my active SOS, and who has seen it; and whether the server has it.
+  Members sosReceivedBy() const { return sosReceivedBy_; }
+  Members sosSeenBy() const { return sosSeenBy_; }
+  bool sosOnServer() const { return sosOnServer_; }
   // The user saw another member's SOS alert: tell them.
   void acknowledgeSos(uint8_t from);
   // A member whose SOS is active and not yet shown on screen, or 0.
@@ -101,6 +101,7 @@ class Node {
   uint32_t changes() const { return changes_; }
   // True while packets wait to go out or Wi-Fi is on: do not sleep yet.
   bool busy() const;
+  size_t outboxSize() const { return outbox_.size(); }
   // Milliseconds until the node next has something to do (for light sleep).
   uint32_t msUntilWork() const;
 
@@ -120,8 +121,11 @@ class Node {
 
   Group group_;
   ChatGroups groups_;
+  SenderKeys senders_;
   std::vector<Fetch> fetches_;  // missing messages to ask the server for over Wi-Fi
   std::vector<uint32_t> controlCounters_;  // my invitations and notices this session
+  uint32_t senderKeyCounters_[MAX_MEMBERS] = {};  // my sender key DM to each member, until confirmed
+  Members senderKeyConfirmed_ = 0;                 // who has my current sender key
   MessageStore store_;
   LoraParams params_;
   AirtimeBudget budget_;
@@ -146,8 +150,9 @@ class Node {
   uint32_t nextSosMs_ = 0;
   uint8_t newSos_ = 0;
   std::vector<uint32_t> sosCounters_;  // my SOS packets of the current alarm
-  uint8_t sosReceivedBy_ = 0;
-  uint8_t sosSeenBy_ = 0;
+  Members sosReceivedBy_ = 0;
+  Members sosSeenBy_ = 0;
+  bool sosOnServer_ = false;
 
   uint32_t nextCounter();
   Header header(Type type, uint8_t recipient);
@@ -164,7 +169,7 @@ class Node {
   const uint8_t* sendingKey(uint8_t conversation, uint8_t* keyNumber = nullptr) const;
   uint8_t recipientOf(uint8_t conversation) const;
   // The conversation of a packet, or -1 for a group this unit is not in.
-  int conversationOf(uint8_t sender, uint8_t recipient) const;
+  int conversationOf(const Header& h) const;
   void handleFetch(const Header& h, const uint8_t* body, size_t len);
   void requestFetch(uint8_t sender, uint32_t after, uint32_t before);
   void fillGap(uint8_t conversation, const ChatMessage& late);
@@ -176,8 +181,15 @@ class Node {
   void resendUnconfirmed();
   void rotate(int slot);
   void takeOut(int slot, uint8_t member);
-  void openWaiting(uint8_t recipient);
+  void openWaiting(uint16_t groupId);
+  void openWaitingFrom(uint8_t sender);
+  void loadKeyConfirmations();
+  void saveKeyConfirmations();
   void dropMissingMembers();
+  void handleRoster(const Header& h, const uint8_t* cipher, size_t len);
+  // After a new roster: newcomers get my sender key, those gone leave the groups.
+  void rosterChanged(Members before);
+  void sendSenderKey(uint8_t to);
   uint8_t conversationOfMine(uint32_t counter);
   void sendOutbox();
   void retryPending();

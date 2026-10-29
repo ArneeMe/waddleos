@@ -9,17 +9,17 @@ import struct
 from dataclasses import dataclass, field
 
 MAGIC = 0x57
-VERSION = 2  # 2: the 12-byte header (key number), groups made on units, FETCH
+VERSION = 3  # 3: up to 32 members, a signed roster, 2-byte group ids
 MAX_PACKET = 200
-HEADER_SIZE = 12
+HEADER_SIZE = 14
 DEFAULT_HOPS = 3
 SERVER = 0
-GROUP = 0xFF
-MEMBERS = (1, 2, 3, 4)
-GROUP_FLAG = 0x80  # | a group's id: creator (bits 4-6) and their count (bits 0-3)
+GROUP = 0xFF     # everyone
+GROUP_TO = 0xFE  # a group made on a unit; its id is in the header
+MEMBERS = tuple(range(1, 33))
 
-MSG, ACK, SYNC_REQ, POS, SOS, FETCH = 1, 2, 3, 4, 5, 6
-TYPE_NAMES = {MSG: "MSG", ACK: "ACK", SYNC_REQ: "SYNC_REQ", POS: "POS", SOS: "SOS", FETCH: "FETCH"}
+MSG, ACK, SYNC_REQ, POS, SOS, FETCH, ROSTER = 1, 2, 3, 4, 5, 6, 7
+TYPE_NAMES = {MSG: "MSG", ACK: "ACK", SYNC_REQ: "SYNC_REQ", POS: "POS", SOS: "SOS", FETCH: "FETCH", ROSTER: "ROSTER"}
 
 # SYNC_REQ flags: how the unit is set up (for the status page).
 SYNC_ON_TRIP, SYNC_SOS, SYNC_CHECK_SHIFT = 1, 2, 2
@@ -44,7 +44,8 @@ class Header:
     fragmented: bool = False
     piece_index: int = 0
     piece_count: int = 1
-    key: int = 0  # a group's key number, 0 for everything else
+    group_id: int = 0  # recipient GROUP_TO: creator * 256 + their count
+    key: int = 0       # which of the sender's or the group's keys sealed it
 
     def pack(self):
         return bytes([
@@ -54,12 +55,12 @@ class Header:
             (self.hops & 0x0F) | (0x10 if self.fragmented else 0),
             self.sender,
             self.recipient,
-        ]) + struct.pack("<I", self.counter) + bytes([(self.piece_index << 4) | self.piece_count, self.key])
+        ]) + struct.pack("<IBHB", self.counter, (self.piece_index << 4) | self.piece_count, self.group_id, self.key)
 
     def aad(self):
-        """Header bytes 0-2, 4-9 and 11: authenticated, not encrypted."""
+        """Header bytes 0-2, 4-9 and 11-13: authenticated, not encrypted."""
         raw = self.pack()
-        return raw[0:3] + raw[4:10] + raw[11:12]
+        return raw[0:3] + raw[4:10] + raw[11:14]
 
     def nonce(self):
         return bytes([self.sender, self.recipient]) + struct.pack("<I", self.counter) + bytes([self.type]) + bytes(5)
@@ -71,13 +72,13 @@ def is_member(n):
 
 def is_group(recipient):
     """A group made on a unit (who is in it, only its members know)."""
-    return recipient != GROUP and bool(recipient & GROUP_FLAG) and is_member((recipient >> 4) & 7)
+    return recipient == GROUP_TO
 
 
 def can_read(member, sender, recipient):
     """Whether member may be given a packet sender sent to recipient. Groups go
     to everyone; only those with the key can open them."""
-    return recipient == GROUP or member in (sender, recipient) or is_group(recipient)
+    return recipient in (GROUP, GROUP_TO) or member in (sender, recipient)
 
 
 def parse_header(raw):
@@ -98,14 +99,17 @@ def parse_header(raw):
         counter=struct.unpack_from("<I", raw, 6)[0],
         piece_index=raw[10] >> 4,
         piece_count=raw[10] & 0x0F,
-        key=raw[11],
+        group_id=struct.unpack_from("<H", raw, 11)[0],
+        key=raw[13],
     )
     if h.piece_count == 0 or h.piece_index >= h.piece_count or (not h.fragmented and h.piece_count != 1):
         raise BadPacket("pieces")
     if h.sender != SERVER and not is_member(h.sender):
         raise BadPacket("sender %d" % h.sender)
-    if h.recipient not in (GROUP, SERVER) and not is_member(h.recipient) and not is_group(h.recipient):
+    if h.recipient not in (GROUP, GROUP_TO, SERVER) and not is_member(h.recipient):
         raise BadPacket("recipient %d" % h.recipient)
+    if (h.recipient == GROUP_TO) != (h.group_id != 0) or (h.group_id and not is_member(h.group_id >> 8)):
+        raise BadPacket("group id %d" % h.group_id)
     return h
 
 
@@ -128,24 +132,31 @@ def parse_ack(body):
 
 @dataclass
 class SyncReq:
-    last_counter: dict = field(default_factory=lambda: {m: 0 for m in MEMBERS})
+    last_counter: dict = field(default_factory=dict)  # member -> last MSG counter it has (0 when missing)
     battery: int = 0
     build: int = 0
     flags: int = 0
+    roster_version: int = 0
 
     def pack(self):
-        counters = [self.last_counter.get(m, 0) for m in MEMBERS]
-        return struct.pack("<%dIBBB" % len(MEMBERS), *counters, self.battery, self.build, self.flags)
-
-
-SYNC_REQ_SIZE = 4 * len(MEMBERS) + 3
+        out = struct.pack("<BBBH", self.battery, self.build, self.flags, self.roster_version)
+        for m in MEMBERS:
+            if self.last_counter.get(m):
+                out += struct.pack("<BI", m, self.last_counter[m])
+        return out
 
 
 def parse_sync_req(body):
-    if len(body) != SYNC_REQ_SIZE:
+    if len(body) < 5 or (len(body) - 5) % 5 or len(body) > 5 + 5 * len(MEMBERS):
         raise BadPacket("sync body")
-    *counters, battery, build, flags = struct.unpack("<%dIBBB" % len(MEMBERS), body)
-    return SyncReq(dict(zip(MEMBERS, counters)), battery, build, flags)
+    battery, build, flags, roster = struct.unpack_from("<BBBH", body)
+    last = {m: 0 for m in MEMBERS}
+    for i in range(5, len(body), 5):
+        member, counter = struct.unpack_from("<BI", body, i)
+        if not is_member(member):
+            raise BadPacket("sync member %d" % member)
+        last[member] = counter
+    return SyncReq(last, battery, build, flags, roster)
 
 
 @dataclass

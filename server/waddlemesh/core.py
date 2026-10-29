@@ -1,10 +1,13 @@
 """What the server does with a packet, whichever way it came (LoRa or Wi-Fi)."""
 
 import collections
+import hashlib
+import hmac
 import logging
 import time
 
 from . import packet as P
+from . import roster as R
 
 log = logging.getLogger("waddlemesh")
 
@@ -15,16 +18,43 @@ SOS_SHOWN_S = 300
 
 
 class Server:
-    def __init__(self, store, group, names=None):
+    def __init__(self, store, network, admin_key=None):
         self.store = store
-        self.group = group
-        self.names = names or {}  # member -> name, for the status page only
+        self.network = network
+        self.admin_key = admin_key  # Ed25519 public key that signs the roster
+        self._roster = None  # (version, parsed roster), read again when a newer one is set
         self.started = time.time()
         self.radio = None  # set by the gateway link: radio.send(raw)
         self.relayed = collections.deque(maxlen=256)  # packets already passed on
 
+    def roster(self):
+        """The newest roster (set by the admin's tool with set-roster), or None."""
+        version = self.store.roster_version()
+        if not version:
+            return None
+        if not self._roster or self._roster[0] != version:
+            _, signed, _ = self.store.roster()
+            try:
+                self._roster = (version, R.parse(signed, self.admin_key))
+            except R.BadRoster as e:
+                log.error("stored roster %d is no good: %s", version, e)
+                return None
+        return self._roster[1]
+
+    def member_for_token(self, token):
+        """The member whose roster token hash matches token (its hex text), or None."""
+        r = self.roster()
+        if not r or not token:
+            return None
+        digest = hashlib.sha256(token.encode()).digest()[:16]
+        found = None
+        for m in r.members:
+            if hmac.compare_digest(digest, m.token_hash):
+                found = m.number
+        return found
+
     def _ack(self, member, counter, state, to):
-        h = P.Header(type=P.ACK, group=self.group, sender=P.SERVER, recipient=to,
+        h = P.Header(type=P.ACK, group=self.network, sender=P.SERVER, recipient=to,
                      counter=self.store.next_counter())
         return h.pack() + P.Ack(member, counter, state).pack()
 
@@ -41,7 +71,7 @@ class Server:
         except P.BadPacket as e:
             log.debug("dropped packet: %s", e)
             return []
-        if h.group != self.group or h.sender == P.SERVER:
+        if h.group != self.network or h.sender == P.SERVER:
             return []
         if handed_over:
             if h.type in (P.MSG, P.POS, P.SOS):
@@ -110,9 +140,16 @@ class Server:
         self.radio.send(bytes(out))
 
     def sync_answer(self, member, req, via):
-        """Everything member is missing: messages, then positions and ACKs."""
+        """Everything member is missing: the newest roster when its own is older,
+        then messages, positions and ACKs. Over LoRa the roster always goes whole
+        (up to 13 pieces with 32 members), and first, so it is never cut off."""
         limit = LORA_SYNC_LIMIT if via == "lora" else None
         out = []
+        stored = self.store.roster()
+        if stored and req.roster_version < stored[0]:
+            out += stored[2]
+            if limit:
+                limit = max(limit, len(out))
         for sender in P.MEMBERS:
             if sender == member:
                 continue
@@ -130,11 +167,13 @@ class Server:
         """Every unit set up or heard, for the status page (no keys, no content)."""
         now = int(time.time())
         heard = {u["member"]: u for u in self.store.units()}
+        r = self.roster()
+        names = {m.number: m.name for m in r.members} if r else {}
         units = []
-        for member in sorted(set(heard) | set(self.names)):
+        for member in sorted(set(heard) | set(names)):
             u = heard.get(member) or {"member": member, "last_seen": None, "via": None, "battery": None,
                                       "build": None, "rssi": None, "snr": None, "flags": None, "sos_at": None}
-            u["name"] = self.names.get(member) or "Enhet %d" % member
+            u["name"] = names.get(member) or "Enhet %d" % member
             u["ago_s"] = now - u["last_seen"] if u["last_seen"] else None
             flags = u["flags"]
             u["on_trip"] = None if flags is None else bool(flags & P.SYNC_ON_TRIP)
@@ -145,4 +184,4 @@ class Server:
             units.append(u)
         counts = self.store.counts()
         return {"units": units, "packets": {P.TYPE_NAMES[t]: n for t, n in sorted(counts.items())},
-                "uptime_s": int(time.time() - self.started)}
+                "roster": r.version if r else None, "uptime_s": int(time.time() - self.started)}

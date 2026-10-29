@@ -17,7 +17,6 @@ namespace mesh::web {
 
 namespace {
 bool groupChanged = false;
-constexpr size_t MAX_GROUP_JSON = 8192;  // four members, three small groups and a certificate
 }  // namespace
 
 bool takeGroupChanged() {
@@ -26,26 +25,46 @@ bool takeGroupChanged() {
   return changed;
 }
 
+namespace {
+
+// A body sealed by the tool for this unit: {"tool": its one-time public key,
+// "box": hex, sealed with the setup key, nonce byte 2}. Empty on failure.
+std::string openFromTool(const String& body) {
+  JsonDocument sealed;
+  uint8_t tool[KEY_SIZE];
+  const char* boxHex = nullptr;
+  if (body.length() == 0 || body.length() > 4096 || deserializeJson(sealed, body.c_str(), body.length()) ||
+      !fromHex(sealed["tool"] | "", tool, KEY_SIZE) || !(boxHex = sealed["box"] | nullptr)) {
+    return "";
+  }
+  const size_t boxLen = strlen(boxHex) / 2;
+  if (boxLen <= TAG_SIZE) return "";
+  std::vector<uint8_t> box(boxLen);
+  std::string plain(boxLen - TAG_SIZE, '\0');
+  uint8_t key[KEY_SIZE];
+  const Identity& id = identity();
+  setupKey(id.secret, id.publicKey, tool, key);
+  if (!fromHex(boxHex, box.data(), boxLen) ||
+      !setupOpen(key, 2, box.data(), boxLen, reinterpret_cast<uint8_t*>(&plain[0]))) {
+    return "";
+  }
+  return plain;
+}
+
+}  // namespace
+
 void registerRoutes(WebServer& server) {
   server.on("/api/mesh/identity", HTTP_GET, [&server] {
     const Identity& id = identity();
     const Group& group = Node::get().group();
     JsonDocument doc;
     doc["publicKey"] = toHex(id.publicKey, KEY_SIZE);
-    // The sender key only sealed for the asking tool (MeshCrypto.h, "Setup"),
-    // never in the clear on the Wi-Fi.
-    uint8_t tool[KEY_SIZE];
-    if (fromHex(server.arg("tool").c_str(), tool, KEY_SIZE)) {
-      uint8_t key[KEY_SIZE], box[KEY_SIZE + TAG_SIZE];
-      setupKey(id.secret, id.publicKey, tool, key);
-      setupSeal(key, 1, id.senderKey, KEY_SIZE, box);
-      doc["senderKeyBox"] = toHex(box, sizeof(box));
-    }
     doc["configured"] = group.configured;
     if (group.configured) {
-      doc["group"] = group.id;
+      doc["network"] = group.id;
       doc["me"] = group.me;
       doc["name"] = group.name(group.me);
+      doc["roster"] = group.rosterVersion;
     }
     // For `waddle mesh new-unit` and `waddle mesh check`: is the hardware alive?
     doc["radio"] = radio::isUp();
@@ -57,45 +76,40 @@ void registerRoutes(WebServer& server) {
     server.send(200, "application/json", out);
   });
 
-  // `waddle mesh reset-keys`: new keys, no group. Used after a unit is lost,
-  // then everyone is set up again without it.
-  server.on("/api/mesh/reset-keys", HTTP_POST, [&server] {
-    resetIdentity();
-    groupChanged = true;
-    LOG_INF("MESH", "Made new keys; waiting for setup");
-    server.send(200, "text/plain", "OK");
-  });
-
-  server.on("/api/mesh/group", HTTP_POST, [&server] {
-    const String& body = server.arg("plain");
-    if (body.length() == 0 || body.length() > 2 * MAX_GROUP_JSON + 200) {
-      server.send(400, "text/plain", "tom eller for stor");
-      return;
-    }
-    // {"tool": public key, "box": the group, sealed with the setup key}.
-    JsonDocument sealed;
-    uint8_t tool[KEY_SIZE];
-    const char* boxHex = nullptr;
-    if (deserializeJson(sealed, body.c_str(), body.length()) ||
-        !fromHex(sealed["tool"] | "", tool, KEY_SIZE) || !(boxHex = sealed["box"] | nullptr)) {
+  // `waddle mesh join`, step 1: the invitation (sealed by the tool) in, the
+  // sealed request for the admin out (protocol/PROTOCOL.md, "Joining").
+  server.on("/api/mesh/join", HTTP_POST, [&server] {
+    const std::string plain = openFromTool(server.arg("plain"));
+    JsonDocument in;
+    if (plain.empty() || deserializeJson(in, plain)) {
       server.send(400, "text/plain", "ikke forseglet (gammelt waddle-verktøy?)");
       return;
     }
-    const size_t boxLen = strlen(boxHex) / 2;
-    if (boxLen <= TAG_SIZE || boxLen > MAX_GROUP_JSON + TAG_SIZE) {
-      server.send(400, "text/plain", "feil lengde");
+    std::string box;
+    char code[8];
+    if (const char* err = startJoin(in["invite"] | "", in["name"] | "", box, code)) {
+      server.send(400, "text/plain", err);
       return;
     }
-    std::vector<uint8_t> box(boxLen), json(boxLen - TAG_SIZE);
-    uint8_t key[KEY_SIZE];
-    const Identity& id = identity();
-    setupKey(id.secret, id.publicKey, tool, key);
-    if (!fromHex(boxHex, box.data(), boxLen) || !setupOpen(key, 2, box.data(), boxLen, json.data())) {
-      server.send(400, "text/plain", "kunne ikke åpne (endret underveis?)");
+    JsonDocument out;
+    out["from"] = toHex(identity().publicKey, KEY_SIZE);
+    out["box"] = box;
+    out["code"] = code;
+    String text;
+    serializeJson(out, text);
+    server.send(200, "application/json", text);
+  });
+
+  // Step 2: the admin's welcome (sealed with the join key) in; the unit starts.
+  server.on("/api/mesh/welcome", HTTP_POST, [&server] {
+    JsonDocument in;
+    const String& body = server.arg("plain");
+    if (body.length() == 0 || body.length() > 20000 || deserializeJson(in, body.c_str(), body.length())) {
+      server.send(400, "text/plain", "ikke JSON");
       return;
     }
-    if (const char* err = saveGroupJson(reinterpret_cast<const char*>(json.data()), json.size())) {
-      LOG_ERR("MESH", "group rejected: %s", err);
+    if (const char* err = finishJoin(in["box"] | "")) {
+      LOG_ERR("MESH", "welcome refused: %s", err);
       server.send(400, "text/plain", err);
       return;
     }

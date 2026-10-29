@@ -54,7 +54,7 @@ sources=(
   src/services/mesh/MeshNode.cpp src/services/mesh/MessageStore.cpp src/services/mesh/MeshConfig.cpp src/services/mesh/MeshGroups.cpp
   lib/WaddleMesh/src/*.cpp
 )
-csources=(lib/monocypher/src/monocypher.c lib/MiniBidi/minibidi.c lib/uzlib/src/*.c)
+csources=(lib/monocypher/src/monocypher.c lib/monocypher/src/monocypher-ed25519.c lib/MiniBidi/minibidi.c lib/uzlib/src/*.c)
 
 # Every file at once, then link. time() is wrapped so the clock is the program's.
 objs=()

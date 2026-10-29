@@ -56,18 +56,27 @@ MessagesActivity::MessagesActivity(GfxRenderer& renderer, MappedInputManager& ma
 
 void MessagesActivity::onEnter() {
   Activity::onEnter();
+  // "Alle" and "+ Ny gruppe" first; then groups and people, the most recent
+  // conversation first, and those with no messages yet by name.
   conversations.clear();
   conversations.push_back(mesh::CONV_GROUP);
+  if (node().configured() && mesh::memberCount(everyone()) >= 3) conversations.push_back(NEW_GROUP);
+  std::vector<uint8_t> rest;
   const auto& group = node().group();
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
-    if (n != group.me && group.member(n)->present) conversations.push_back(n);
+    if (n != group.me && group.member(n)->present) rest.push_back(n);
   }
   // Groups I am in, and those I left that still have messages to read.
   for (uint8_t c = mesh::CONV_GROUPS; c < mesh::CONVERSATIONS; c++) {
     const mesh::ChatGroup* g = chatGroup(c);
-    if (g->id && (!g->left || node().store().summary(c).count)) conversations.push_back(c);
+    if (g->id && (!g->left || node().store().summary(c).count)) rest.push_back(c);
   }
-  if (node().configured() && mesh::memberCount(everyone()) >= 3) conversations.push_back(NEW_GROUP);
+  std::stable_sort(rest.begin(), rest.end(), [](const uint8_t a, const uint8_t b) {
+    const uint32_t ta = node().store().summary(a).lastTime, tb = node().store().summary(b).lastTime;
+    if (ta != tb) return ta > tb;
+    return meshui::conversationName(a) < meshui::conversationName(b);
+  });
+  conversations.insert(conversations.end(), rest.begin(), rest.end());
   requestUpdate();
 }
 
@@ -131,7 +140,7 @@ void MessagesActivity::render(RenderLock&&) {
   if (!node().configured()) {
     const auto lines = renderer.wrappedText(UI_12_FONT_ID,
                                             "Enheten er ikke satt opp ennå. Trykk her for å starte "
-                                            "Filoverføring, og kjør \"waddle mesh setup\" på datamaskinen.",
+                                            "Filoverføring, og kjør \"waddle mesh join\" med invitasjonen på datamaskinen.",
                                             width - 2 * SIDE, 6);
     for (const auto& line : lines) {
       renderer.drawText(UI_12_FONT_ID, SIDE, y + 20, line.c_str());
@@ -352,6 +361,9 @@ void NewGroupActivity::onEnter() {
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
     if (n != group.me && group.member(n)->present) members.push_back(n);
   }
+  std::stable_sort(members.begin(), members.end(), [&group](const uint8_t a, const uint8_t b) {
+    return std::string(group.name(a)) < std::string(group.name(b));
+  });
   requestUpdate();
 }
 
@@ -362,7 +374,7 @@ void NewGroupActivity::toggle(const int index) {
 }
 
 void NewGroupActivity::finish() {
-  const uint8_t bits = chosen | mesh::memberBit(node().group().me);
+  const mesh::Members bits = chosen | mesh::memberBit(node().group().me);
   const int people = mesh::memberCount(bits);
   if (people < 2) {
     problem = "Velg minst én";
@@ -430,8 +442,20 @@ void NewGroupActivity::loop() {
       finish();
       return;
     }
+    if (upBox.h && upBox.contains(x, y)) {
+      focus = std::max(0, first - 1);
+      first = std::max(0, first - 5);
+      requestUpdate();
+      return;
+    }
+    if (downBox.h && downBox.contains(x, y)) {
+      first += 5;
+      focus = std::min<int>(first, int(members.size()) - 1);
+      requestUpdate();
+      return;
+    }
     for (size_t i = 0; i < rows.size(); i++) {
-      if (rows[i].contains(x, y)) {
+      if (rows[i].h && rows[i].contains(x, y)) {
         toggle(static_cast<int>(i));
         return;
       }
@@ -441,14 +465,36 @@ void NewGroupActivity::loop() {
 
 void NewGroupActivity::render(RenderLock&&) {
   const int width = renderer.getScreenWidth();
+  const int height = renderer.getScreenHeight();
   renderer.clearScreen();
   int y = meshui::drawTitle(renderer, "Ny gruppe");
   renderer.drawText(UI_10_FONT_ID, SIDE, y + 8, "Hvem skal være med? Du er alltid med.");
   y += 50;
+  // As many as fit above the button, scrolled so the focused one shows;
+  // "Vis forrige" and "Vis flere" take a row each when there are more.
+  doneBox = {SIDE, height - 140, width - 2 * SIDE, 70};
+  const int n = static_cast<int>(members.size());
+  const int fit = std::max(1, (doneBox.y - 30 - y) / ROW_H);
+  if (focus < n) {
+    if (focus < first) first = focus;
+    while (focus >= first + fit - (first > 0) - (first + fit < n)) first++;
+  }
+  first = std::max(0, std::min(first, std::max(0, n - fit + 1)));
+  const bool up = first > 0;
+  const int shown = std::min(n - first, fit - (up ? 1 : 0) - (first + fit - (up ? 1 : 0) < n ? 1 : 0));
+  const bool down = first + shown < n;
   rows.assign(members.size(), Box{});
-  for (size_t i = 0; i < members.size(); i++) {
+  upBox = downBox = {};
+  auto marker = [&](Box& b, const char* label) {
+    b = {0, y, width, ROW_H};
+    renderer.drawCenteredText(UI_10_FONT_ID, y + 28, label, true, EpdFontFamily::BOLD);
+    y += ROW_H;
+    renderer.drawLine(SIDE, y, width - SIDE, y);
+  };
+  if (up) marker(upBox, "Vis forrige");
+  for (int i = first; i < first + shown; i++) {
     rows[i] = {0, y, width, ROW_H};
-    if (static_cast<int>(i) == focus) renderer.fillRect(0, y + 1, 6, ROW_H - 2);
+    if (i == focus) renderer.fillRect(0, y + 1, 6, ROW_H - 2);
     const bool on = chosen & mesh::memberBit(members[i]);
     const int box = 40;
     const int bx = SIDE, by = y + (ROW_H - box) / 2;
@@ -464,12 +510,13 @@ void NewGroupActivity::render(RenderLock&&) {
     y += ROW_H;
     renderer.drawLine(SIDE, y, width - SIDE, y);
   }
-  y += 30;
-  doneBox = {SIDE, y, width - 2 * SIDE, 70};
-  const bool focused = focus == static_cast<int>(members.size());
+  if (down) marker(downBox, "Vis flere");
+  const bool focused = focus == n;
   renderer.fillRoundedRect(doneBox.x, doneBox.y, doneBox.w, doneBox.h, 14, Color::Black);
   if (focused) renderer.drawRoundedRect(doneBox.x + 6, doneBox.y + 6, doneBox.w - 12, doneBox.h - 12, 2, 10, false);
-  const char* label = "Skriv til dem";
+  char label[40];
+  const int count = mesh::memberCount(chosen);
+  snprintf(label, sizeof(label), count ? "Skriv til dem (%d)" : "Skriv til dem", count);
   const int lw = renderer.getTextWidth(UI_12_FONT_ID, label, EpdFontFamily::BOLD);
   renderer.drawText(UI_12_FONT_ID, doneBox.x + (doneBox.w - lw) / 2, doneBox.y + 20, label, false, EpdFontFamily::BOLD);
   if (problem) renderer.drawCenteredText(UI_10_FONT_ID, doneBox.y + doneBox.h + 24, problem);
@@ -510,6 +557,12 @@ void GroupInfoActivity::loop() {
     requestUpdate();
     return;
   }
+  if (moreBox.h && moreBox.contains(x, y)) {
+    page++;
+    armed = 0;
+    requestUpdate();
+    return;
+  }
   if (leaveBox.contains(x, y)) {
     if (armed == LEAVE) {
       node().leaveGroup(conversation);
@@ -534,8 +587,17 @@ void GroupInfoActivity::render(RenderLock&&) {
   renderer.drawText(SMALL_FONT_ID, SIDE, y + 8, "MEDLEMMER", true, EpdFontFamily::BOLD);
   y += 40;
   removeBoxes.clear();
+  // A page at a time when the group is large; "Vis flere" turns the page.
+  std::vector<uint8_t> people;
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
-    if (!(g.members & mesh::memberBit(n))) continue;
+    if (g.members & mesh::memberBit(n)) people.push_back(n);
+  }
+  const int perPage = 7;
+  const int pages = (static_cast<int>(people.size()) + perPage - 1) / perPage;
+  if (page >= pages) page = 0;
+  moreBox = {};
+  for (int i = page * perPage; i < std::min<int>(int(people.size()), (page + 1) * perPage); i++) {
+    const uint8_t n = people[i];
     const std::string who = n == group.me ? std::string(group.name(n)) + " (deg)" : group.name(n);
     renderer.drawText(UI_12_FONT_ID, SIDE, y + 22, who.c_str(), true, EpdFontFamily::BOLD);
     if (n != group.me && !g.left) {
@@ -553,6 +615,13 @@ void GroupInfoActivity::render(RenderLock&&) {
     }
     y += ROW_H - 8;
     renderer.drawLine(SIDE, y, width - SIDE, y);
+  }
+  if (pages > 1) {
+    char more[40];
+    snprintf(more, sizeof(more), "Vis flere (%d av %d)", page + 1, pages);
+    moreBox = {0, y, width, 60};
+    renderer.drawCenteredText(UI_10_FONT_ID, y + 18, more, true, EpdFontFamily::BOLD);
+    y += 60;
   }
   y += 30;
   if (g.left) {

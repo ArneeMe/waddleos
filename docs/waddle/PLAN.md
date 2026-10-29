@@ -43,7 +43,7 @@ What is done and what is next. How the system fits together:
 ## Mesh unit
 
 WaddleOS grows a second device: a LilyGO T5 E-Paper S3 Pro (868 MHz LoRa,
-GPS) as an off-grid messenger for up to four people. Full spec: "Off-Grid Mesh
+GPS) as an off-grid messenger for a network of up to 32 people. Full spec: "Off-Grid Mesh
 Messenger – Software Spec" (Claude Docs,
 https://claude.ai/artifact/VugwyP8RmFDMwqKaB2qPCX).
 
@@ -61,7 +61,9 @@ Decided:
   back to the one before by itself.
 - Mostly a backup for when other ways to talk are gone: "Hjemme" it checks for
   messages once a day; "På tur" every hour, with GPS and position sharing.
-- Up to four people (Arne and three), plus small groups of three.
+- A network of up to 32 people, which Arne lets in (invite link by Signal,
+  approval on his computer); groups made on the units. People in a group can
+  pose as each other: accepted, there is no room for a signature per message.
 
 Phases:
 
@@ -73,17 +75,26 @@ Phases:
 3. After the first tests: fix what the devices show, measure battery days.
 
 Idea: **the phone as a second device for the same person.** An Android app
-that is "Arne" on the mesh too, through the Pi: the phone talks to
-`POST /api/packets` over the internet exactly as a unit does over Wi-Fi, and the
-gateway sends what it writes out over LoRa. The Pi still reads nothing; the app
-does the encryption. What it needs:
-- The phone gets a copy of its unit's keys at setup (`waddle mesh setup`, over
-  the home Wi-Fi), so DMs and group messages for Arne open on both.
-- Its own counter range (top bit set), so the unit and the phone never reuse a
-  message id; the "previous message" chain is kept per device.
-- Its own server token, so a lost phone can be shut out on the Pi alone.
-- The app: write and read the conversations, sync on open and now and then.
-  The server needs almost nothing new.
+that is the same member as their T5, through the Pi. Everyone still starts with
+a T5. The phone copies the T5's identity once at home (code check, as when
+joining); after that both read the same mailbox on the Pi, and every key change
+a device makes is also sent to itself. The device is part of the sender byte, so
+the two never reuse a message id. Only the T5 makes new keys. A lost phone or T5
+means leaving the roster and joining again with a new identity under the same
+number; old keys are kept for reading, so history comes back from the Pi. Rules
+and the cases it must handle (dropped messages, groups, new or lost phone or
+T5): [PHONE.md](PHONE.md).
+
+Next on the unit, before the phone: **seal the message files on the SD card.**
+`/.mesh/chat/` holds the conversations as readable text and `/.mesh/packets/`
+the packets as received; anyone who takes the card out reads the history
+without the T5. Seal them like the key files (`saveSealed`), and keep the old
+storage keys (PHONE.md, R11) so history survives a new identity.
+
+Before calling it done: **a screen-by-screen look** (the units, the reader and
+the Pi's status page) by Arne, to check that everything reads well for a person,
+once the technical work has settled. The screen simulator
+(`bash test/screens/run.sh`) gives the T5 screens without a device.
 
 Later, maybe: a small piezo buzzer on the T5's free QWIIC port for a sound on
 SOS or a new message (the board has no speaker or vibration motor).

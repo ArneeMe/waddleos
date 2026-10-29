@@ -8,6 +8,8 @@
 // every screen shows what it would show on the device. The clock is fixed at
 // tuesday 27 October 2026 14:32 (Europe/Oslo).
 
+#include <MeshRoster.h>
+#include <monocypher.h>
 #include <EpdFontFamily.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
@@ -200,10 +202,9 @@ void message(const uint8_t from, const uint8_t conversation, const uint32_t when
   h.group = GROUP_ID;
   h.hops = hops;
   h.sender = from;
-  h.recipient = key == pair  ? ARNE  // a DM is to me
-                : groupKey   ? uint8_t(mesh::GROUP_FLAG | node().groups().at(conversation - mesh::CONV_GROUPS).id)
-                             : mesh::GROUP;
-  h.key = groupKey ? groupKey->number : 0;
+  h.recipient = key == pair ? ARNE : groupKey ? mesh::GROUP_TO : mesh::GROUP;  // a DM is to me
+  if (groupKey) h.groupId = node().groups().at(conversation - mesh::CONV_GROUPS).id;
+  h.key = groupKey ? groupKey->number : key == pair ? 0 : 1;  // everyone: their sender key number 1
   h.counter = ++others[from].counter;
   std::string plain(mesh::MSG_PREFIX, '\0');
   mesh::put32(reinterpret_cast<uint8_t*>(&plain[0]), when);
@@ -238,6 +239,7 @@ void position(const uint8_t from, const uint32_t when, const double lat, const d
   h.hops = hops;
   h.sender = from;
   h.recipient = mesh::GROUP;
+  h.key = 1;
   h.counter = ++others[from].counter;
   mesh::Sealed sealed;
   mesh::seal(h, others[from].senderKey, plain, sizeof(plain), sealed);
@@ -248,7 +250,7 @@ void position(const uint8_t from, const uint32_t when, const double lat, const d
 // A sync request heard straight from a member's radio (tells their battery).
 void syncRequest(const uint8_t from, const uint32_t when, const uint8_t battery) {
   at(when);
-  uint8_t raw[mesh::HEADER_SIZE + mesh::SYNC_REQ_SIZE];
+  uint8_t raw[mesh::HEADER_SIZE + mesh::SYNC_REQ_MAX];
   mesh::Header h;
   h.type = mesh::Type::SyncReq;
   h.group = GROUP_ID;
@@ -259,8 +261,7 @@ void syncRequest(const uint8_t from, const uint32_t when, const uint8_t battery)
   mesh::writeHeader(h, raw);
   mesh::SyncReq req;
   req.battery = battery;
-  mesh::writeSyncReq(req, raw + mesh::HEADER_SIZE);
-  hear(raw, sizeof(raw));
+  hear(raw, mesh::HEADER_SIZE + mesh::writeSyncReq(req, raw + mesh::HEADER_SIZE));
   deliver();
 }
 
@@ -292,20 +293,75 @@ uint32_t write(const uint8_t conversation, const uint32_t when, const std::strin
   return node().store().load(conversation, 1).back().counter;
 }
 
-// The group as `waddle mesh setup` gives it: four members. (An old setup on the
-// SD card, which the unit moves into flash.)
-void writeGroup() {
-  const auto& me = mesh::identity();
-  std::string json = "{\"group\":" + std::to_string(GROUP_ID) + ",\"me\":1,\"members\":[";
-  for (uint8_t n = 1; n <= 4; n++) {
-    const uint8_t* pub = n == ARNE ? me.publicKey : others[n].publicKey;
-    const uint8_t* sender = n == ARNE ? me.senderKey : others[n].senderKey;
-    json += std::string(n > 1 ? "," : "") + "{\"number\":" + std::to_string(n) + ",\"name\":\"" + NAMES[n] +
-            "\",\"publicKey\":\"" + mesh::toHex(pub, 32) + "\",\"senderKey\":\"" + mesh::toHex(sender, 32) + "\"}";
+// Joining as `waddle mesh join` and the admin's `approve` do it: an invitation,
+// a signed roster of the four, and the sealed welcome.
+std::string base64Url(const std::vector<uint8_t>& data) {
+  static const char* A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  std::string out;
+  uint32_t bits = 0;
+  int count = 0;
+  for (const uint8_t b : data) {
+    bits = (bits << 8) | b;
+    count += 8;
+    while (count >= 6) out += A[(bits >> (count -= 6)) & 63];
   }
-  json += "],\"server\":{\"url\":\"https://pi.example:8443\",\"token\":\"t1\",\"cert\":\"-----BEGIN CERTIFICATE-----\"}}";
-  std::filesystem::create_directories(sim::rootDir + "/.mesh");
-  std::ofstream(sim::rootDir + "/.mesh/group.json") << json;
+  if (count) out += A[(bits << (6 - count)) & 63];
+  return out;
+}
+
+void joinNetwork() {
+  uint8_t adminSeed[32], adminBoxSecret[32], adminBox[32], adminSign[32], password[16], networkKey[32];
+  for (int i = 0; i < 32; i++) {
+    adminSeed[i] = uint8_t(i + 1);
+    adminBoxSecret[i] = uint8_t(i * 3 + 2);
+    networkKey[i] = uint8_t(i * 5 + 3);
+  }
+  for (int i = 0; i < 16; i++) password[i] = uint8_t(i * 7);
+  mesh::publicKey(adminBoxSecret, adminBox);
+  mesh::signPublicKey(adminSeed, adminSign);
+  std::vector<uint8_t> invite = {GROUP_ID, 1, 2, 3, 4, 5, 6, 7, 8};
+  invite.insert(invite.end(), password, password + 16);
+  invite.insert(invite.end(), adminBox, adminBox + 32);
+  invite.insert(invite.end(), 32, 0);
+  const std::string url = "https://pi.example:8443";
+  invite.insert(invite.end(), url.begin(), url.end());
+  std::string box;
+  char code[8];
+  if (const char* err = mesh::startJoin("waddle://join/" + base64Url(invite), "Arne", box, code)) {
+    std::cerr << "join: " << err << "\n";
+    std::exit(1);
+  }
+  mesh::Roster roster;
+  roster.network = GROUP_ID;
+  roster.version = 1;
+  for (uint8_t n = 1; n <= 4; n++) {
+    mesh::RosterEntry e;
+    e.number = n;
+    e.admin = n == ARNE;
+    e.name = NAMES[n];
+    memcpy(e.publicKey, n == ARNE ? mesh::identity().publicKey : others[n].publicKey, 32);
+    roster.members.push_back(e);
+  }
+  const auto signedRoster = mesh::writeRoster(roster, adminSeed);
+  const std::string welcome = std::string("{\"network\":") + std::to_string(GROUP_ID) +
+                              ",\"me\":1,\"name\":\"Arne\",\"networkKey\":\"" + mesh::toHex(networkKey, 32) +
+                              "\",\"adminSign\":\"" + mesh::toHex(adminSign, 32) + "\",\"adminBox\":\"" +
+                              mesh::toHex(adminBox, 32) + "\",\"counterFloor\":0,\"server\":{\"url\":\"" + url +
+                              "\",\"token\":\"t1\",\"cert\":\"-----BEGIN CERTIFICATE-----\"},\"roster\":\"" +
+                              mesh::toHex(signedRoster.data(), signedRoster.size()) + "\"}";
+  // The admin's side of the join key.
+  uint8_t input[32 + 16 + 64], k[32];
+  crypto_x25519(input, adminBoxSecret, mesh::identity().publicKey);
+  memcpy(input + 32, password, 16);
+  memcpy(input + 48, mesh::identity().publicKey, 32);
+  memcpy(input + 80, adminBox, 32);
+  crypto_blake2b(k, 32, input, sizeof(input));
+  std::vector<uint8_t> sealed(welcome.size() + mesh::TAG_SIZE);
+  mesh::setupSeal(k, 4, reinterpret_cast<const uint8_t*>(welcome.data()), welcome.size(), sealed.data());
+  if (const char* err = mesh::finishJoin(mesh::toHex(sealed.data(), sealed.size()))) {
+    std::cerr << "welcome: " << err << "\n";
+    std::exit(1);
+  }
 }
 
 void setUpGroup() {
@@ -316,7 +372,16 @@ void setUpGroup() {
     }
     mesh::publicKey(others[n].secret, others[n].publicKey);
   }
-  writeGroup();
+  joinNetwork();
+}
+
+// The others' sender keys reach me as DMs, as after joining.
+void senderKeys(const uint32_t when) {
+  for (uint8_t n = 2; n <= 4; n++) {
+    std::string text{'\0', 'S', 1};
+    text.append(reinterpret_cast<const char*>(others[n].senderKey), mesh::KEY_SIZE);
+    message(n, n, when, text);
+  }
 }
 
 // --- The day so far ------------------------------------------------------------------
@@ -335,6 +400,7 @@ void story() {
 
   at(NOW - 26 * 3600);
   node().begin();
+  senderKeys(NOW - 26 * 3600 + MIN);
 
   // Yesterday evening, to everyone (relayed by Ola's unit).
   message(KARI, mesh::CONV_GROUP, NOW - 18 * 3600 - 17 * MIN, "Værmeldingen ser bra ut for i morgen!", 2);
