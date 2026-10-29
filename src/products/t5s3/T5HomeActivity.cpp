@@ -1,4 +1,5 @@
 #include "T5HomeActivity.h"
+#include "T5SettingsActivity.h"
 
 #include <GfxRenderer.h>
 #include <HalClock.h>
@@ -97,7 +98,7 @@ void T5HomeActivity::activate(const int target) {
       activityManager.goToLibrary();
       break;
     case T_SETTINGS:
-      activityManager.goToSettings();
+      activityManager.replaceActivity(std::make_unique<T5SettingsActivity>(renderer, mappedInput));
       break;
     case T_SOS:
       activityManager.replaceActivity(std::make_unique<SosActivity>(renderer, mappedInput));

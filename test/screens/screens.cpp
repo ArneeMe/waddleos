@@ -29,6 +29,7 @@
 
 #include "Stubs.h"
 #include "apps/map/MapActivity.h"
+#include "products/t5s3/T5SettingsActivity.h"
 #include "apps/messages/MeshUi.h"
 #include "apps/messages/MessagesActivity.h"
 #include "apps/sos/SosAlertActivity.h"
@@ -525,6 +526,10 @@ int main(int argc, char** argv) {
   {
     MapActivity map(renderer, mappedInputManager);
     show(map, "t5-kart");
+  }
+  {
+    T5SettingsActivity settings(renderer, mappedInputManager);
+    show(settings, "t5-innstillinger");
   }
   {
     // Kari, tapped on the map.
