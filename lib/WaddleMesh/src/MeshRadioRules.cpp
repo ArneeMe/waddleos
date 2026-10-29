@@ -19,23 +19,25 @@ uint32_t airtimeMs(const LoraParams& p, const size_t payloadBytes) {
 
 uint32_t AirtimeBudget::usedLastHour(const uint32_t nowMs) const {
   uint32_t used = 0;
-  for (int i = 0; i < ENTRIES; i++) {
-    if (ms_[i] && nowMs - at_[i] < 3600000UL) used += ms_[i];
+  for (int i = 0; i < MINUTES; i++) {
+    // Unsigned difference: right across millis() wrapping too.
+    if (ms_[i] && nowMs - start_[i] < uint32_t(MINUTES) * MINUTE) used += ms_[i];
   }
   return used;
 }
 
 bool AirtimeBudget::allows(const uint32_t airtime, const uint32_t nowMs) const {
-  // The ring forgets the oldest send once full; refuse rather than undercount.
-  const int slot = next_;
-  if (ms_[slot] && nowMs - at_[slot] < 3600000UL) return false;
   return usedLastHour(nowMs) + airtime <= budget_;
 }
 
 void AirtimeBudget::spend(const uint32_t airtime, const uint32_t nowMs) {
-  at_[next_] = nowMs;
-  ms_[next_] = airtime ? airtime : 1;
-  next_ = (next_ + 1) % ENTRIES;
+  const uint32_t start = nowMs - nowMs % MINUTE;
+  const int slot = int(nowMs / MINUTE % MINUTES);
+  if (start_[slot] != start) {
+    start_[slot] = start;
+    ms_[slot] = 0;
+  }
+  ms_[slot] += airtime ? airtime : 1;
 }
 
 uint64_t SeenPackets::key(const Header& h, const uint8_t* body, const size_t bodyLen) {

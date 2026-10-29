@@ -117,12 +117,16 @@ bool sleep() {
     if (digitalRead(T5S3_BOOT_BTN) == LOW || BoardT5S3::readButton()) break;
     // node.loop() starts a check that is due; sending wakes the radio by itself.
     mesh::radio::rearm();
-    // Handle what woke us, and finish sending before sleeping again.
+    // Handle what woke us, and finish sending before sleeping again (at most
+    // a minute: the buttons still work, and nothing keeps the unit up for good).
+    const uint32_t awakeSince = millis();
+    bool pressed = false;
     do {
       node.loop();
       delay(5);
-    } while (node.busy());
-    if (node.hasNewSos()) break;
+      pressed = digitalRead(T5S3_BOOT_BTN) == LOW || BoardT5S3::readButton();
+    } while (!pressed && node.busy() && millis() - awakeSince < 60000);
+    if (pressed || node.hasNewSos()) break;
     // New messages show on the sleep screen without waking the unit.
     const uint32_t unread = node.store().totalUnread();
     if (unread > shownUnread) drawUnreadOnSleepScreen(unread);

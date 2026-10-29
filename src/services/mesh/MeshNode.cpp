@@ -44,6 +44,9 @@ constexpr uint32_t SOS_REPEAT_MS = 60000;
 constexpr uint8_t LOW_BATTERY = 20;
 constexpr uint32_t CHECK_LISTEN_MS = 20000;  // how long a check listens for answers
 constexpr uint32_t CHECK_WIFI_GAP_MS = 10UL * 60 * 1000;
+constexpr uint32_t BUSY_SOON_MS = 5000;
+constexpr size_t SERVER_ANSWER_FULL = 200;  // the server's most packets per Wi-Fi answer
+constexpr uint32_t RESEND_GAP_MS = 30UL * 60 * 1000;  // unconfirmed keys and invitations  // packets due sooner keep the unit awake
 
 uint32_t randomBetween(const uint32_t lo, const uint32_t hi) { return lo + esp_random() % (hi - lo + 1); }
 
@@ -139,6 +142,8 @@ void Node::begin() {
 void Node::startCheck() {
   if (!group_.configured) return;
   const uint32_t now = millis();
+  // A radio that did not start (a loose cable, a cold start) gets another go.
+  if (!radio::isUp()) radio::begin(params_);
   radio::resume();
   requestSync();
   // At home the server is one Wi-Fi hop away; on a trip Wi-Fi is rarely there.
@@ -386,15 +391,30 @@ ServerState Node::serverState() const {
   return ServerState::Unknown;
 }
 
+bool Node::listeningForCheck() const { return checkUntilMs_ && int32_t(checkUntilMs_ - millis()) > 0; }
+
 bool Node::busy() const {
-  return !outbox_.empty() || wifi_ != WifiStep::Idle || int32_t(checkUntilMs_ - millis()) > 0;
+  if (wifi_ != WifiStep::Idle || listeningForCheck()) return true;
+  // Packets that can go out within a few seconds; later ones (a relay delay,
+  // a full airtime budget) and a radio that is down do not keep the unit awake.
+  if (!radio::isUp()) return false;
+  const uint32_t now = millis();
+  return std::any_of(outbox_.begin(), outbox_.end(), [&](const Outgoing& o) {
+    return int32_t(o.dueMs - now) <= int32_t(BUSY_SOON_MS) &&
+           budget_.allows(airtimeMs(params_, o.raw.size()), now);
+  });
 }
 
 uint32_t Node::msUntilWork() const {
   const uint32_t now = millis();
   uint32_t next = 10UL * 60 * 1000;
   auto consider = [&](const uint32_t at) { next = std::min(next, at > now ? at - now : 0); };
-  for (const auto& o : outbox_) consider(o.dueMs);
+  if (radio::isUp()) {
+    for (const auto& o : outbox_) {
+      const uint32_t airtime = airtimeMs(params_, o.raw.size());
+      consider(budget_.allows(airtime, now) ? o.dueMs : now + AirtimeBudget::msUntilRetry(now));
+    }
+  }
   for (const auto& p : pending_) {
     if (p.tries < 3) consider(p.nextTryMs);
   }
@@ -424,7 +444,7 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
   Header h;
   if (!readHeader(raw, len, h) || h.group != group_.id || h.sender == group_.me) return;
   const uint32_t now = millis();
-  if (int32_t(checkUntilMs_ - now) > 0 || viaWifi) lastCheckUnix_ = unixNow();
+  if (listeningForCheck() || viaWifi) lastCheckUnix_ = unixNow();
   if (h.sender == SERVER) {
     serverAtMs_ = now;
   } else if (!viaWifi && (h.hops == DEFAULT_HOPS || h.type == Type::SyncReq)) {
@@ -1004,12 +1024,24 @@ bool Node::confirmControl(const uint8_t from, const uint32_t counter) {
   return std::find(controlCounters_.begin(), controlCounters_.end(), counter) != controlCounters_.end();
 }
 
+bool Node::resendStored(const uint32_t counter, const uint32_t delayMs) {
+  // The same packet again (same counter): no new copy on the card or the server.
+  const auto pieces = counter ? store_.piecesOf(group_.me, counter) : std::vector<std::vector<uint8_t>>{};
+  for (const auto& raw : pieces) queue(raw.data(), raw.size(), delayMs, false);
+  return !pieces.empty();
+}
+
 void Node::resendUnconfirmed() {
   if (!group_.configured) return;
+  // At most every half hour, however often the unit checks.
+  const uint32_t now = millis();
+  if (lastResendMs_ && now - lastResendMs_ < RESEND_GAP_MS) return;
+  lastResendMs_ = now;
   // My sender key, to everyone who has not confirmed it.
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
     if (n != group_.me && group_.member(n)->present && !(senderKeyConfirmed_ & memberBit(n))) {
-      sendSenderKey(n, randomBetween(0, KEY_SPREAD_MS));
+      const uint32_t delay = randomBetween(0, KEY_SPREAD_MS);
+      if (!resendStored(senderKeyCounters_[n - 1], delay)) sendSenderKey(n, delay);
     }
   }
   bool changed = false;
@@ -1021,10 +1053,11 @@ void Node::resendUnconfirmed() {
       const Member* m = group_.member(n.member);
       if (!m || !m->present) {
         n = Notice{};  // gone from the network
-      } else {
+        changed = true;
+      } else if (!resendStored(n.counter, randomBetween(0, KEY_SPREAD_MS))) {
         sendToMember(slot, n.member, char(n.kind), n.about);
+        changed = true;
       }
-      changed = true;
     }
   }
   if (changed) groups_.save();
@@ -1251,17 +1284,21 @@ void Node::retryPending() {
 
 void Node::startWifiSync() {
   if (!group_.configured || group_.serverUrl.empty() || wifi_ != WifiStep::Idle) return;
-  if (WiFi.status() != WL_CONNECTED && !waddle::wifi::joinSaved()) return;
+  // File Transfer's own hotspot: leave it alone.
+  if (WiFi.getMode() & WIFI_AP) return;
+  // Already on (File Transfer, an update): used, and left on afterwards.
+  wifiWasOn_ = WiFi.status() == WL_CONNECTED;
+  if (!wifiWasOn_ && !waddle::wifi::joinSaved()) return;
   wifi_ = WifiStep::Joining;
   wifiStartedMs_ = millis();
   changes_++;
 }
 
-void Node::runWifiSync() {
+size_t Node::runWifiSync() {
   lastWifiSyncMs_ = millis();
   if (ESP.getFreeHeap() < HttpDownloader::MIN_TLS_FREE_HEAP || group_.serverCert.empty()) {
     wifiServerFailed_ = true;
-    return;
+    return 0;
   }
   // My messages the server has not confirmed, then a sync request.
   std::string body;
@@ -1305,7 +1342,7 @@ void Node::runWifiSync() {
   http.setReuse(false);
   if (!http.begin(group_.serverUrl + "/api/packets")) {
     wifiServerFailed_ = true;
-    return;
+    return 0;
   }
   http.addHeader("Authorization", "Bearer " + group_.serverToken);
   http.addHeader("Content-Type", "application/octet-stream");
@@ -1313,7 +1350,7 @@ void Node::runWifiSync() {
   if (status != 200) {
     LOG_ERR("MESH", "Server sync failed: %d", status);
     wifiServerFailed_ = true;
-    return;
+    return 0;
   }
   wifiServerFailed_ = false;
   serverAtMs_ = millis();
@@ -1334,6 +1371,7 @@ void Node::runWifiSync() {
     packets++;
   }
   LOG_INF("MESH", "Server sync: %u packets", unsigned(packets));
+  return packets;
 }
 
 void Node::loop() {
@@ -1342,16 +1380,21 @@ void Node::loop() {
 
   Received rx;
   while (radio::receive(rx)) handle(rx.data, rx.len, rx.rssi, false);
+  // Done listening: cleared, so the time compare cannot turn true again when
+  // millis() has moved on 24.8 days.
+  if (checkUntilMs_ && !listeningForCheck()) checkUntilMs_ = 0;
   if (nextCheckMs_ && int32_t(now - nextCheckMs_) >= 0) startCheck();
 
   if (wifi_ == WifiStep::Joining) {
     if (WiFi.status() == WL_CONNECTED) {
-      runWifiSync();
-      waddle::wifi::off();
+      // A full answer means more is waiting (a unit away for long): ask again.
+      for (int round = 0; round < 10 && runWifiSync() >= SERVER_ANSWER_FULL; round++) {
+      }
+      if (!wifiWasOn_) waddle::wifi::off();
       wifi_ = WifiStep::Idle;
       changes_++;
     } else if (now - wifiStartedMs_ > WIFI_JOIN_MS) {
-      waddle::wifi::off();
+      if (!wifiWasOn_) waddle::wifi::off();
       wifi_ = WifiStep::Idle;
       wifiServerFailed_ = true;
       changes_++;

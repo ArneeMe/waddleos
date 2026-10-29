@@ -13,8 +13,14 @@ log = logging.getLogger("waddlemesh")
 
 # Over LoRa an answer must stay short: at most this many packets per SYNC_REQ.
 LORA_SYNC_LIMIT = 12
+WIFI_SYNC_LIMIT = 200  # a unit that was away long asks again while answers are full
 # The status page shows an SOS packet this long.
 SOS_SHOWN_S = 300
+
+
+def no_hops(raw):
+    """A copy with hops 0: answers to one unit are not passed on by the others."""
+    return raw[:3] + bytes([raw[3] & 0xF0]) + raw[4:]
 
 
 class Server:
@@ -124,8 +130,8 @@ class Server:
                 f = P.parse_fetch(body)
             except P.BadPacket:
                 return []
-            limit = LORA_SYNC_LIMIT if via == "lora" else None
-            return self.store.messages_between(f.sender, f.after, f.before, h.sender, limit)
+            limit = LORA_SYNC_LIMIT if via == "lora" else WIFI_SYNC_LIMIT
+            return [no_hops(raw) for raw in self.store.messages_between(f.sender, f.after, f.before, h.sender, limit)]
         return []
 
     def _relay(self, h, raw):
@@ -142,24 +148,28 @@ class Server:
     def sync_answer(self, member, req, via):
         """Everything member is missing: the newest roster when its own is older,
         then messages, positions and ACKs. Over LoRa the roster always goes whole
-        (up to 13 pieces with 32 members), and first, so it is never cut off."""
-        limit = LORA_SYNC_LIMIT if via == "lora" else None
+        (up to 13 pieces with 32 members), and first, so it is never cut off;
+        positions and ACKs only when new since its last LoRa sync. Everything
+        goes with hops 0: the unit asked, the others need not pass it on."""
+        lora = via == "lora"
+        limit = LORA_SYNC_LIMIT if lora else WIFI_SYNC_LIMIT
+        since = self.store.last_sync(member) if lora else 0
+        if lora:
+            self.store.set_last_sync(member)
         out = []
         stored = self.store.roster()
         if stored and req.roster_version < stored[0]:
             out += stored[2]
-            if limit:
-                limit = max(limit, len(out))
+            limit = max(limit, len(out))
         for sender in P.MEMBERS:
             if sender == member:
                 continue
             out += self.store.messages_after(sender, req.last_counter[sender], member, limit)
-        out += self.store.latest_positions(member)
-        for counter in self.store.newest_whole_messages(member):
+        out += self.store.latest_positions(member, since)
+        for counter in self.store.newest_whole_messages(member, since=since):
             out.append(self._ack(member, counter, P.STORED, member))
-        out += self.store.acks_for(member, max(0, req.last_counter.get(member, 0) - 50))
-        if limit:
-            out = out[:limit]
+        out += self.store.acks_for(member, max(0, req.last_counter.get(member, 0) - 50), since)
+        out = [no_hops(raw) for raw in out[:limit]]
         log.info("sync for member %d via %s: %d packets", member, via, len(out))
         return out
 

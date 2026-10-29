@@ -162,6 +162,19 @@ Power cuts and long messages:
       arrives whole or stays "sendt"; never "levert" without the other unit
       showing it.
 
+Awake, airtime and Wi-Fi:
+- [ ] With the radio unplugged (or a unit whose radio fails to start): it still
+      sleeps, and the buttons wake it. At the next check the radio is tried again.
+- [ ] Press a button while the unit sends a long message: it wakes within a
+      second or two, not after the sending.
+- [ ] Three units in range of the gateway check at the same time: on the Pi's
+      log, each gets its answer, and no unit sends those answers on again
+      (`waddle mesh check` shows little airtime used).
+- [ ] File Transfer open while a check is due: the transfer keeps working (no
+      drop of the hotspot or the Wi-Fi).
+- [ ] A unit switched off for a week, then on at home: everything it missed
+      arrives within a few Wi-Fi syncs, with no restart.
+
 SOS:
 - [ ] Hold the user button 3 seconds: the black SOS screen; the other unit shows
       "SOS fra …" with distance. "Avbryt SOS" ends it on both.

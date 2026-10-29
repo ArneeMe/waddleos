@@ -12,6 +12,7 @@ import os
 import pty
 import select
 import shutil
+import sqlite3
 import ssl
 import struct
 import subprocess
@@ -19,6 +20,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 
@@ -26,7 +28,7 @@ from waddlemesh import ed25519
 from waddlemesh import packet as P
 from waddlemesh import roster as R
 from waddlemesh.__main__ import load_config, main
-from waddlemesh.core import Server
+from waddlemesh.core import Server, no_hops
 from waddlemesh.gateway import Gateway
 from waddlemesh.store import Store
 from waddlemesh.web import WebServer, status_page
@@ -217,15 +219,38 @@ class ServerTests(unittest.TestCase):
         for p in group + dm + pos:
             self.server.handle(p, "lora")
         to_two = self.server.handle(sync_req(2, {1: 0, 2: 0, 3: 0}), "wifi")
-        self.assertEqual(to_two[:4], group + dm)
-        self.assertIn(pos[0], to_two)
+        # Answers go with hops 0: the other units do not pass them on.
+        self.assertEqual(to_two[:4], [no_hops(p) for p in group + dm])
+        self.assertTrue(all(P.parse_header(p).hops == 0 for p in to_two))
+        self.assertIn(no_hops(pos[0]), to_two)
         to_three = self.server.handle(sync_req(3, {1: 0, 2: 0, 3: 0}), "wifi")
-        self.assertIn(group[0], to_three)
-        self.assertFalse(any(p in to_three for p in dm))  # a DM between 1 and 2
+        self.assertIn(no_hops(group[0]), to_three)
+        self.assertFalse(any(no_hops(p) in to_three for p in dm))  # a DM between 1 and 2
         caught_up = self.server.handle(sync_req(2, {1: 11, 2: 0, 3: 0}, counter=2), "wifi")
         self.assertFalse(any(P.parse_header(p).type == P.MSG for p in caught_up))
         units = {u["member"]: u for u in self.store.units()}
         self.assertEqual((units[2]["battery"], units[2]["build"], units[2]["via"]), (50, "2a", "wifi"))
+
+    def test_lora_sync_sends_receipts_and_positions_once(self):
+        """Over LoRa a second sync gets only what is new since the first: the
+        "stored" receipts and positions are not sent again and again."""
+        pos, _ = packets("position")
+        self.server.handle(pos[0], "lora")
+        mine = P.Header(type=P.MSG, group=GROUP, sender=2, recipient=P.GROUP, counter=7).pack() + bytes(20)
+        self.server.handle(mine, "lora")
+        types = lambda answer: sorted(P.parse_header(p).type for p in answer)
+        first = self.server.handle(sync_req(2, {1: 0, 2: 7}, counter=8), "lora")
+        self.assertEqual(types(first), [P.ACK, P.POS])
+        self.store.db.execute("UPDATE units SET last_sync = last_sync - 5")  # the next sync comes later
+        self.store.db.execute("UPDATE packets SET received_at = received_at - 10")
+        self.assertEqual(self.server.handle(sync_req(2, {1: 0, 2: 7}, counter=9), "lora"), [])
+
+    def test_wifi_sync_is_cut_at_200(self):
+        for counter in range(1, 260):
+            h = P.Header(type=P.MSG, group=GROUP, sender=1, recipient=P.GROUP, counter=counter)
+            self.server.handle(h.pack() + bytes(20), "lora")
+        answer = self.server.handle(sync_req(2, {1: 0, 2: 0}), "wifi")
+        self.assertEqual(len(answer), 200)
 
     def test_fetch_gives_the_missing_message(self):
         for counter in (10, 11, 12, 13):
@@ -579,7 +604,7 @@ class RosterServerTests(unittest.TestCase):
         self.server.handle(msg, "lora")
         answer = self.sync(3)
         self.assertEqual([P.parse_header(p).type for p in answer[:3]], [P.ROSTER] * 3)
-        self.assertIn(msg, answer)
+        self.assertIn(no_hops(msg), answer)
         self.assertFalse(any(P.parse_header(p).type == P.ROSTER for p in self.sync(4, counter=2)))
 
     def test_whole_roster_over_lora(self):
@@ -592,6 +617,34 @@ class RosterServerTests(unittest.TestCase):
         # 32 members make 13 pieces, more than the usual 12: still sent whole.
         set_roster(self.store, 2, [(1, "Arne", TOKEN_1)], pieces=13)
         self.assertEqual([P.parse_header(p).type for p in self.sync(1, "lora", 2)], [P.ROSTER] * 13)
+
+    def test_a_database_error_loses_one_line_not_the_link(self):
+        link = Gateway("/nonexistent", self.server)
+        calls = []
+
+        def broken(*args, **kwargs):
+            calls.append(1)
+            raise sqlite3.OperationalError("database is locked")
+        self.server.handle = broken
+        lines = iter([b"RX -90 5.0 " + packets("group message")[0][0].hex().encode() + b"\nHELLO x y\n"])
+        link.fd = 1
+        link._ping = lambda: None
+        link._write_pending = lambda: setattr(link, "running", False)
+        with mock.patch("os.read", lambda fd, n: next(lines)):
+            link.run()
+        self.assertEqual(calls, [1])
+        self.assertEqual(link.version, "y")  # the next line was still read
+
+    def test_airtime_refusal_sends_the_packet_again_later(self):
+        link = Gateway("/nonexistent", self.server)
+        written = []
+        link._write = written.append
+        link.send(b"\x01\x02")
+        link._write_pending()
+        link._handle_line("ERR airtime")
+        self.assertEqual(list(link.outbox.queue), [b"\x01\x02"])
+        link._write_pending()
+        self.assertEqual(written, ["TX 0102"])  # held for a minute
 
     def test_roster_goes_out_over_lora_once(self):
         set_roster(self.store, 1, [(1, "Arne", TOKEN_1)], pieces=2)

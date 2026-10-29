@@ -921,5 +921,58 @@ class MeshTests(unittest.TestCase):
             w.close()
 
 
+    def test_not_busy_25_days_after_a_check(self):
+        """"Når jeg vekker den": weeks after its last check the unit must not
+        think it is still listening for answers (millis() wraps at 2^31)."""
+        w = self.w
+        w.units[1].cmd("checks 5 5")
+        w.begin()
+        w.run(90)
+        self.assertFalse(w.units[1].state()["busy"])
+        w.now += 2**31 + 10000
+        w.run(1)
+        self.assertFalse(w.units[1].state()["busy"])
+
+    def test_many_small_packets_fit_the_airtime(self):
+        """The airtime limit counts time, not packets: a busy hour with many
+        ACKs and relays still lets a unit send (it used to stop at 96)."""
+        w = World(names=tuple("Unit%d" % n for n in range(1, 11)))
+        try:
+            w.all_in_range()
+            w.begin()
+            w.run(70)
+            conv = int(w.units[1].cmd("group %d Store" % ((1 << 9) | (1 << 1)))[0].split()[1])
+            w.run(60)
+            self.assertEqual(len(w.units[10].state()["groups"]), 1)
+            w.units[1].cmd("send %d Hei" % conv)
+            w.run(30)
+            self.assertEqual(w.units[10].texts(list(w.units[10].state()["groups"])[0]), ["Hei"])
+        finally:
+            w.close()
+
+    def test_server_answers_are_not_passed_on(self):
+        """A check answered by the Pi over LoRa: the other units do not send the
+        answer on again, and a second check gets nothing it already had."""
+        w = self.w
+        w.all_in_range(gateway=True)
+        w.begin()
+        w.run(90)
+        w.units[1].cmd("send 0 Hei")
+        w.run(30)
+        sent = []
+        real = w.step
+
+        def counting():
+            for sender, raw in w.air:
+                sent.append(sender)
+            real()
+        w.step = counting
+        for n in (1, 2, 3):
+            w.units[n].cmd("check")
+        w.run(30)
+        relays = [s for s in sent if s != GATEWAY]
+        self.assertLessEqual(len(relays), 12, sent)
+
+
 if __name__ == "__main__":
     unittest.main()

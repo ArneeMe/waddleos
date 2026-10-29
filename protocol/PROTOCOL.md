@@ -87,8 +87,12 @@ encrypted, so the server (which has no keys) can send them.
 
 A unit sends "delivered" when a message for it arrives and "read" when it is
 shown. The server sends "stored" when it has every piece of a message, and again
-for a unit's 10 newest stored messages when that unit syncs. Units send ACKs
-with hops 3 like other packets.
+in a unit's next sync for its messages stored since its last one. Units send
+ACKs with hops 3 like other packets.
+
+Everything sent in answer to a SYNC_REQ or FETCH, by the server, the gateway or a
+unit, goes with hops 0: only the one who asked needs it. Over LoRa the server
+sends positions and ACKs only when they are new since that unit's last sync.
 
 ### SYNC_REQ body (5 + 5 × n bytes)
 
@@ -326,7 +330,8 @@ home with the best antenna, and units that hear its copy skip their own.
 
 EU868 sub-band 869.4–869.65 MHz allows 10 % airtime. Units use 869.525 MHz,
 bandwidth 250 kHz, spreading factor 10, coding rate 4/5, 14 dBm. Each unit keeps
-its own airtime under 6 % per rolling hour and queues what does not fit.
+its own airtime under 6 % per rolling hour (counted per minute, so any number of
+small packets fits) and queues what does not fit.
 
 ## Server over Wi-Fi (HTTPS)
 
@@ -334,7 +339,9 @@ its own airtime under 6 % per rolling hour and queues what does not fit.
 server knows each member's token hash from the roster). The body and the answer
 are packets, each prefixed by its length (u8). The unit sends its outgoing
 packets and a SYNC_REQ; the answer holds ACKs, the packets it missed and, when
-its roster is older, the ROSTER packets.
+its roster is older, the ROSTER packets. At most 200 packets per answer: a unit
+that gets 200 asks again at once (up to 10 times), so one away for months gets
+its backlog in parts.
 
 `GET /api/roster` (same authorization): the newest signed roster, as bytes.
 

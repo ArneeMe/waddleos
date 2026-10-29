@@ -147,6 +147,8 @@ class Node {
   uint32_t wifiStartedMs_ = 0;
   uint32_t lastWifiSyncMs_ = 0;
   uint32_t lastSyncReqMs_ = 0;
+  uint32_t lastResendMs_ = 0;
+  bool wifiWasOn_ = false;  // Wi-Fi was on before the sync: leave it on
   uint32_t nextCheckMs_ = 0;
   uint32_t checkUntilMs_ = 0;  // listening for the answers of a check
   uint32_t lastCheckUnix_ = 0;
@@ -174,6 +176,7 @@ class Node {
   void sendPosition(Type type, bool cancelled);
   void handle(const uint8_t* raw, size_t len, int rssi, bool viaWifi);
   void handleMessage(const Header& h, const uint8_t* cipher, size_t len);
+  bool listeningForCheck() const;
   // A message is here (opened this session, or in its chat).
   bool haveMessage(const Header& h) const;
   void handlePosition(const Header& h, const uint8_t* cipher, size_t len);
@@ -198,6 +201,8 @@ class Node {
   std::vector<std::vector<uint8_t>> savedRosterPackets() const;
   bool confirmControl(uint8_t from, uint32_t counter);
   void resendUnconfirmed();
+  // Queues my stored packet with this counter again; false when it is not there.
+  bool resendStored(uint32_t counter, uint32_t delayMs);
   void rotate(int slot);
   void takeOut(int slot, uint8_t member);
   void openWaiting(uint16_t groupId);
@@ -214,7 +219,8 @@ class Node {
   uint8_t conversationOfMine(uint32_t counter);
   void sendOutbox();
   void retryPending();
-  void runWifiSync();
+  // Returns how many packets the server sent.
+  size_t runWifiSync();
   void savePositions();
   void loadPositions();
 };
