@@ -824,5 +824,102 @@ class MeshTests(unittest.TestCase):
         self.assertEqual(w.units[2].texts(0), [text.strip()])
 
 
+    def test_piece_lost_for_minutes_no_false_receipt(self):
+        """One piece of a long DM is lost for longer than the piece assembler
+        waits: the message still completes from the pieces on the card, and the
+        sender is not told "delivered" before it has."""
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(70)  # sender keys spread over a minute
+        blocking = True
+
+        def drop(raw, sender, receiver):
+            h = P.parse_header(raw)
+            return blocking and h.type == P.MSG and h.sender == 1 and h.recipient == 2 and h.piece_index == 1
+        w.drop = drop
+        text = ("Lang melding til Kari. " * 30).strip()  # three pieces
+        w.units[1].cmd("send 2 " + text)
+        w.run(100)  # the first retry (after 30 s) is lost too
+        self.assertEqual(w.units[2].texts(1), [])
+        self.assertEqual(w.units[1].chat(2)[0]["delivered"], 0)
+        blocking = False
+        w.run(120)  # the next retry
+        self.assertEqual(w.units[2].texts(1), [text])
+        self.assertEqual(w.units[1].chat(2)[0]["delivered"], 0b10)
+
+    def test_power_cut_while_adding_a_message(self):
+        """Half a record at the end of a chat log does not hide later messages."""
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(70)
+        w.units[1].cmd("send 0 Første")
+        w.run(15)
+        u = w.units[3]
+        u.stop()
+        with open(os.path.join(u.dir, ".mesh", "chat", "0.sealed"), "ab") as f:
+            f.write(bytes([60, 0]) + os.urandom(20))  # cut off mid-write
+        u.start()
+        u.cmd("time %d" % w.now)
+        u.cmd("begin")
+        w.units[1].cmd("send 0 Andre")
+        w.run(15)
+        self.assertEqual(u.texts(0), ["Første", "Andre"])
+
+    def test_power_cut_while_replacing_a_file(self):
+        """Only the new copy (path.tmp) is left when the power went between
+        removing the old file and renaming the new one: it is used."""
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(70)
+        w.units[1].cmd("group %d Hytta" % 0b110)
+        w.run(20)
+        u = w.units[3]
+        u.stop()
+        mesh = os.path.join(u.dir, ".mesh")
+        for name in ("roster.bin", "groups.bin"):
+            os.rename(os.path.join(mesh, name), os.path.join(mesh, name + ".tmp"))
+        u.start()
+        u.cmd("time %d" % w.now)
+        u.cmd("begin")
+        state = u.state()
+        self.assertTrue(state["configured"])
+        self.assertEqual([g["name"] for g in state["groups"].values()], ["Hytta"])
+
+    def test_damaged_groups_file_keeps_the_chats(self):
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(70)
+        conv = int(w.units[1].cmd("group %d Hytta" % 0b110)[0].split()[1])
+        w.run(20)
+        w.units[1].cmd("send %d Hei gruppa" % conv)
+        w.run(20)
+        u = w.units[3]
+        theirs = list(u.state()["groups"])[0]
+        u.stop()
+        with open(os.path.join(u.dir, ".mesh", "groups.bin"), "r+b") as f:
+            f.seek(20)
+            f.write(b"\0" * 8)
+        u.start()
+        u.cmd("time %d" % w.now)
+        u.cmd("begin")
+        self.assertEqual(u.texts(theirs), ["Hei gruppa"])
+
+    def test_group_with_member_nine_and_up(self):
+        w = World(names=tuple("Unit%d" % n for n in range(1, 11)))
+        try:
+            w.all_in_range()
+            w.begin()
+            w.run(70)
+            conv = int(w.units[1].cmd("group %d Store" % ((1 << 9) | (1 << 1)))[0].split()[1])  # 2 and 10
+            w.run(30)
+            self.assertEqual(w.units[1].state()["groups"][str(conv)]["members"], (1 << 9) | (1 << 1) | 1)
+        finally:
+            w.close()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@
 // The SD card as a directory on the computer (sim::rootDir).
 
 #include <fcntl.h>
+#include <unistd.h>
 
 #include <cstdio>
 #include <filesystem>
@@ -44,6 +45,9 @@ class HalFile {
   }
   bool seek(size_t pos) { return f_ && std::fseek(f_, long(pos), SEEK_SET) == 0; }
   bool seekCur(int64_t offset) { return f_ && std::fseek(f_, long(offset), SEEK_CUR) == 0; }
+  bool truncate(uint64_t length) {
+    return f_ && std::fflush(f_) == 0 && ftruncate(fileno(f_), off_t(length)) == 0;
+  }
   bool close() {
     if (f_) std::fclose(f_);
     f_ = nullptr;
@@ -60,6 +64,11 @@ class HalStorage {
   bool exists(const char* path) { return std::filesystem::exists(full(path)); }
   bool mkdir(const char* path, bool = true) { return std::filesystem::create_directories(full(path)) || exists(path); }
   bool remove(const char* path) { return std::filesystem::remove(full(path)); }
+  bool replaceFile(const char* tmpPath, const char* path) {
+    std::error_code ec;
+    std::filesystem::rename(full(tmpPath), full(path), ec);
+    return !ec;
+  }
   String readFile(const char* path) {
     std::ifstream f(full(path), std::ios::binary);
     std::stringstream ss;

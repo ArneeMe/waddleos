@@ -137,6 +137,8 @@ void MessageStore::begin(const uint8_t me) {
   chain_.clear();
   Storage.mkdir("/.mesh/packets");
   Storage.mkdir("/.mesh/chat");
+  // A record left half-written by a power cut would hide everything after it.
+  for (uint8_t s = 1; s <= MAX_MEMBERS; s++) repairSealedLog(packetPath(s).c_str());
   std::vector<uint8_t> last;
   memset(lastCounter_, 0, sizeof(lastCounter_));
   if (loadSealed(LAST_PATH, last) && last.size() == sizeof(lastCounter_)) {
@@ -163,6 +165,7 @@ void MessageStore::begin(const uint8_t me) {
       }
       updateChain(c, m);
     }
+    if (log.goodEnd() < log.fileSize()) repairSealedLog(chatPath(c).c_str());
     sum.unread = fromOthers > seen_[c] ? fromOthers - seen_[c] : 0;
   }
 }
@@ -196,6 +199,14 @@ std::vector<std::vector<uint8_t>> MessageStore::packetsAfter(const uint8_t sende
     if (out.size() >= limit || h.type != Type::Msg || h.counter <= after) return;
     if (!canRead(readableBy, h.sender, h.recipient)) return;
     out.emplace_back(raw, raw + len);
+  });
+  return out;
+}
+
+std::vector<std::vector<uint8_t>> MessageStore::piecesOf(const uint8_t sender, const uint32_t counter) {
+  std::vector<std::vector<uint8_t>> out;
+  forEachPacket(sender, [&](const Header& h, const uint8_t* raw, const size_t len) {
+    if (h.type == Type::Msg && h.counter == counter) out.emplace_back(raw, raw + len);
   });
   return out;
 }

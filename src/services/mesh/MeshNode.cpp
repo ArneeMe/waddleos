@@ -100,12 +100,6 @@ void Node::begin() {
   groups_.load();
   senders_.load();
   store_.begin(group_.me);
-  // Chats of group slots with no group (e.g. from an older build): their unread
-  // count could never be cleared.
-  for (int slot = 0; slot < MAX_GROUPS; slot++) {
-    const uint8_t c = uint8_t(CONV_GROUPS + slot);
-    if (!groups_.at(slot).id && store_.summary(c).count) store_.clear(c);
-  }
   // Above the floor from joining, so a unit that gets a former member's number
   // never repeats their counters.
   if (group_.configured && group_.counterFloor > savedCounterLimit()) saveCounterLimit(group_.counterFloor);
@@ -447,8 +441,9 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
   if (!seen_.remember(h, raw + HEADER_SIZE, len - HEADER_SIZE)) {
     // A message we already have came again straight from its sender (a retry,
     // not someone's relay or a stored copy): the sender missed our ACK.
+    // Only when the message is really here (a piece may be missing).
     if (h.type == Type::Msg && h.hops == DEFAULT_HOPS && h.pieceIndex == h.pieceCount - 1 &&
-        canRead(group_.me, h.sender, h.recipient) && isMember(h.sender) && keyFor(h)) {
+        canRead(group_.me, h.sender, h.recipient) && isMember(h.sender) && haveMessage(h)) {
       sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
     }
     return;
@@ -467,9 +462,23 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
     case Type::Msg: {
       if (!isMember(h.sender) || store_.hasPacket(h, raw, len)) return;
       store_.savePacket(h.sender, raw, len);  // kept to help other units catch up
-      const uint8_t* joined = nullptr;
-      size_t joinedLen = 0;
-      if (pieces_.add(h, raw, len, now, &joined, &joinedLen)) handleMessage(h, joined, joinedLen);
+      if (h.pieceCount == 1) {
+        handleMessage(h, body, bodyLen);
+      } else {
+        // From the pieces kept on the card, so a piece that comes much later
+        // (a retry minutes after) still completes it.
+        Reassembler pieces;
+        const uint8_t* joined = nullptr;
+        size_t joinedLen = 0;
+        for (const auto& piece : store_.piecesOf(h.sender, h.counter)) {
+          Header ph;
+          if (readHeader(piece.data(), piece.size(), ph) &&
+              pieces.add(ph, piece.data(), piece.size(), now, &joined, &joinedLen)) {
+            handleMessage(h, joined, joinedLen);
+            break;
+          }
+        }
+      }
       break;
     }
     case Type::Pos:
@@ -504,6 +513,12 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
   changes_++;
 }
 
+bool Node::haveMessage(const Header& h) const {
+  if (std::find(opened_.begin(), opened_.end(), uint64_t(h.sender) << 32 | h.counter) != opened_.end()) return true;
+  const int conversation = conversationOf(h);
+  return conversation >= 0 && store_.hasMessage(uint8_t(conversation), h.sender, h.counter);
+}
+
 void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t len) {
   const uint8_t* key = keyFor(h);
   if (!key) {
@@ -518,6 +533,8 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
   }
   // Only now does its counter count for syncs (MessageStore::lastCounter).
   store_.confirmCounter(h.sender, h.counter);
+  if (opened_.size() >= 64) opened_.erase(opened_.begin());
+  opened_.push_back(uint64_t(h.sender) << 32 | h.counter);
   const int found = conversationOf(h);
   if (found < 0) return;
   const uint8_t conversation = uint8_t(found);
