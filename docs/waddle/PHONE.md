@@ -168,8 +168,8 @@ T5 is off, nothing changes until it is on, and Ola can read new "Hytta" messages
 until then. That is already true without phones: the lowest member's unit must
 be on.
 
-**C5. Kari removes Ola from "Hytta" on her phone.** `'R'` to Arne, as from a
-T5. Arne's T5 makes the new key.
+**C5. Kari leaves "Hytta" on her phone.** `'L'` to the others and a note to her
+T5, which then shows the group as left too.
 
 **C6. A late message from Ola after he left.** A message he wrote under key 1
 arrives after he left. Both of Kari's devices drop it: once out, nothing from him

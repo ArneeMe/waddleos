@@ -10,7 +10,6 @@
     {"name": "sender key", "text": "0053030102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},
     {"name": "invitation", "text": "00470502010102010080030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021224879747461"},
     {"name": "leave", "text": "004c050200"},
-    {"name": "remove", "text": "0052050209"},
     {"name": "ask for a key", "text": "004b000003"}
   ],
   "messages": [

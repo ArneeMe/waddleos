@@ -97,13 +97,10 @@ Groups made on the unit (PR #35):
 - [ ] Tap the group's title: the members. "Forlat gruppe" on Per (tap twice):
       the others keep writing and reading, Per still sees the old messages but
       no new ones.
-- [ ] "Fjern" on a member (twice): the same, without their unit doing anything.
 - [ ] After updating from an older build: the log says "Removed the old group
       setup", and the unit asks to be joined (`waddle mesh join`).
 - [ ] File Transfer on a T5 shows "Oppsettkode: 123 456" under the address, and
       `waddle mesh setup` asks you to compare it before going on.
-- [ ] Two "Fjern" at once from two units (different people): both are out, and
-      neither of them can read or write in the group afterwards.
 - [ ] Make a group while one member is off, restart your own unit, switch the
       member on: the group still reaches them (at your next check).
 - [ ] `waddle mesh remove <name>` with that unit switched off ("lost"): the others

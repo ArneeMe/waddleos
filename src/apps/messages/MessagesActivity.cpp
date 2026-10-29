@@ -523,7 +523,7 @@ void NewGroupActivity::render(RenderLock&&) {
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
 
-// --- A group: who is in it, Fjern, Forlat gruppe ------------------------------------
+// --- A group: who is in it, Forlat gruppe ---------------------------------------------
 
 GroupInfoActivity::GroupInfoActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const uint8_t conversation)
     : Activity("GroupInfo", renderer, mappedInput), conversation(conversation) {}
@@ -544,36 +544,24 @@ void GroupInfoActivity::loop() {
     if (node().changes() != shownChanges) requestUpdate();
     return;
   }
-  // Every button asks once more before it acts.
-  for (size_t i = 0; i < removeBoxes.size(); i++) {
-    if (!removeBoxes[i].second.contains(x, y)) continue;
-    const uint8_t member = removeBoxes[i].first;
-    if (armed == member) {
-      node().removeFromGroup(conversation, member);
-      armed = 0;
-    } else {
-      armed = member;
-    }
-    requestUpdate();
-    return;
-  }
   if (moreBox.h && moreBox.contains(x, y)) {
     page++;
-    armed = 0;
+    armed = false;
     requestUpdate();
     return;
   }
+  // "Forlat gruppe" asks once more before it acts.
   if (leaveBox.contains(x, y)) {
-    if (armed == LEAVE) {
+    if (armed) {
       node().leaveGroup(conversation);
       activityManager.replaceActivity(std::make_unique<MessagesActivity>(renderer, mappedInput));
       return;
     }
-    armed = LEAVE;
+    armed = true;
     requestUpdate();
     return;
   }
-  armed = 0;
+  armed = false;
   requestUpdate();
 }
 
@@ -586,7 +574,6 @@ void GroupInfoActivity::render(RenderLock&&) {
   int y = meshui::drawTitle(renderer, meshui::conversationName(conversation).c_str());
   renderer.drawText(SMALL_FONT_ID, SIDE, y + 8, "MEDLEMMER", true, EpdFontFamily::BOLD);
   y += 40;
-  removeBoxes.clear();
   // A page at a time when the group is large; "Vis flere" turns the page.
   std::vector<uint8_t> people;
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
@@ -600,19 +587,6 @@ void GroupInfoActivity::render(RenderLock&&) {
     const uint8_t n = people[i];
     const std::string who = n == group.me ? std::string(group.name(n)) + " (deg)" : group.name(n);
     renderer.drawText(UI_12_FONT_ID, SIDE, y + 22, who.c_str(), true, EpdFontFamily::BOLD);
-    if (n != group.me && !g.left) {
-      // "Fjern": for a lost unit. The rest get a new key.
-      Box b{width - SIDE - 150, y + 12, 150, 52};
-      const char* label = armed == n ? "Sikker?" : "Fjern";
-      if (armed == n) {
-        renderer.fillRoundedRect(b.x, b.y, b.w, b.h, 12, Color::Black);
-      } else {
-        renderer.drawRoundedRect(b.x, b.y, b.w, b.h, 2, 12, true);
-      }
-      const int lw = renderer.getTextWidth(UI_10_FONT_ID, label, EpdFontFamily::BOLD);
-      renderer.drawText(UI_10_FONT_ID, b.x + (b.w - lw) / 2, b.y + 14, label, armed != n, EpdFontFamily::BOLD);
-      removeBoxes.emplace_back(n, b);
-    }
     y += ROW_H - 8;
     renderer.drawLine(SIDE, y, width - SIDE, y);
   }
@@ -629,15 +603,15 @@ void GroupInfoActivity::render(RenderLock&&) {
     leaveBox = {};
   } else {
     leaveBox = {SIDE, y, width - 2 * SIDE, 64};
-    const char* label = armed == LEAVE ? "Sikker? Trykk igjen" : "Forlat gruppe";
+    const char* label = armed ? "Sikker? Trykk igjen" : "Forlat gruppe";
     renderer.drawRoundedRect(leaveBox.x, leaveBox.y, leaveBox.w, leaveBox.h, 3, 14, true);
     const int lw = renderer.getTextWidth(UI_12_FONT_ID, label, EpdFontFamily::BOLD);
     renderer.drawText(UI_12_FONT_ID, leaveBox.x + (leaveBox.w - lw) / 2, leaveBox.y + 18, label, true,
                       EpdFontFamily::BOLD);
     y += 90;
     const auto lines = renderer.wrappedText(SMALL_FONT_ID,
-                                            "Den som går ut eller fjernes, kan lese det som ble skrevet før, "
-                                            "men ikke det som kommer etterpå.",
+                                            "Den som går ut, kan lese det som ble skrevet før, men ikke det "
+                                            "som kommer etterpå.",
                                             width - 2 * SIDE, 3);
     for (const auto& line : lines) {
       renderer.drawText(SMALL_FONT_ID, SIDE, y, line.c_str());

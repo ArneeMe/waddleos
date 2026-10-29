@@ -744,7 +744,7 @@ static void writeVectors(const char* path) {
 
 // One of each control DM, as protocol/vectors.json "control" has them.
 static std::vector<std::pair<const char*, ControlMsg>> controlExamples() {
-  ControlMsg s, g, l, r, k;
+  ControlMsg s, g, l, k;
   s.kind = Control::SenderKey;
   s.keyNumber = 3;
   fill(s.key, KEY_SIZE, 1);
@@ -757,13 +757,10 @@ static std::vector<std::pair<const char*, ControlMsg>> controlExamples() {
   g.name = "Hytta";
   l.kind = Control::Leave;
   l.groupId = groupId(2, 5);
-  r.kind = Control::Remove;
-  r.groupId = groupId(2, 5);
-  r.member = 9;
   k.kind = Control::AskKey;
   k.groupId = 0;
   k.keyNumber = 3;
-  return {{"sender key", s}, {"invitation", g}, {"leave", l}, {"remove", r}, {"ask for a key", k}};
+  return {{"sender key", s}, {"invitation", g}, {"leave", l}, {"ask for a key", k}};
 }
 
 static void testControl() {
@@ -771,8 +768,7 @@ static void testControl() {
     const std::string text = writeControl(c);
     ControlMsg back;
     CHECK(isControl(text) && readControl(text, back));
-    CHECK(back.kind == c.kind && back.groupId == c.groupId && back.keyNumber == c.keyNumber &&
-          back.member == c.member && back.fresh == c.fresh && back.members == c.members && back.name == c.name &&
+    CHECK(back.kind == c.kind && back.groupId == c.groupId && back.keyNumber == c.keyNumber && back.fresh == c.fresh && back.members == c.members && back.name == c.name &&
           memcmp(back.key, c.key, KEY_SIZE) == 0);
     // Cut short: refused.
     CHECK(!readControl(text.substr(0, 4), back));

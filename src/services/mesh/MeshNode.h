@@ -60,8 +60,6 @@ class Node {
   int createGroup(Members members, const std::string& name);
   // Leaves a group: the others are told and make a new key.
   void leaveGroup(uint8_t conversation);
-  // Takes a member out (a lost unit): the rest get a new key.
-  void removeFromGroup(uint8_t conversation, uint8_t member);
   // The conversation was shown: clears unread and tells the sender "read".
   void markRead(uint8_t conversation);
 

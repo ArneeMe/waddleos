@@ -39,14 +39,13 @@ using namespace internal;
 // --- Groups and keys (protocol/PROTOCOL.md, "Control DMs", "Groups") ------------
 //
 // Only the remaining member with the lowest number makes a new group key, so
-// two members never make one at once. Others ask it to (REMOVE), or it does so
-// by itself when told someone left (LEAVE). Invitations from someone not in the
+// two members never make one at once. It does so when told someone left
+// (LEAVE), or someone is gone from the roster. Invitations from someone not in the
 // group, or older than the key held, do not change who is in it.
 
 namespace {
 constexpr char INVITE = char(Control::Invite);  // the notice kinds kept per group (MeshGroups.h)
 constexpr char LEAVE = char(Control::Leave);
-constexpr char REMOVE = char(Control::Remove);
 constexpr uint32_t ASK_KEY_AGAIN_MS = 6 * 3600 * 1000UL;
 // Key DMs to many members: spread over this long (all units hear a new member
 // list at once, and LoRa has no "wait until the air is free").
@@ -114,7 +113,6 @@ void Node::sendToMember(const int slot, const uint8_t to, const char kind, const
     ControlMsg c;
     c.kind = Control(kind);
     c.groupId = g.id;
-    c.member = about;
     p = writeControl(c);
   }
   // Remembered until their unit confirms it, and sent again on each check.
@@ -224,10 +222,6 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
       g.left = true;  // I left on my other device
       groups_.save();
     }
-  } else if (c.kind == Control::Remove) {
-    // Asked to take someone out: only the lowest of those who stay does it.
-    if (!isMember(c.member) || c.member == network_.me || !g.has(c.member)) return true;
-    if (lowest(g.members & ~memberBit(c.member)) == network_.me) takeOut(slot, c.member);
   }
   changes_++;
   return true;
@@ -435,22 +429,6 @@ void Node::leaveGroup(const uint8_t conversation) {
   }
   g.left = true;
   groups_.save();
-  changes_++;
-}
-
-void Node::removeFromGroup(const uint8_t conversation, const uint8_t member) {
-  if (!isGroupConversation(conversation) || member == network_.me) return;
-  const int slot = conversation - CONV_FIRST_GROUP;
-  ChatGroup& g = groups_.at(slot);
-  if (!g.id || g.left || !g.has(member)) return;
-  const uint8_t keeper = lowest(g.members & ~memberBit(member));
-  if (keeper == network_.me && !network_.phone) {
-    takeOut(slot, member);
-  } else {
-    // (On the phone, when I am the keeper: to my unit, which makes the key.)
-    sendToMember(slot, keeper, REMOVE, member);  // the lowest member makes the new key
-    groups_.save();
-  }
   changes_++;
 }
 

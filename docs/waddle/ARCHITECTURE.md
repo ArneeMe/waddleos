@@ -198,7 +198,7 @@ Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOC
   too, record by record (`appendSealed`, `SealedLog`). A paired
   phone as a second device: [PHONE.md](PHONE.md) (plan).
 - **Groups** (`services/mesh/MeshGroups.cpp`): made on a unit; the key goes to
-  each member in an invitation DM. Leaving or "Fjern" makes the next key number
+  each member in an invitation DM. Leaving (or leaving the roster) makes the next key number
   for those left (only the lowest member makes it); every unit keeps the old
   ones for the history.
 - **Node** (`services/mesh/`): one loop for radio and Wi-Fi alike: decrypt,
