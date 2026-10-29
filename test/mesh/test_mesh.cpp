@@ -343,6 +343,13 @@ static void testRadioRules() {
   budget.spend(600, 0);
   CHECK(!budget.allows(600, 1000));
   CHECK(budget.allows(600, 3600001));
+  // Any number of small packets, as long as their time fits.
+  AirtimeBudget hour(216000);
+  for (uint32_t i = 0; i < 400; i++) {
+    CHECK(hour.allows(219, i * 5000));
+    hour.spend(219, i * 5000);
+  }
+  CHECK(hour.usedLastHour(399 * 5000) < 216000);
 
   SeenPackets seen;
   Header h = msgHeader(1, GROUP, 5);

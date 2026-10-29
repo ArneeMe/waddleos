@@ -43,6 +43,9 @@ class Gateway:
         self.dump_at = 0
         self.handed_over = 0  # since the server started
         self.last_handover = None  # {"at": time, "packets": n}
+        self.last_tx = None  # the packet last given to the gateway, until its answer
+        self.hold_until = 0  # nothing more to the gateway before this (its airtime is full)
+        self.last_error = None  # {"at": time, "line": "ERR …"} for the status page
         server.radio = self
 
     def send(self, raw):
@@ -55,7 +58,8 @@ class Gateway:
         """What the status page shows about the gateway."""
         answering = self.connected and time.time() - self.last_heard < ANSWER_TIMEOUT_S
         return {"connected": self.connected, "answering": answering, "version": self.version, "kept": self.kept,
-                "handed_over": self.handed_over, "last_handover": self.last_handover}
+                "handed_over": self.handed_over, "last_handover": self.last_handover,
+                "last_error": self.last_error}
 
     def _open(self):
         fd = os.open(self.device, os.O_RDWR | os.O_NOCTTY)
@@ -83,11 +87,12 @@ class Gateway:
         return True
 
     def _write_pending(self):
-        while not self.outbox.empty():
+        while not self.outbox.empty() and time.time() >= self.hold_until:
             raw = self.outbox.queue[0]
             if not self._airtime_ok(raw):
                 return  # try again later; the queue keeps its order
             self.outbox.get_nowait()
+            self.last_tx = raw
             self._write("TX " + raw.hex())
             # The gateway sends one packet at a time; give it the airtime.
             time.sleep(P.airtime_ms(len(raw)) / 1000 + 0.05)
@@ -138,6 +143,13 @@ class Gateway:
             log.info("gateway: %s", line)
         elif parts[0] == "ERR":
             log.warning("gateway: %s", line)
+            self.last_error = {"at": int(time.time()), "line": line}
+            # Its own airtime count is full: the packet goes again in a minute.
+            if parts[1:2] == ["airtime"] and self.last_tx is not None:
+                with self.outbox.mutex:
+                    self.outbox.queue.appendleft(self.last_tx)
+                self.last_tx = None
+                self.hold_until = time.time() + 60
 
     def _handover(self, packets, count):
         """Files what the gateway kept while alone, then lets it forget them. When
@@ -169,7 +181,12 @@ class Gateway:
                 buf += chunk
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
-                    self._handle_line(line.decode("ascii", "replace").strip())
+                    try:
+                        self._handle_line(line.decode("ascii", "replace").strip())
+                    except OSError:
+                        raise
+                    except Exception:  # the database locked or full: this line is lost, not the link
+                        log.exception("gateway line failed")
                 self._write_pending()
             except OSError as e:
                 if self.connected:
@@ -180,6 +197,11 @@ class Gateway:
                 self.fd = None
                 buf = b""
                 time.sleep(5)
+            except Exception:
+                # Anything else (e.g. the database in _ping): the process ends, so
+                # systemd starts it again, instead of a server without its gateway.
+                log.exception("gateway link failed; restarting the server")
+                os._exit(1)
 
     def start(self):
         threading.Thread(target=self.run, name="gateway", daemon=True).start()

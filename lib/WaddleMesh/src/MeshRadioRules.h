@@ -34,12 +34,16 @@ class AirtimeBudget {
   bool allows(uint32_t airtime, uint32_t nowMs) const;
   void spend(uint32_t airtime, uint32_t nowMs);
   uint32_t usedLastHour(uint32_t nowMs) const;
+  // When to ask again after allows() said no (at the next minute).
+  static uint32_t msUntilRetry(uint32_t nowMs) { return MINUTE - nowMs % MINUTE; }
 
  private:
-  static constexpr int ENTRIES = 96;
-  uint32_t at_[ENTRIES] = {};
-  uint32_t ms_[ENTRIES] = {};
-  int next_ = 0;
+  // Airtime per minute of the last hour (not per packet: any number of small
+  // packets fits as long as their time does).
+  static constexpr uint32_t MINUTE = 60000;
+  static constexpr int MINUTES = 60;
+  uint32_t start_[MINUTES] = {};  // millis() at the start of that minute
+  uint32_t ms_[MINUTES] = {};
   uint32_t budget_;
 };
 

@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS welcomes (
 JOIN_KEPT_S = 7 * 86400
 MAX_JOINS = 20
 # Columns added after the first release, for databases made before them.
-NEW_COLUMNS = {"units": ("flags INTEGER", "sos_at INTEGER")}
+NEW_COLUMNS = {"units": ("flags INTEGER", "sos_at INTEGER", "last_sync INTEGER"), "acks": ("at INTEGER",)}
 
 
 class Store:
@@ -141,33 +141,47 @@ class Store:
         return [raw for raw in self.messages_after(sender, after, for_member)
                 if int.from_bytes(raw[6:10], "little") < before][:limit]
 
-    def latest_positions(self, except_member):
-        """The newest POS (and any newer SOS) of every other member."""
+    def latest_positions(self, except_member, since=0):
+        """The newest POS (and any newer SOS) of every other member, if it came
+        at or after since (unix seconds)."""
         out = []
         with self.lock:
             for ptype in (4, 5):
                 rows = self.db.execute(
-                    "SELECT raw FROM packets p WHERE type = ? AND sender != ? AND counter ="
+                    "SELECT raw FROM packets p WHERE type = ? AND sender != ? AND received_at >= ? AND counter ="
                     " (SELECT MAX(counter) FROM packets q WHERE q.type = p.type AND q.sender = p.sender)",
-                    (ptype, except_member)).fetchall()
+                    (ptype, except_member, since)).fetchall()
                 out += [bytes(r[0]) for r in rows]
         return out
 
-    def add_ack(self, ack, by_member, raw):
+    def add_ack(self, ack, by_member, raw, now=None):
         with self.lock:
             self.db.execute(
-                "INSERT INTO acks (acked_sender, acked_counter, by_member, state, raw) VALUES (?, ?, ?, ?, ?)"
+                "INSERT INTO acks (acked_sender, acked_counter, by_member, state, raw, at) VALUES (?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT (acked_sender, acked_counter, by_member) DO UPDATE SET state = MAX(state, excluded.state),"
-                " raw = CASE WHEN excluded.state > state THEN excluded.raw ELSE raw END",
-                (ack.sender, ack.counter, by_member, ack.state, raw))
+                " raw = CASE WHEN excluded.state > state THEN excluded.raw ELSE raw END,"
+                " at = CASE WHEN excluded.state > state THEN excluded.at ELSE at END",
+                (ack.sender, ack.counter, by_member, ack.state, raw, int(now or time.time())))
             self.db.commit()
 
-    def acks_for(self, member, from_counter):
-        """ACKs from the other members for member's messages from from_counter on."""
+    def acks_for(self, member, from_counter, since=0):
+        """ACKs from the other members for member's messages from from_counter
+        on, that came at or after since."""
         with self.lock:
             return [bytes(r[0]) for r in self.db.execute(
-                "SELECT raw FROM acks WHERE acked_sender = ? AND acked_counter >= ? ORDER BY acked_counter",
-                (member, from_counter))]
+                "SELECT raw FROM acks WHERE acked_sender = ? AND acked_counter >= ? AND COALESCE(at, 0) >= ?"
+                " ORDER BY acked_counter", (member, from_counter, since))]
+
+    def last_sync(self, member):
+        """When member last synced over LoRa (unix seconds), 0 for never."""
+        with self.lock:
+            row = self.db.execute("SELECT last_sync FROM units WHERE member = ?", (member,)).fetchone()
+        return (row and row[0]) or 0
+
+    def set_last_sync(self, member, now=None):
+        with self.lock:
+            self.db.execute("UPDATE units SET last_sync = ? WHERE member = ?", (int(now or time.time()), member))
+            self.db.commit()
 
     def last_counter(self, sender):
         with self.lock:
@@ -184,12 +198,14 @@ class Store:
             self.db.commit()
         return n
 
-    def newest_whole_messages(self, sender, limit=10):
-        """Counters of sender's newest MSGs the server has every piece of."""
+    def newest_whole_messages(self, sender, limit=10, since=0):
+        """Counters of sender's newest MSGs the server has every piece of (the
+        last piece at or after since)."""
         with self.lock:
             rows = self.db.execute(
                 "SELECT counter FROM packets WHERE type = 1 AND sender = ? GROUP BY counter"
-                " HAVING COUNT(*) = MAX(piece_count) ORDER BY counter DESC LIMIT ?", (sender, limit)).fetchall()
+                " HAVING COUNT(*) = MAX(piece_count) AND MAX(received_at) >= ? ORDER BY counter DESC LIMIT ?",
+                (sender, since, limit)).fetchall()
         return [r[0] for r in reversed(rows)]
 
     def seen_unit(self, member, via, battery=None, build=None, rssi=None, snr=None, flags=None, now=None):
