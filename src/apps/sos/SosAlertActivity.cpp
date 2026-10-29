@@ -1,7 +1,10 @@
 #include "SosAlertActivity.h"
 
 #include <GfxRenderer.h>
+#include <HalDisplay.h>
 
+#include <algorithm>
+#include <cstdio>
 #include <vector>
 
 #include "apps/messages/MeshUi.h"
@@ -26,18 +29,44 @@ void whiteButton(const GfxRenderer& renderer, const int y, const char* label) {
 
 // --- My SOS ---------------------------------------------------------------------
 
-SosActivity::SosActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : Activity("Sos", renderer, mappedInput) {}
+namespace {
+constexpr unsigned long COUNTDOWN_MS = 10000;
+}
+
+SosActivity::SosActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const bool countdown)
+    : Activity("Sos", renderer, mappedInput), countdownFrom(countdown ? 1 : 0) {}
 
 void SosActivity::onEnter() {
   Activity::onEnter();
-  node().startSos();
+  if (countdownFrom && !node().sosActive()) {
+    countdownFrom = millis() ? millis() : 1;
+  } else {
+    countdownFrom = 0;
+    node().startSos();
+  }
   requestUpdate();
 }
 
 void SosActivity::loop() {
   using Button = MappedInputManager::Button;
   int x = 0, y = 0;
+  if (countdownFrom) {
+    // Any button or tap stops it; nothing has been sent.
+    if (mappedInput.wasScreenTapped(x, y) || mappedInput.wasReleased(Button::Confirm) ||
+        mappedInput.wasReleased(Button::Back) || mappedInput.wasHomeGesture()) {
+      activityManager.goHome();
+      return;
+    }
+    const unsigned long elapsed = millis() - countdownFrom;
+    if (elapsed >= COUNTDOWN_MS) {
+      countdownFrom = 0;
+      node().startSos();
+      requestUpdate();
+    } else if (int(COUNTDOWN_MS - elapsed + 999) / 1000 != shownSeconds) {
+      requestUpdate();
+    }
+    return;
+  }
   if (mappedInput.wasScreenTapped(x, y) && y >= cancelY && y < cancelY + 90) {
     node().cancelSos();
     activityManager.goHome();
@@ -55,6 +84,20 @@ void SosActivity::loop() {
 void SosActivity::render(RenderLock&&) {
   const int width = renderer.getScreenWidth();
   const int height = renderer.getScreenHeight();
+  if (countdownFrom) {
+    // "SOS om 7 s": nothing sent yet.
+    shownSeconds = int(COUNTDOWN_MS - std::min(COUNTDOWN_MS, millis() - countdownFrom) + 999) / 1000;
+    renderer.clearScreen();
+    renderer.fillRect(0, 0, width, height, true);
+    waddle::drawPixelText(renderer, (width - waddle::pixelTextWidth("SOS", 20)) / 2, 160, "SOS", 20, false);
+    char line[32];
+    snprintf(line, sizeof(line), "Sendes om %d s", shownSeconds);
+    renderer.drawCenteredText(UI_12_FONT_ID, 330, line, false, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_12_FONT_ID, 370, "Trykk hvor som helst for å stoppe", false);
+    whiteButton(renderer, height - 220, "Stopp");
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    return;
+  }
   drawnAt = millis();
   shownChanges = node().changes();
   renderer.clearScreen();

@@ -537,6 +537,11 @@ int main(int argc, char** argv) {
     show(alert, "t5-sos-varsel");
   }
   {
+    // Held the button 3 s: 10 s to stop it before anything is sent (3 s gone).
+    SosActivity countdown(renderer, mappedInputManager, true);
+    show(countdown, "t5-sos-nedtelling", [](Activity&) { sim::nowMs += 3000; });
+  }
+  {
     // My own SOS: sent, received by Kari and the server, seen by Kari.
     SosActivity sos(renderer, mappedInputManager);
     show(sos, "t5-sos", [](Activity&) {

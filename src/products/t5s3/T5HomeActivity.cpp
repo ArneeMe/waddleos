@@ -65,6 +65,9 @@ void T5HomeActivity::onEnter() {
 bool T5HomeActivity::available(const int target) const {
   if (target >= T_CHAT_1 && target <= T_CHAT_4) return target - T_CHAT_1 < chatCount;
   if (target == T_MODE) return node().configured();
+  // No SOS button to bump into: only while one is on, to stop it. Holding the
+  // button 3 s starts one (with 10 s to change your mind).
+  if (target == T_SOS) return node().sosActive();
   return target >= 0 && target < T_COUNT;
 }
 
@@ -239,6 +242,10 @@ void T5HomeActivity::render(RenderLock&&) {
   for (int i = 0; i < 6; i++) {
     const int target = T_MESSAGES + i;
     Box& b = boxes[target];
+    if (!available(target)) {
+      b = {};
+      continue;
+    }
     b = {SIDE + (i % 3) * (bw + 14), gridY + (i / 3) * (bh + 14), bw, bh};
     const bool filled = target == T_SOS || focus == target;
     if (filled) {

@@ -56,7 +56,7 @@ void loop() {
     if (!sosFromButton && !node.sosActive() && node.configured() && millis() - userButtonSince >= SOS_HOLD_MS) {
       sosFromButton = true;
       activityManager.replaceActivity(
-          std::make_unique<SosActivity>(activityManager.getRenderer(), activityManager.getMappedInput()));
+          std::make_unique<SosActivity>(activityManager.getRenderer(), activityManager.getMappedInput(), true));
     }
   } else {
     userButtonSince = 0;
