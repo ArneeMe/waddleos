@@ -80,9 +80,16 @@ a T5. The phone copies the T5's identity once at home (code check, as when
 joining); after that both read the same mailbox on the Pi, and every key change
 a device makes is also sent to itself. The device is part of the sender byte, so
 the two never reuse a message id. Only the T5 makes new keys. A lost phone or T5
-means leaving the roster and joining again with a new identity. Rules and the
-cases it must handle (dropped messages, groups, new or lost phone or T5):
-[PHONE.md](PHONE.md).
+means leaving the roster and joining again with a new identity under the same
+number; old keys are kept for reading, so history comes back from the Pi. Rules
+and the cases it must handle (dropped messages, groups, new or lost phone or
+T5): [PHONE.md](PHONE.md).
+
+Next on the unit, before the phone: **seal the message files on the SD card.**
+`/.mesh/chat/` holds the conversations as readable text and `/.mesh/packets/`
+the packets as received; anyone who takes the card out reads the history
+without the T5. Seal them like the key files (`saveSealed`), and keep the old
+storage keys (PHONE.md, R11) so history survives a new identity.
 
 Before calling it done: **a screen-by-screen look** (the units, the reader and
 the Pi's status page) by Arne, to check that everything reads well for a person,

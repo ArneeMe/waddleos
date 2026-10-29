@@ -16,6 +16,20 @@ changes one device makes are also sent to its own number, so the other picks
 them up from the Pi like any message. The phone reaches the network only through
 the Pi (internet); off-grid there is only the T5.
 
+## What "identity" means
+
+A unit's identity is its secret key: 32 random bytes the T5 makes the first time
+it starts and keeps in its flash. The roster holds only the public half, next to
+the name and number. The secret is what makes Kari's unit "Kari": every DM key
+is worked out from it and the other person's public key, the join key comes
+from it, and the sealed files on the SD card are locked with a key made from it.
+Name and number are labels; the secret is what opens things. Whoever has a copy
+(the paired phone, or a thief) can open everything sent to that person.
+
+A **new identity** means the T5 throws the secret away for sending, makes a fresh
+one, and Arne approves a roster entry with the new public key. From then on, DMs
+to Kari use keys the old secret cannot open.
+
 ## Rules
 
 - **R1. Pairing, once.** At home, T5 on File Transfer, phone on the same Wi-Fi.
@@ -48,14 +62,31 @@ the Pi (internet); off-grid there is only the T5.
   the phone stops writing to "Alle" until the note from its T5 with the new
   sender key arrives ("Venter på ny nøkkel fra T5-en"). Otherwise the one who
   left could read it.
-- **R8. A lost device means a new identity.** The person is taken out of the
-  roster (`waddle mesh remove`), the T5 makes a new identity and joins again,
-  and the phone is paired again. Needs a "Ny identitet" step on the T5 (today a
-  rejoin keeps the old secret).
+- **R8. A lost device means a new identity, under the same number.** The person
+  is taken out of the roster (`waddle mesh remove`), the T5 makes a new identity
+  ("Ny identitet"; today a rejoin keeps the old secret, which would not lock a
+  thief out), Arne invites them again, and `waddle mesh approve` gives them
+  their old number back. The phone is paired again. The same number keeps every
+  conversation in one place on everyone's units (no second "Kari"), and lets the
+  Pi send her old DMs without knowing anything new. The new `counterFloor` keeps
+  the new counters above the old ones.
 - **R9. One phone per person.** Pairing a new phone replaces the old one; its
   counter floor is newer than anything the old phone used.
 - **R10. Read on one, read on both** (nice to have). A "read" ACK from my other
   device marks the message read here too.
+- **R11. Old keys are kept for reading.** A unit keeps every key it has had: its
+  old identity secrets, every group key number and every member's old sender
+  keys. The newest few stay in working memory as today (6 per group, 3 per
+  member); older ones go to a sealed archive file on the SD card, read only when
+  an old message needs one. Old keys are never used to send. This does not help
+  a thief: they could already read everything up to the theft; the new identity
+  protects what comes after. Size is no concern: all keys together are a few KB
+  (a 1 GB card holds a few million messages).
+- **R12. History comes back from the Pi.** The Pi keeps every packet, sealed. A
+  unit with the old keys (R11) asks for everything from the start and opens what
+  it can. Pairing gives the new device the archive too, so a phone can bring
+  history to a new T5 (E3). The Pi must keep the packets; it deletes nothing
+  today.
 
 ## The people in the scenarios
 
@@ -172,18 +203,26 @@ as lost (E2).
 
 **E2. Kari's phone is stolen.** The thief holds her identity. Arne runs
 `waddle mesh remove kari`: everyone makes new sender keys, she is taken out of
-all groups. Kari's T5 makes a new identity, Arne sends a new invitation, she
-joins again (maybe under another number), pairs a new phone, and is invited into
-the groups again. Open: whether the T5 keeps her old message history (R8).
+all groups. Kari's T5 makes a new identity and keeps the old keys for reading
+(R11), Arne sends a new invitation, she joins again as number 2 (R8), pairs a new
+phone, and is invited into the groups again. Her history stays on the T5; the
+new phone gets it from the Pi with the archived keys (R12). The thief's copy
+opens nothing sent after the removal, and the stolen phone's token no longer
+works on the Pi.
 
 **E3. Kari's T5 breaks (dead screen, still at home).** Nobody else has the
-secret, but there is no T5 to pair with any more. She joins with a new T5 as a
-new identity; Arne removes the old number; the phone is paired with the new T5
-(pairing wipes the old identity in the app). A later option: restore the new T5
-from the phone instead. Not planned, it adds code.
+secret, but there is no T5 to pair with any more. Arne removes her, she joins
+with a new T5 under number 2 (R8). When the phone is paired with the new T5 it
+hands over its keys, old and current, as the archive (R11); the new T5 then gets
+her history from the Pi (R12). The phone gets the new identity in the same step.
 
-**E4. Kari's T5 is lost.** As E2: remove, new identity, join, pair the phone
-again.
+**E4. Kari's T5 is lost.** As E3, but the finder holds her identity, so the
+removal matters: nothing new opens for them. History comes back through the
+phone's keys (R12).
+
+**E4b. Kari loses both her T5 and her phone.** Remove, new T5 under number 2.
+No device has the old keys, so the old history is gone; new messages work. Her
+messages remain on the others' units.
 
 **E5. Kari wants a newer T5 but the old one works.** Same as E3. There is no
 move from T5 to T5; one way of doing it is simpler.
@@ -214,8 +253,10 @@ wrote them.
 1. Protocol 4: device in the sender byte (R2), the self pair key, group id
    ranges.
 2. The T5: notes to self (R3), only the T5 rotates (R4), upload after trips
-   (R5), pairing endpoint (R1), "Ny identitet" (R8).
-3. The Pi: R6, and R5's upload.
+   (R5), pairing endpoint (R1), "Ny identitet" (R8), the key archive and
+   history fetch (R11, R12).
+3. The Pi and the tool: R6, R5's upload, `waddle mesh approve` giving a
+   returning member their old number (R8).
 4. The app: pairing, sync on open and now and then, conversations, writing,
    R7 and R10.
 5. The sim: one person with two devices, and the scenarios above as tests.
