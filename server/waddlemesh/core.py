@@ -101,9 +101,9 @@ class Server:
                 if new:
                     log.warning("SOS from member %d", h.sender)
                 # The sender's SOS screen shows that the server has it.
-                return [self._ack(h.sender, h.counter, P.STORED, h.sender)]
+                return [self._ack(h.sender, h.counter, P.STORED, P.person(h.sender))]
             if h.type == P.MSG and self.store.has_all_pieces(h):
-                return [self._ack(h.sender, h.counter, P.STORED, h.sender)]
+                return [self._ack(h.sender, h.counter, P.STORED, P.person(h.sender))]
             return []
 
         body = raw[P.HEADER_SIZE:]
@@ -145,32 +145,35 @@ class Server:
         out[3] = (out[3] & 0xF0) | (h.hops - 1)
         self.radio.send(bytes(out))
 
-    def sync_answer(self, member, req, via):
-        """Everything member is missing: the newest roster when its own is older,
+    def sync_answer(self, device, req, via):
+        """Everything a device is missing (from every other device, its
+        member's other one too): the newest roster when its own is older,
         then messages, positions and ACKs. Over LoRa the roster always goes whole
         (up to 13 pieces with 32 members), and first, so it is never cut off;
         positions and ACKs only when new since its last LoRa sync. Everything
         goes with hops 0: the unit asked, the others need not pass it on."""
+        member = P.person(device)
         lora = via == "lora"
         limit = LORA_SYNC_LIMIT if lora else WIFI_SYNC_LIMIT
-        since = self.store.last_sync(member) if lora else 0
+        since = self.store.last_sync(device) if lora else 0
         if lora:
-            self.store.set_last_sync(member)
+            self.store.set_last_sync(device)
         out = []
         stored = self.store.roster()
         if stored and req.roster_version < stored[0]:
             out += stored[2]
             limit = max(limit, len(out))
-        for sender in P.MEMBERS:
-            if sender == member:
+        listed_only = bool(req.flags & P.SYNC_LISTED_ONLY)
+        for sender in P.DEVICES:
+            if sender == device or (listed_only and not req.last_counter[sender]):
                 continue
             out += self.store.messages_after(sender, req.last_counter[sender], member, limit)
         out += self.store.latest_positions(member, since)
-        for counter in self.store.newest_whole_messages(member, since=since):
-            out.append(self._ack(member, counter, P.STORED, member))
-        out += self.store.acks_for(member, max(0, req.last_counter.get(member, 0) - 50), since)
+        for counter in self.store.newest_whole_messages(device, since=since):
+            out.append(self._ack(device, counter, P.STORED, member))
+        out += self.store.acks_for(device, max(0, req.last_counter.get(device, 0) - 50), since)
         out = [no_hops(raw) for raw in out[:limit]]
-        log.info("sync for member %d via %s: %d packets", member, via, len(out))
+        log.info("sync for device %d via %s: %d packets", device, via, len(out))
         return out
 
     def status(self):
@@ -183,7 +186,9 @@ class Server:
         for member in sorted(set(heard) | set(names)):
             u = heard.get(member) or {"member": member, "last_seen": None, "via": None, "battery": None,
                                       "build": None, "rssi": None, "snr": None, "flags": None, "sos_at": None}
-            u["name"] = names.get(member) or "Enhet %d" % member
+            # A phone shows as its member with "(mobil)".
+            u["name"] = (names.get(P.person(member)) or "Enhet %d" % P.person(member)) + (
+                " (mobil)" if member & P.PHONE else "")
             u["ago_s"] = now - u["last_seen"] if u["last_seen"] else None
             flags = u["flags"]
             u["on_trip"] = None if flags is None else bool(flags & P.SYNC_ON_TRIP)

@@ -9,7 +9,7 @@
 namespace mesh {
 
 constexpr uint8_t MAGIC = 0x57;  // "W"
-constexpr uint8_t VERSION = 3;  // 3: up to 32 members, a signed roster, 2-byte group ids
+constexpr uint8_t VERSION = 4;  // 4: a member's phone sends as its own device (PHONE)
 constexpr size_t MAX_PACKET = 200;
 constexpr size_t HEADER_SIZE = 14;
 constexpr size_t TAG_SIZE = 16;
@@ -31,8 +31,9 @@ constexpr size_t MSG_PREFIX = 8;  // time + previous hash, before the text
 constexpr size_t MAX_TEXT = 1000;
 constexpr size_t POS_SIZE = 16;
 constexpr size_t ACK_SIZE = 6;
-constexpr size_t SYNC_REQ_HEAD = 5;  // then 5 bytes per member listed
-constexpr size_t SYNC_REQ_MAX = SYNC_REQ_HEAD + 5 * MAX_MEMBERS;
+constexpr size_t SYNC_REQ_HEAD = 5;  // then 5 bytes per device listed
+constexpr size_t SYNC_REQ_MAX_LISTED = (MAX_PACKET - HEADER_SIZE - SYNC_REQ_HEAD) / 5;  // 36
+constexpr size_t SYNC_REQ_MAX = SYNC_REQ_HEAD + 5 * SYNC_REQ_MAX_LISTED;
 constexpr size_t FETCH_SIZE = 9;
 
 enum class Type : uint8_t { Msg = 1, Ack = 2, SyncReq = 3, Pos = 4, Sos = 5, Fetch = 6, Roster = 7 };
@@ -40,6 +41,20 @@ enum class Type : uint8_t { Msg = 1, Ack = 2, SyncReq = 3, Pos = 4, Sos = 5, Fet
 enum class AckState : uint8_t { Delivered = 1, Stored = 2, Read = 3 };
 
 inline bool isMember(uint8_t id) { return id >= 1 && id <= MAX_MEMBERS; }
+
+// Devices: a member's unit sends as their number (1-32), their phone as the
+// number + PHONE (129-160). Keys, names and conversations go by the person;
+// counters, the "previous message" chain and syncs by the device.
+constexpr uint8_t PHONE = 0x80;
+constexpr int MAX_DEVICES = 2 * MAX_MEMBERS;
+inline uint8_t person(uint8_t device) { return device & 0x7F; }
+inline bool isDevice(uint8_t device) { return isMember(person(device)); }
+inline bool isPhone(uint8_t device) { return (device & PHONE) != 0; }
+// 0..MAX_DEVICES-1: units first, then phones.
+inline int deviceSlot(uint8_t device) { return (isPhone(device) ? MAX_MEMBERS : 0) + person(device) - 1; }
+inline uint8_t slotDevice(int slot) {
+  return slot < MAX_MEMBERS ? uint8_t(slot + 1) : uint8_t((slot - MAX_MEMBERS + 1) | PHONE);
+}
 // Sets of members: a bit per member (bit 0 = member 1).
 using Members = uint32_t;
 inline Members memberBit(uint8_t id) { return isMember(id) ? Members(1u << (id - 1)) : 0; }
@@ -53,7 +68,7 @@ inline uint8_t groupCreator(uint16_t id) { return uint8_t(id >> 8); }
 // Whether member may be given a packet to recipient that sender sent. Groups
 // go to every member: only those with the key can open them.
 inline bool canRead(uint8_t member, uint8_t sender, uint8_t recipient) {
-  return recipient == EVERYONE || recipient == member || sender == member || recipient == TO_GROUP;
+  return recipient == EVERYONE || recipient == member || person(sender) == member || recipient == TO_GROUP;
 }
 
 struct Header {
@@ -110,15 +125,19 @@ bool readAck(const uint8_t* in, size_t len, Ack& a);
 constexpr uint8_t SYNC_ON_TRIP = 1;      // bit 0: "På tur"
 constexpr uint8_t SYNC_SOS = 2;          // bit 1: its SOS is going on
 constexpr uint8_t SYNC_CHECK_SHIFT = 2;  // bits 2-4: how often it checks (MeshSettings::Check)
+// bit 5: more devices than fit in a packet; those not listed are not asked
+// about (instead of "from the start").
+constexpr uint8_t SYNC_LISTED_ONLY = 0x20;
 
 struct SyncReq {
-  uint32_t lastCounter[MAX_MEMBERS] = {};  // index 0 = member 1; only those not 0 are sent
+  uint32_t lastCounter[MAX_DEVICES] = {};  // by deviceSlot(); only those not 0 are sent
   uint8_t battery = 0;
   uint8_t build = 0;
   uint8_t flags = 0;
   uint16_t rosterVersion = 0;
 };
-// Returns the bytes written (at most SYNC_REQ_MAX).
+// Returns the bytes written (at most SYNC_REQ_MAX). With more devices than fit,
+// units come first and SYNC_LISTED_ONLY is set.
 size_t writeSyncReq(const SyncReq& s, uint8_t out[SYNC_REQ_MAX]);
 bool readSyncReq(const uint8_t* in, size_t len, SyncReq& s);
 

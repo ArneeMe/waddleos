@@ -123,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
                 h = P.parse_header(raw)
             except P.BadPacket:
                 continue
-            if h.sender != member:
+            if P.person(h.sender) != member:
                 continue  # a unit only speaks for itself
             answers += self.server.mesh.handle(raw, "wifi")
         self._send(200, P.frame(answers))

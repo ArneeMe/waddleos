@@ -67,7 +67,7 @@ class ChatGroups {
   ChatGroup& at(int slot) { return groups_[slot]; }
   const ChatGroup& at(int slot) const { return groups_[slot]; }
   // The next id for a group made on this unit, or 0 when none is free.
-  uint16_t nextId(uint8_t me);
+  uint16_t nextId(uint8_t me, bool phone);
 
  private:
   ChatGroup groups_[MAX_GROUPS];

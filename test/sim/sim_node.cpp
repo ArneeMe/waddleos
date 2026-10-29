@@ -336,6 +336,21 @@ int main(int argc, char** argv) {
       std::string text(textHex.size() / 2, '\0');
       mesh::fromHex(textHex.c_str(), reinterpret_cast<uint8_t*>(&text[0]), text.size());
       std::cout << "counter " << mesh::SimAccess::control(node, uint8_t(to), text) << "\n";
+    } else if (cmd == "become-phone") {
+      // This copy of a unit's card and flash is the member's phone from now on
+      // (what pairing will hand over, until it exists).
+      std::vector<uint8_t> raw;
+      JsonDocument doc;
+      if (mesh::loadSealed("/.mesh/network.bin", raw) && !deserializeJson(doc, raw.data(), raw.size())) {
+        doc["phone"] = true;
+        std::string out;
+        serializeJson(doc, out);
+        mesh::saveSealed("/.mesh/network.bin", std::vector<uint8_t>(out.begin(), out.end()));
+      }
+    } else if (cmd == "twin") {
+      int on = 0;
+      in >> on;
+      mesh::setHasTwin(on != 0);
     } else if (cmd == "group") {
       unsigned long bits = 0;
       in >> bits >> std::ws;

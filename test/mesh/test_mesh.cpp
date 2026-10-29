@@ -121,6 +121,24 @@ static void testBodies() {
   CHECK(readSyncReq(sb, sn, t) && t.lastCounter[0] == 5 && t.lastCounter[1] == 0 && t.lastCounter[2] == 900 &&
         t.lastCounter[31] == 12 && t.battery == 40 && t.build == 0xab && t.flags == 3 && t.rosterVersion == 7);
   CHECK(!readSyncReq(sb, sn - 1, t));
+
+  // Devices: Kari's phone is 2 + PHONE, its own slot after the 32 units.
+  CHECK(person(2 | PHONE) == 2 && isPhone(2 | PHONE) && !isPhone(2) && isDevice(32 | PHONE) && !isDevice(33));
+  CHECK(deviceSlot(1) == 0 && deviceSlot(32) == 31 && deviceSlot(1 | PHONE) == 32 && slotDevice(63) == (32 | PHONE));
+  Header ph = msgHeader(2 | PHONE, EVERYONE, 1), pr;
+  uint8_t praw[HEADER_SIZE];
+  writeHeader(ph, praw);
+  CHECK(readHeader(praw, sizeof(praw), pr) && pr.sender == (2 | PHONE));
+  CHECK(canRead(2, 2 | PHONE, 3) && !canRead(4, 2 | PHONE, 3));
+  SyncReq withPhone;
+  withPhone.lastCounter[deviceSlot(2 | PHONE)] = 44;
+  CHECK(readSyncReq(sb, writeSyncReq(withPhone, sb), t) && t.lastCounter[deviceSlot(2 | PHONE)] == 44);
+  // More devices than fit: units first, and "only those listed".
+  SyncReq full;
+  for (int slot = 0; slot < MAX_DEVICES; slot++) full.lastCounter[slot] = uint32_t(slot + 1);
+  const size_t fn = writeSyncReq(full, sb);
+  CHECK(fn == SYNC_REQ_MAX && readSyncReq(sb, fn, t) && (t.flags & SYNC_LISTED_ONLY) && t.lastCounter[31] == 32 &&
+        t.lastCounter[MAX_DEVICES - 1] == 0);
 }
 
 static void testRoster() {

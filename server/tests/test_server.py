@@ -92,7 +92,7 @@ class PacketTests(unittest.TestCase):
         sync = bytes.fromhex(V["syncReq"])
         req = P.parse_sync_req(sync[P.HEADER_SIZE:])
         self.assertEqual({m: c for m, c in req.last_counter.items() if c}, {1: 10, 3: 7, 4: 2})
-        self.assertEqual(len(req.last_counter), 32)
+        self.assertEqual(len(req.last_counter), 64)  # units and phones
         self.assertEqual(req.roster_version, 3)
         self.assertEqual(req.flags, P.SYNC_ON_TRIP | (4 << P.SYNC_CHECK_SHIFT))
         fetch = bytes.fromhex(V["fetch"])

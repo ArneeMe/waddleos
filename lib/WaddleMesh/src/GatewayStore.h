@@ -76,8 +76,8 @@ class GatewayStore {
   bool hasAllPieces(const Header& h) const;
   void addAck(uint8_t to, uint8_t ackedSender, uint32_t ackedCounter, Result& r);
   void addSlot(int index, Result& r) const;
-  void answerMessages(uint8_t member, uint8_t sender, uint32_t after, uint64_t before, Result& r) const;
-  void answerSync(uint8_t member, const SyncReq& req, Result& r) const;
+  void answerMessages(uint8_t asker, uint8_t sender, uint32_t after, uint64_t before, Result& r) const;
+  void answerSync(uint8_t asker, const SyncReq& req, Result& r) const;
 
   uint8_t network_;
   Members members_ = 0;

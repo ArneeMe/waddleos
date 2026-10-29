@@ -64,7 +64,7 @@ void Node::begin() {
     for (uint8_t c = 0; c < CONVERSATIONS; c++) {
       if (!canWrite(c)) continue;
       for (const auto& m : store_.load(c, 20)) {
-        if (m.sender != network_.me || m.stored || m.deliveredTo) continue;
+        if (m.sender != network_.myDevice() || m.stored || m.deliveredTo) continue;
         if (pending_.size() >= MAX_PENDING) pending_.erase(pending_.begin());
         pending_.push_back(Pending{m.counter, c, 0, millis() + 10000});
       }
@@ -136,7 +136,7 @@ Header Node::header(const Type type, const uint8_t recipient) {
   Header h;
   h.type = type;
   h.network = network_.id;
-  h.sender = network_.me;
+  h.sender = network_.myDevice();
   h.recipient = recipient;
   h.counter = nextCounter();
   return h;
@@ -164,10 +164,10 @@ void Node::sendSealed(const Header& h, const uint8_t* key, const uint8_t* plain,
     Header piece;
     readHeader(sealed->packets[i], sealed->lengths[i], piece);
     seen_.remember(piece);  // never relay our own packet back
-    if (store) store_.savePacket(network_.me, sealed->packets[i], sealed->lengths[i]);
+    if (store) store_.savePacket(network_.myDevice(), sealed->packets[i], sealed->lengths[i]);
     queue(sealed->packets[i], sealed->lengths[i], delayMs, false);
   }
-  if (store) store_.confirmCounter(network_.me, h.counter);
+  if (store) store_.confirmCounter(network_.myDevice(), h.counter);
 }
 
 void Node::sendAck(const uint8_t toMember, const uint8_t ackedSender, const uint32_t counter, const AckState state) {
@@ -183,6 +183,9 @@ const uint8_t* Node::sendingKey(const uint8_t conversation, uint8_t* keyNumber) 
   if (keyNumber) *keyNumber = 0;
   if (!network_.configured) return nullptr;
   if (conversation == CONV_EVERYONE) {
+    // A phone after someone left: its unit makes the new key; until it comes
+    // the old one is not used (the one who left has it).
+    if (waitingForSenderKey_) return nullptr;
     if (keyNumber) *keyNumber = identity().senderKeyNumber;
     return identity().senderKey;
   }
@@ -211,7 +214,9 @@ int Node::conversationOf(const Header& h) const {
     const int slot = groups_.find(h.groupId);
     return slot < 0 ? -1 : CONV_FIRST_GROUP + slot;
   }
-  return h.sender == network_.me ? h.recipient : h.sender;
+  // My own messages (from this device or my other one) are in the chat with
+  // their recipient.
+  return person(h.sender) == network_.me ? h.recipient : person(h.sender);
 }
 
 bool Node::sendText(const uint8_t conversation, const std::string& text) {
@@ -220,9 +225,9 @@ bool Node::sendText(const uint8_t conversation, const std::string& text) {
   if (!key || text.empty() || text.size() > MAX_TEXT) return false;
   const uint8_t recipient = recipientOf(conversation);
   ChatMessage msg;
-  msg.sender = network_.me;
+  msg.sender = network_.myDevice();
   msg.time = unixNow();
-  store_.lastHash(conversation, network_.me, msg.prevHash);
+  store_.lastHash(conversation, network_.myDevice(), msg.prevHash);
   msg.text = text;
 
   std::string plain(MSG_PREFIX, '\0');
@@ -245,11 +250,11 @@ void Node::markRead(const uint8_t conversation) {
   if (store_.summary(conversation).unread == 0) return;
   // "Read" for the newest message from each other member covers the earlier ones.
   const auto recent = store_.load(conversation, 30);
-  bool told[MAX_MEMBERS + 1] = {};
+  bool told[MAX_DEVICES] = {};
   for (auto it = recent.rbegin(); it != recent.rend(); ++it) {
-    if (it->sender == network_.me || !isMember(it->sender) || told[it->sender]) continue;
-    told[it->sender] = true;
-    sendAck(it->sender, it->sender, it->counter, AckState::Read);
+    if (!isDevice(it->sender) || person(it->sender) == network_.me || told[deviceSlot(it->sender)]) continue;
+    told[deviceSlot(it->sender)] = true;
+    sendAck(person(it->sender), it->sender, it->counter, AckState::Read);
   }
   store_.markRead(conversation);
   changes_++;
@@ -320,7 +325,7 @@ const MemberStatus& Node::member(const uint8_t number) const {
 void Node::requestSync() {
   if (!network_.configured || !radio::isUp()) return;
   SyncReq req;
-  for (uint8_t m = 1; m <= MAX_MEMBERS; m++) req.lastCounter[m - 1] = store_.lastCounter(m);
+  for (int slot = 0; slot < MAX_DEVICES; slot++) req.lastCounter[slot] = store_.lastCounter(slotDevice(slot));
   req.battery = battery();
   req.build = buildByte();
   req.flags = syncFlags();
@@ -389,9 +394,9 @@ void Node::sendOutbox() {
   if (!radio::send(raw.data(), raw.size())) return;
   // My message has left the unit: show "sendt".
   Header h;
-  if (readHeader(raw.data(), raw.size(), h) && h.type == Type::Msg && h.sender == network_.me &&
+  if (readHeader(raw.data(), raw.size(), h) && h.type == Type::Msg && h.sender == network_.myDevice() &&
       h.pieceIndex == h.pieceCount - 1) {
-    store_.addState(conversationOfMine(h.counter), network_.me, h.counter, Delivery::Sent, 0);
+    store_.addState(conversationOfMine(h.counter), network_.myDevice(), h.counter, Delivery::Sent, 0);
     changes_++;
   }
 }
@@ -401,7 +406,7 @@ void Node::retryPending() {
   bool needWifi = false;
   for (auto& p : pending_) {
     if (p.tries >= 3 || int32_t(now - p.nextTryMs) < 0) continue;
-    for (const auto& raw : store_.packetsAfter(network_.me, p.counter - 1, network_.me, MAX_PIECES)) {
+    for (const auto& raw : store_.packetsAfter(network_.myDevice(), p.counter - 1, network_.me, MAX_PIECES)) {
       Header h;
       if (readHeader(raw.data(), raw.size(), h) && h.counter == p.counter) queue(raw.data(), raw.size(), 0, false);
     }

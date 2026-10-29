@@ -36,7 +36,7 @@ bool readHeader(const uint8_t* in, size_t len, Header& h) {
   h.key = in[13];
   if (h.pieceCount == 0 || h.pieceIndex >= h.pieceCount) return false;
   if (!h.fragmented && h.pieceCount != 1) return false;
-  if (h.sender != SERVER && !isMember(h.sender)) return false;
+  if (h.sender != SERVER && !isDevice(h.sender)) return false;
   if (h.recipient != EVERYONE && h.recipient != SERVER && h.recipient != TO_GROUP && !isMember(h.recipient)) return false;
   // A group id only on group packets, and made by a member.
   if ((h.recipient == TO_GROUP) != (h.groupId != 0)) return false;
@@ -99,13 +99,17 @@ bool readAck(const uint8_t* in, size_t len, Ack& a) {
 size_t writeSyncReq(const SyncReq& s, uint8_t out[SYNC_REQ_MAX]) {
   out[0] = s.battery;
   out[1] = s.build;
-  out[2] = s.flags;
+  out[2] = uint8_t(s.flags & ~SYNC_LISTED_ONLY);
   put16(out + 3, s.rosterVersion);
   size_t n = SYNC_REQ_HEAD;
-  for (uint8_t m = 1; m <= MAX_MEMBERS; m++) {
-    if (!s.lastCounter[m - 1]) continue;
-    out[n] = m;
-    put32(out + n + 1, s.lastCounter[m - 1]);
+  for (int slot = 0; slot < MAX_DEVICES; slot++) {
+    if (!s.lastCounter[slot]) continue;
+    if (n >= SYNC_REQ_MAX) {
+      out[2] |= SYNC_LISTED_ONLY;
+      break;
+    }
+    out[n] = slotDevice(slot);
+    put32(out + n + 1, s.lastCounter[slot]);
     n += 5;
   }
   return n;
@@ -119,8 +123,8 @@ bool readSyncReq(const uint8_t* in, size_t len, SyncReq& s) {
   s.flags = in[2];
   s.rosterVersion = get16(in + 3);
   for (size_t i = SYNC_REQ_HEAD; i < len; i += 5) {
-    if (!isMember(in[i])) return false;
-    s.lastCounter[in[i] - 1] = get32(in + i + 1);
+    if (!isDevice(in[i])) return false;
+    s.lastCounter[deviceSlot(in[i])] = get32(in + i + 1);
   }
   return true;
 }
@@ -132,7 +136,7 @@ void writeFetch(const Fetch& f, uint8_t out[FETCH_SIZE]) {
 }
 
 bool readFetch(const uint8_t* in, size_t len, Fetch& f) {
-  if (len != FETCH_SIZE || !isMember(in[0])) return false;
+  if (len != FETCH_SIZE || !isDevice(in[0])) return false;
   f.sender = in[0];
   f.after = get32(in + 1);
   f.before = get32(in + 5);

@@ -157,6 +157,7 @@ class Node {
   uint32_t lastWifiSyncMs_ = 0;
   uint32_t lastSyncReqMs_ = 0;
   uint32_t lastResendMs_ = 0;
+  bool waitingForSenderKey_ = false;  // phone: someone left, its unit's new sender key not here yet
   bool wifiWasOn_ = false;  // Wi-Fi was on before the sync: leave it on
   uint32_t nextCheckMs_ = 0;
   uint32_t checkUntilMs_ = 0;  // listening for the answers of a check
@@ -186,6 +187,8 @@ class Node {
   void handle(const uint8_t* raw, size_t len, int rssi, bool viaWifi);
   void handleMessage(const Header& h, const uint8_t* cipher, size_t len);
   bool listeningForCheck() const;
+  // A phone, or a unit with a paired phone: key and group changes also go to myself.
+  bool hasOtherDevice() const;
   // A message is here (opened this session, or in its chat).
   bool haveMessage(const Header& h) const;
   void handlePosition(const Header& h, const uint8_t* cipher, size_t len);

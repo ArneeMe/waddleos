@@ -131,6 +131,32 @@ void newIdentity() {
   LOG_INF("MESH", "New identity: %s", toHex(id.publicKey, 8).c_str());
 }
 
+void adoptSenderKey(const uint8_t number, const uint8_t key[KEY_SIZE]) {
+  identity();
+  memcpy(id.senderKey, key, KEY_SIZE);
+  id.senderKeyNumber = number;
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putBytes("sender", id.senderKey, KEY_SIZE);
+  prefs.putUInt("senderNum", id.senderKeyNumber);
+  prefs.end();
+}
+
+bool hasTwin() {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, true);
+  const bool twin = prefs.getUInt("twin", 0) != 0;
+  prefs.end();
+  return twin;
+}
+
+void setHasTwin(const bool twin) {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putUInt("twin", twin ? 1 : 0);
+  prefs.end();
+}
+
 void newSenderKey() {
   identity();
   esp_fill_random(id.senderKey, KEY_SIZE);
@@ -364,7 +390,7 @@ void takeMembers(Network& group, const Roster& roster) {
     m->admin = e.admin;
     strlcpy(m->name, e.name.c_str(), sizeof(m->name));
     memcpy(m->publicKey, e.publicKey, KEY_SIZE);
-    if (e.number != group.me) dmKey(mine.secret, mine.publicKey, m->publicKey, m->dmKey);
+    dmKey(mine.secret, mine.publicKey, m->publicKey, m->dmKey);
   }
   group.rosterVersion = roster.version;
 }
@@ -385,6 +411,7 @@ const char* parseNetwork(const JsonDocument& doc, Network& group) {
   group.serverToken = doc["server"]["token"] | "";
   group.serverCert = doc["server"]["cert"] | "";
   group.counterFloor = doc["counterFloor"] | 0u;
+  group.phone = doc["phone"] | false;
   return nullptr;
 }
 

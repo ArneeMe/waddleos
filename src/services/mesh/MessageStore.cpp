@@ -138,7 +138,7 @@ void MessageStore::begin(const uint8_t me) {
   Storage.mkdir("/.mesh/packets");
   Storage.mkdir("/.mesh/chat");
   // A record left half-written by a power cut would hide everything after it.
-  for (uint8_t s = 1; s <= MAX_MEMBERS; s++) repairSealedLog(packetPath(s).c_str());
+  for (int slot = 0; slot < MAX_DEVICES; slot++) repairSealedLog(packetPath(slotDevice(slot)).c_str());
   std::vector<uint8_t> last;
   memset(lastCounter_, 0, sizeof(lastCounter_));
   if (loadSealed(LAST_PATH, last) && last.size() == sizeof(lastCounter_)) {
@@ -157,10 +157,10 @@ void MessageStore::begin(const uint8_t me) {
       if (r.kind != REC_MESSAGE) continue;
       const ChatMessage& m = r.message;
       sum.count++;
-      if (m.sender != me_) fromOthers++;
+      if (person(m.sender) != me_) fromOthers++;
       if (m.time >= sum.lastTime) {
         sum.lastTime = m.time;
-        sum.lastSender = m.sender;
+        sum.lastSender = person(m.sender);
         sum.lastText = m.text.substr(0, PREVIEW);
       }
       updateChain(c, m);
@@ -171,13 +171,13 @@ void MessageStore::begin(const uint8_t me) {
 }
 
 void MessageStore::savePacket(const uint8_t sender, const uint8_t* raw, const size_t len) {
-  if (!isMember(sender) || len > MAX_PACKET) return;
+  if (!isDevice(sender) || len > MAX_PACKET) return;
   append(packetPath(sender), raw, len);
 }
 
 void MessageStore::confirmCounter(const uint8_t sender, const uint32_t counter) {
-  if (!isMember(sender) || counter <= lastCounter_[sender - 1]) return;
-  lastCounter_[sender - 1] = counter;
+  if (!isDevice(sender) || counter <= lastCounter_[deviceSlot(sender)]) return;
+  lastCounter_[deviceSlot(sender)] = counter;
   const auto* bytes = reinterpret_cast<const uint8_t*>(lastCounter_);
   saveSealed(LAST_PATH, std::vector<uint8_t>(bytes, bytes + sizeof(lastCounter_)));
 }
@@ -234,11 +234,11 @@ void MessageStore::addMessage(const uint8_t conversation, const ChatMessage& m) 
 
   ConversationSummary& sum = summaries_[conversation];
   sum.count++;
-  if (m.sender != me_) sum.unread++;
+  if (person(m.sender) != me_) sum.unread++;
   // A late message (caught up from others) does not replace the newest one.
   if (m.time >= sum.lastTime) {
     sum.lastTime = m.time;
-    sum.lastSender = m.sender;
+    sum.lastSender = person(m.sender);
     sum.lastText = m.text.substr(0, PREVIEW);
   }
   updateChain(conversation, m);
@@ -328,7 +328,7 @@ void MessageStore::lastHash(const uint8_t conversation, const uint8_t sender, ui
 }
 
 void MessageStore::updateChain(const uint8_t conversation, const ChatMessage& m) {
-  if (!isMember(m.sender) || conversation >= CONVERSATIONS) return;
+  if (!isDevice(m.sender) || conversation >= CONVERSATIONS) return;
   ChainLink& link = chain_[uint16_t(conversation << 8 | m.sender)];
   if (m.counter < link.counter) return;
   link.counter = m.counter;

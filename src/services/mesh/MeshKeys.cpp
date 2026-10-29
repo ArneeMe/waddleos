@@ -74,7 +74,8 @@ std::string invitation(const ChatGroup& g, const GroupKey& k, const bool fresh) 
 
 uint32_t Node::sendControl(const uint8_t to, const std::string& payload, const uint32_t delayMs) {
   const Member* m = network_.member(to);
-  if (!m || !m->present || to == network_.me) return 0;
+  // To myself: a note to my other device (when there is one).
+  if (!m || !m->present || (to == network_.me && !hasOtherDevice())) return 0;
   // A DM like any other (ACKs, retries, sync), never shown as a message.
   std::string plain(MSG_PREFIX, '\0');
   put32(reinterpret_cast<uint8_t*>(&plain[0]), unixNow());
@@ -93,7 +94,7 @@ uint32_t Node::sendControl(const uint8_t to, const std::string& payload, const u
 
 void Node::sendSenderKey(const uint8_t to, const uint32_t delayMs) {
   const Member* m = network_.member(to);
-  if (!m || !m->present || to == network_.me) return;
+  if (!m || !m->present || (to == network_.me && !hasOtherDevice())) return;
   const Identity& mine = identity();
   ControlMsg c;
   c.kind = Control::SenderKey;
@@ -127,7 +128,8 @@ void Node::rotate(const int slot) {
   esp_fill_random(key, KEY_SIZE);
   g.addKey(uint8_t((newest ? newest->number : 0) + 1), network_.me, key);
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-    if (n != network_.me && g.has(n)) sendToMember(slot, n, INVITE, 0);
+    // My other device gets it too (a note to self).
+    if (g.has(n) && (n != network_.me || hasOtherDevice())) sendToMember(slot, n, INVITE, 0);
   }
   groups_.save();
   LOG_INF("MESH", "Group %04x has key %u", g.id, g.newest()->number);
@@ -141,13 +143,23 @@ void Node::takeOut(const int slot, const uint8_t member) {
     if (n.member == member) n = Notice{};
   }
   groups_.save();
-  if (!g.left && lowest(g.members) == network_.me) rotate(slot);
+  // Only the unit makes new keys, never the phone (protocol/PROTOCOL.md, "Devices").
+  if (!g.left && lowest(g.members) == network_.me && !network_.phone) rotate(slot);
 }
+
+bool Node::hasOtherDevice() const { return network_.phone || hasTwin(); }
 
 bool Node::handleControl(const uint8_t from, const std::string& text) {
   ControlMsg c;
   if (!readControl(text, c)) return true;  // not one we know: confirmed, never retried
   if (c.kind == Control::SenderKey) {
+    if (from == network_.me) {
+      // My unit's new sender key, to the phone: it uses the same one.
+      if (network_.phone && c.keyNumber != identity().senderKeyNumber) adoptSenderKey(c.keyNumber, c.key);
+      waitingForSenderKey_ = false;
+      changes_++;
+      return true;
+    }
     if (senders_.add(from, c.keyNumber, c.key)) {
       senders_.save();
       LOG_INF("MESH", "Sender key %u from %u", c.keyNumber, from);
@@ -208,6 +220,10 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
   if (!g.has(from)) return true;
   if (c.kind == Control::Leave) {
     takeOut(slot, from);
+    if (from == network_.me) {
+      g.left = true;  // I left on my other device
+      groups_.save();
+    }
   } else if (c.kind == Control::Remove) {
     // Asked to take someone out: only the lowest of those who stay does it.
     if (!isMember(c.member) || c.member == network_.me || !g.has(c.member)) return true;
@@ -225,9 +241,10 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
 
 void Node::missingKey(const Header& h) {
   const Member* from = network_.member(h.sender);
-  if (!network_.configured || !from || !from->present || !h.key) return;
+  const uint8_t who = person(h.sender);
+  if (!network_.configured || !from || !from->present || !h.key || who == network_.me) return;
   if (h.recipient == EVERYONE) {
-    askForKey(h.sender, 0, h.key);
+    askForKey(who, 0, h.key);
   } else if (h.recipient == TO_GROUP) {
     const int slot = groups_.find(h.groupId);
     if (slot < 0) {
@@ -240,7 +257,7 @@ void Node::missingKey(const Header& h) {
       return;
     }
     const ChatGroup& g = groups_.at(slot);
-    if (!g.left && g.has(network_.me) && g.has(h.sender) && !g.key(h.key)) askForKey(h.sender, h.groupId, h.key);
+    if (!g.left && g.has(network_.me) && g.has(who) && !g.key(h.key)) askForKey(who, h.groupId, h.key);
   }
 }
 
@@ -315,7 +332,8 @@ bool Node::confirmControl(const uint8_t from, const uint32_t counter) {
 
 bool Node::resendStored(const uint32_t counter, const uint32_t delayMs) {
   // The same packet again (same counter): no new copy on the card or the server.
-  const auto pieces = counter ? store_.piecesOf(network_.me, counter) : std::vector<std::vector<uint8_t>>{};
+  const auto pieces =
+      counter ? store_.piecesOf(network_.myDevice(), counter) : std::vector<std::vector<uint8_t>>{};
   for (const auto& raw : pieces) queue(raw.data(), raw.size(), delayMs, false);
   return !pieces.empty();
 }
@@ -355,8 +373,9 @@ void Node::resendUnconfirmed() {
 void Node::openWaiting(const uint16_t groupId) {
   // Group messages that came before the key: kept as packets, opened now.
   Reassembler pieces;
-  for (uint8_t s = 1; s <= MAX_MEMBERS; s++) {
-    if (s == network_.me) continue;
+  for (int slot = 0; slot < MAX_DEVICES; slot++) {
+    const uint8_t s = slotDevice(slot);
+    if (s == network_.myDevice()) continue;
     for (const auto& raw : store_.packetsTo(s, TO_GROUP)) {
       Header h;
       if (!readHeader(raw.data(), raw.size(), h) || h.groupId != groupId) continue;
@@ -371,17 +390,19 @@ void Node::openWaiting(const uint16_t groupId) {
   }
 }
 
-void Node::openWaitingFrom(const uint8_t sender) {
-  // Messages to everyone that came before the sender's key.
+void Node::openWaitingFrom(const uint8_t member) {
+  // Messages to everyone that came before the member's key (from both devices).
   Reassembler pieces;
-  for (const auto& raw : store_.packetsTo(sender, EVERYONE)) {
-    Header h;
-    if (!readHeader(raw.data(), raw.size(), h)) continue;
-    const uint8_t* joined = nullptr;
-    size_t joinedLen = 0;
-    if (pieces.add(h, raw.data(), raw.size(), millis(), &joined, &joinedLen)) {
-      const std::vector<uint8_t> copy(joined, joined + joinedLen);
-      handleMessage(h, copy.data(), copy.size());
+  for (const uint8_t device : {member, uint8_t(member | PHONE)}) {
+    for (const auto& raw : store_.packetsTo(device, EVERYONE)) {
+      Header h;
+      if (!readHeader(raw.data(), raw.size(), h)) continue;
+      const uint8_t* joined = nullptr;
+      size_t joinedLen = 0;
+      if (pieces.add(h, raw.data(), raw.size(), millis(), &joined, &joinedLen)) {
+        const std::vector<uint8_t> copy(joined, joined + joinedLen);
+        handleMessage(h, copy.data(), copy.size());
+      }
     }
   }
 }
@@ -389,7 +410,7 @@ void Node::openWaitingFrom(const uint8_t sender) {
 int Node::createGroup(const Members others, const std::string& name) {
   const Members members = (others & network_.everyone()) | memberBit(network_.me);
   if (!network_.configured || memberCount(members) < 2) return -1;
-  const uint16_t id = groups_.nextId(network_.me);
+  const uint16_t id = groups_.nextId(network_.me, network_.phone);
   if (!id) return -1;
   const int slot = groups_.take(id);
   if (slot < 0) return -1;  // 16 groups already
@@ -410,7 +431,7 @@ void Node::leaveGroup(const uint8_t conversation) {
   ChatGroup& g = groups_.at(slot);
   if (!g.id || g.left) return;
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
-    if (n != network_.me && g.has(n)) sendToMember(slot, n, LEAVE, 0);
+    if (g.has(n) && (n != network_.me || hasOtherDevice())) sendToMember(slot, n, LEAVE, 0);
   }
   g.left = true;
   groups_.save();
@@ -423,9 +444,10 @@ void Node::removeFromGroup(const uint8_t conversation, const uint8_t member) {
   ChatGroup& g = groups_.at(slot);
   if (!g.id || g.left || !g.has(member)) return;
   const uint8_t keeper = lowest(g.members & ~memberBit(member));
-  if (keeper == network_.me) {
+  if (keeper == network_.me && !network_.phone) {
     takeOut(slot, member);
   } else {
+    // (On the phone, when I am the keeper: to my unit, which makes the key.)
     sendToMember(slot, keeper, REMOVE, member);  // the lowest member makes the new key
     groups_.save();
   }
@@ -496,9 +518,21 @@ void Node::rosterChanged(const Members before) {
   if (gone) {
     senders_.save();
     dropMissingMembers();
-    // Those gone hold my sender key: a new one, for those who stay.
+    if (network_.phone) {
+      // My unit makes the new sender key and sends it to me; until then I do
+      // not write to everyone with the old one (the one who left has it).
+      waitingForSenderKey_ = true;
+      changes_++;
+      return;
+    }
+    // Those gone hold my sender key: a new one, for those who stay (and my phone).
     newSenderKey();
     senderKeyConfirmed_ = 0;
+    if (hasOtherDevice()) sendSenderKey(network_.me);
+  }
+  if (network_.phone) {
+    changes_++;
+    return;  // newcomers get the key from my unit
   }
   // Newcomers (or everyone, after a new key) get my sender key.
   senderKeyConfirmed_ &= before & now;

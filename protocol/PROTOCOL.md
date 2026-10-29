@@ -1,4 +1,4 @@
-# WaddleOS mesh protocol, version 3
+# WaddleOS mesh protocol, version 4
 
 One small binary packet format for LoRa and Wi-Fi, so the units, the gateway
 and the Pi server share one parser. The C++ code is `lib/WaddleMesh/`; the
@@ -19,22 +19,48 @@ Who is in the network is the **roster** (below): a list signed by the admin.
 Units, the server and the tools trust a roster only with the admin's signature,
 and only a newer one than they have.
 
+## Devices
+
+A member has a unit and may have a phone that is the same person
+(docs/waddle/PHONE.md). The phone has a copy of the unit's keys and sends as its
+own **device**: the member's number + `0x80` (129–160). The unit sends as the
+number itself.
+
+- **By device:** the sender byte, so the nonce, the counter, duplicates, the
+  "previous message" chain, SYNC_REQ, FETCH and ACKs (the acked sender is the
+  device that sent the message).
+- **By person** (the device byte without `0x80`): keys, names, conversations,
+  who may read a packet, roster bits. Packets are always addressed to the
+  person, so both devices can open them. The phone uses the unit's sender key.
+- **Notes to self:** every key or group change a device makes (its sender key,
+  a group's key, leaving a group, a new group) also goes as a DM to its own
+  number, sealed with the DM key of the member with themselves. The unit does
+  this only once a phone is paired.
+- **Only the unit makes new keys:** a new sender key when someone leaves, and a
+  new group key when it is the lowest member. A phone that would be the one to
+  make a group key asks its unit (`'R'` to itself). After someone left, the
+  phone does not write to everyone until its unit's new sender key arrives.
+- **Group ids:** a unit counts 0–127, the phone 128–255, so they never pick the
+  same.
+- **Over the server:** a sync gets the asking device everything from every
+  other device, its member's other one too.
+
 ## Header (14 bytes, never encrypted)
 
 | Byte | Field | Notes |
 |---|---|---|
 | 0 | magic | `0x57` ("W") |
-| 1 | version and type | high 4 bits = 3, low 4 bits = type (below) |
+| 1 | version and type | high 4 bits = 4, low 4 bits = type (below) |
 | 2 | network id | set when the network is made |
 | 3 | hops | low 4 bits: hops left (starts at 3); bit 4: fragmented |
-| 4 | sender | 1–32, or 0 = server |
+| 4 | sender | a device: 1–32 (a unit), 129–160 (a phone, the member + `0x80`), or 0 = server |
 | 5 | recipient | 1–32, 0 = server, `0xFE` = a group (bytes 11–12), `0xFF` = everyone |
 | 6–9 | counter | per sender, see below |
 | 10 | fragment | high 4 bits: index, low 4 bits: count (1 when not split) |
 | 11–12 | group id | u16, for recipient `0xFE`: creator's number × 256 + the creator's count; else 0 |
 | 13 | key number | which of the sender's keys (to everyone, POS, SOS) or the group's keys (group) sealed it; else 0 |
 
-Message id = (sender, counter). It is unique for ever: a unit never reuses a
+Message id = (sender device, counter). It is unique for ever: a device never reuses a
 counter. It saves a reserved counter range to flash before using it, so a
 crash or reboot skips ahead instead of repeating. A unit's counters start above
 `counterFloor` (unix seconds when it joined), so a new unit that gets a former
@@ -94,13 +120,15 @@ Everything sent in answer to a SYNC_REQ or FETCH, by the server, the gateway or 
 unit, goes with hops 0: only the one who asked needs it. Over LoRa the server
 sends positions and ACKs only when they are new since that unit's last sync.
 
-### SYNC_REQ body (5 + 5 × n bytes)
+### SYNC_REQ body (5 + 5 × n bytes, n ≤ 36)
 
 battery % (u8), firmware build (first byte of the short git hash), flags (u8:
 bit 0 = "På tur", bit 1 = its SOS is on, bits 2–4 = how often it checks, for the
-server's status page), roster version (u16), then for each member it has
-messages from: member (u8) and the last MSG counter it has from them (u32). The
-answer is every stored MSG with a higher counter (0 for members not listed),
+server's status page; bit 5 = only the listed devices are asked about), roster
+version (u16), then for each device it has messages from: device (u8) and the
+last MSG counter it has from it (u32). Units first; when more than 36 do not fit,
+bit 5 is set and those left out are not asked about. The
+answer is every stored MSG with a higher counter (0 for devices not listed),
 except DMs between two others, and the newest roster as ROSTER packets when the
 asker's version is older (units answer with the roster too, so it spreads on a
 trip without the gateway). Group messages go to everyone; only their members can
