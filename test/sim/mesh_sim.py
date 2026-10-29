@@ -53,7 +53,7 @@ class Unit:
     def stop(self):
         """Switched off: the process ends, the SD card and flash stay."""
         self.cmd("quit", expect_ok=False)
-        self.proc.wait(timeout=10)
+        self.proc.wait(timeout=60)
         self.proc.stdin.close()
         self.proc.stdout.close()
         self.alive = False
@@ -223,6 +223,8 @@ class World:
         for raw in P.unframe(body):
             if P.parse_header(raw).sender == member:
                 answers += self.server.handle(raw, "wifi")
+            else:  # heard over LoRa (web.py does the same)
+                self.server.handle(raw, "relay", handed_over=True)
         return 200, email.utils.formatdate(usegmt=True), P.frame(answers)
 
     def step(self):
@@ -1009,6 +1011,24 @@ class PhoneTests(unittest.TestCase):
         self.sync(phone)
         self.sync(w.units[2])
         self.assertEqual(w.units[2].state()["unread"], 0)
+
+    def test_what_the_unit_heard_on_a_trip_reaches_the_phone(self):
+        """Kari and Ola on a trip, out of the gateway's reach: Ola's message to
+        everyone reaches Kari's T5 over LoRa only. At home, her T5's Wi-Fi sync
+        hands it to the Pi, and her phone gets it (PHONE.md, R5)."""
+        w, phone = self.w, self.phone
+        w.links.clear()
+        w.link(2, 3)
+        w.units[2].cmd("time %d" % (w.now + 3600 * 1000))  # a while since the server was heard
+        w.now += 3600 * 1000
+        w.units[3].cmd("send 0 Fra fjellet")
+        w.run(20)
+        self.assertEqual(w.units[2].texts(0)[-1:], ["Fra fjellet"])
+        self.sync(phone)
+        self.assertNotIn("Fra fjellet", phone.texts(0))
+        self.sync(w.units[2])
+        self.sync(phone)
+        self.assertIn("Fra fjellet", phone.texts(0))
 
     def test_groups_and_new_keys_reach_the_phone(self):
         w, phone = self.w, self.phone

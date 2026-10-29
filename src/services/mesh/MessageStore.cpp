@@ -17,6 +17,8 @@ namespace {
 
 constexpr const char* READ_PATH = "/.mesh/read.bin";
 constexpr const char* LAST_PATH = "/.mesh/last.bin";
+constexpr const char* UPLOAD_PATH = "/.mesh/upload.sealed";
+constexpr size_t MAX_UPLOAD = 1000;  // packets kept for the server; the oldest go first
 constexpr size_t PREVIEW = 60;
 
 // Chat log records.
@@ -144,6 +146,13 @@ void MessageStore::begin(const uint8_t me) {
   if (loadSealed(LAST_PATH, last) && last.size() == sizeof(lastCounter_)) {
     memcpy(lastCounter_, last.data(), sizeof(lastCounter_));
   }
+  repairSealedLog(UPLOAD_PATH);
+  uploadCount_ = 0;
+  {
+    SealedLog log(UPLOAD_PATH);
+    std::vector<uint8_t> raw;
+    while (log.next(raw)) uploadCount_++;
+  }
   std::vector<uint8_t> seen;
   if (loadSealed(READ_PATH, seen) && seen.size() == sizeof(seen_)) memcpy(seen_, seen.data(), sizeof(seen_));
   for (uint8_t c = 0; c < CONVERSATIONS; c++) {
@@ -201,6 +210,36 @@ std::vector<std::vector<uint8_t>> MessageStore::packetsAfter(const uint8_t sende
     out.emplace_back(raw, raw + len);
   });
   return out;
+}
+
+void MessageStore::keepForUpload(const uint8_t* raw, const size_t len) {
+  if (uploadCount_ >= MAX_UPLOAD) uploaded(MAX_UPLOAD / 10);
+  if (append(UPLOAD_PATH, raw, len)) uploadCount_++;
+}
+
+std::vector<std::vector<uint8_t>> MessageStore::toUpload(const size_t limit) {
+  std::vector<std::vector<uint8_t>> out;
+  SealedLog log(UPLOAD_PATH);
+  std::vector<uint8_t> raw;
+  while (out.size() < limit && log.next(raw)) out.push_back(raw);
+  return out;
+}
+
+void MessageStore::uploaded(const size_t count) {
+  // The first count are on the server: the rest are written back.
+  std::vector<std::vector<uint8_t>> rest;
+  {
+    SealedLog log(UPLOAD_PATH);
+    std::vector<uint8_t> raw;
+    for (size_t i = 0; log.next(raw); i++) {
+      if (i >= count) rest.push_back(raw);
+    }
+  }
+  Storage.remove(UPLOAD_PATH);
+  uploadCount_ = 0;
+  for (const auto& r : rest) {
+    if (append(UPLOAD_PATH, r.data(), r.size())) uploadCount_++;
+  }
 }
 
 std::vector<std::vector<uint8_t>> MessageStore::piecesOf(const uint8_t sender, const uint32_t counter) {

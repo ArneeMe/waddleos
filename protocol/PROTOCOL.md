@@ -191,6 +191,10 @@ the fragment byte, at most 15 pieces. Receivers wait for all pieces, join them
 and then decrypt.
 
 The server stores packets exactly as received and can read none of them.
+A unit's Wi-Fi upload may also hold others' packets it heard over LoRa while
+away from home (no word from the server for half an hour): the server keeps
+those as heard ("relay"), never answers or passes them on, and a copy uploaded
+by the sender itself replaces them.
 Anyone near the gateway can send a packet with a member's number and counter;
 the server cannot tell, so a copy that member uploads over Wi-Fi (its token
 proves who it is) replaces a different one heard over LoRa. Units keep a copy

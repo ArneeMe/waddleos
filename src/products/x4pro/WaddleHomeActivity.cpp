@@ -303,7 +303,7 @@ void WaddleHomeActivity::activate(const int target) {
     case T_STORY_2:
     case T_STORY_3:
       if (target - T_STORY_1 < static_cast<int>(topStories.size())) {
-        waddle::news::openStory(paper, readIds, topStories[target - T_STORY_1]);
+        waddle::news::openStory(paper, readIds, topStories[target - T_STORY_1], /*fromHome=*/true);
       }
       return;
     case T_NEWS_LIST:
