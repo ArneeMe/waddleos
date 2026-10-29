@@ -95,6 +95,11 @@ class Node {
   // Joins Wi-Fi and talks to the server directly. Runs in loop(); at most 30 s.
   void startWifiSync();
   bool wifiSyncRunning() const { return wifi_ != WifiStep::Idle; }
+  // The two halves of a server sync, for a device that does the HTTPS itself
+  // (a phone): the body for POST /api/packets, then the server's answer with
+  // its Date header in unix seconds (0 = none). Returns the packets handled.
+  std::string serverRequest();
+  size_t takeServerAnswer(const std::string& answer, uint32_t serverTime);
   ServerState serverState() const;
   uint32_t lastServerContactMs() const { return serverAtMs_; }
 
