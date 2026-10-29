@@ -198,7 +198,8 @@ void WaddleHomeActivity::loadData() {
       break;
     }
   }
-  const int progress = found ? loadBookProgress(latest.path) : -1;
+  int chapter = 0;
+  const int progress = found ? loadBookProgress(latest.path, &chapter) : -1;
 
   Weather loadedWeather;
   loadWeather(loadedWeather);
@@ -223,6 +224,7 @@ void WaddleHomeActivity::loadData() {
   hasBook = found;
   book = std::move(latest);
   bookProgress = progress;
+  bookChapter = chapter;
   weather = std::move(loadedWeather);
   fetchedAt = loadedFetchedAt;
   paper = std::move(loadedPaper);
@@ -474,8 +476,12 @@ void WaddleHomeActivity::render(RenderLock&&) {
       renderer.drawRoundedRect(textX, barY, textW, 14, 2, 7, true);
       const int filled = (textW - 6) * std::min(bookProgress, 100) / 100;
       if (filled > 0) renderer.fillRect(textX + 3, barY + 3, filled, 8);
-      char percent[16];
-      snprintf(percent, sizeof(percent), "%d %%", bookProgress);
+      char percent[32];
+      if (bookChapter > 0) {
+        snprintf(percent, sizeof(percent), "%d %%  ·  kapittel %d", bookProgress, bookChapter);
+      } else {
+        snprintf(percent, sizeof(percent), "%d %%", bookProgress);
+      }
       renderer.drawText(SMALL_FONT_ID, textX, barY + 22, percent);
     }
   } else {

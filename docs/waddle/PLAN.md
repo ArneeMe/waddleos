@@ -30,7 +30,6 @@ What is done and what is next. How the system fits together:
 
 - Cloudflare timer that starts `nyheter.yml` every hour (GitHub skips runs).
   Needs a GitHub token as a Cloudflare secret.
-- Chapter on the Hjem book card ("kapittel 18").
 - Hjem fetch in the background so taps are not ignored for a few seconds.
 - Reader font sizes below 12 (adds flash per size).
 - Read later: send an article link to arnee.me, get it on the reader.

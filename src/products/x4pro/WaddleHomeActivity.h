@@ -60,6 +60,7 @@ class WaddleHomeActivity final : public Activity {
   bool hasBook = false;
   RecentBook book;
   int bookProgress = -1;
+  int bookChapter = 0;
   bool coverTried = false;
 
   Weather weather;
