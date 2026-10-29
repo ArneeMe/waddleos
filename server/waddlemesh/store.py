@@ -1,8 +1,11 @@
 """SQLite store: every packet as received, plus what the server knows about each unit."""
 
+import logging
 import sqlite3
 import threading
 import time
+
+log = logging.getLogger("waddlemesh")
 
 from . import packet as P
 
@@ -84,8 +87,25 @@ class Store:
             self.db.commit()
 
     def add_packet(self, h, raw, via, now=None):
-        """Stores a packet. Returns False when it was already stored."""
+        """Stores a packet. Returns False when it was already stored.
+
+        Anyone near the gateway can send a packet with a member's number and
+        counter, and the server cannot tell (it has no keys). Over Wi-Fi the
+        token proves the sender, so a Wi-Fi copy replaces a different one heard
+        over LoRa."""
         with self.lock:
+            if via == "wifi":
+                row = self.db.execute("SELECT raw, via FROM packets WHERE type = ? AND sender = ? AND counter = ?"
+                                      " AND piece_index = ?", (h.type, h.sender, h.counter, h.piece_index)).fetchone()
+                if row and bytes(row[0]) != raw:
+                    self.db.execute("UPDATE packets SET raw = ?, recipient = ?, piece_count = ?, via = ?"
+                                    " WHERE type = ? AND sender = ? AND counter = ? AND piece_index = ?",
+                                    (raw, h.recipient, h.piece_count, via, h.type, h.sender, h.counter,
+                                     h.piece_index))
+                    self.db.commit()
+                    log.warning("member %d's packet %d replaced a different copy heard over LoRa", h.sender,
+                                h.counter)
+                    return True
             cur = self.db.execute(
                 "INSERT OR IGNORE INTO packets (type, sender, recipient, counter, piece_index, piece_count, raw,"
                 " received_at, via) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

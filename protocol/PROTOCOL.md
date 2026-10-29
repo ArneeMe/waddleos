@@ -98,8 +98,13 @@ server's status page), roster version (u16), then for each member it has
 messages from: member (u8) and the last MSG counter it has from them (u32). The
 answer is every stored MSG with a higher counter (0 for members not listed),
 except DMs between two others, and the newest roster as ROSTER packets when the
-asker's version is older. Group messages go to everyone; only their members can
+asker's version is older (units answer with the roster too, so it spreads on a
+trip without the gateway). Group messages go to everyone; only their members can
 open them.
+
+The last counter a unit lists for a member counts only messages it could open
+(and its own, and those for groups it is not in): a forged packet with a high
+counter would otherwise make it skip that member's real messages.
 
 ### FETCH body (9 bytes)
 
@@ -143,6 +148,11 @@ the fragment byte, at most 15 pieces. Receivers wait for all pieces, join them
 and then decrypt.
 
 The server stores packets exactly as received and can read none of them.
+Anyone near the gateway can send a packet with a member's number and counter;
+the server cannot tell, so a copy that member uploads over Wi-Fi (its token
+proves who it is) replaces a different one heard over LoRa. Units keep a copy
+whose bytes differ from one they have, so a forged packet cannot hide the real
+one; only the real one opens.
 
 ## Control DMs
 
@@ -157,7 +167,14 @@ check until that member's ACK comes, also after a restart.
 | `0x00 'G'` group id (u16), key number, flags (bit 0 = a new group), member bits (u32), key (32), name | a group's key |
 | `0x00 'L'` group id (u16) | I leave the group |
 | `0x00 'R'` group id (u16), member | please take this member out (to the lowest remaining member) |
+| `0x00 'K'` group id (u16, 0 = your sender key), key number | please send me this key |
 
+A unit that gets a message under a key number it lacks asks the sender for it
+(`'K'`; for a group it has no invitation for, its creator), at most every 6 hours
+per key. ACKs carry no proof, so a forged one could otherwise stop a key DM from
+being sent again for good. Key DMs are not retried within a check like
+messages; they go again at each check, and up with each Wi-Fi sync, until
+answered.
 ## The roster
 
 A signed list of the members. Format (bytes):
@@ -176,7 +193,13 @@ the network key, in pieces), which the admin's tool makes and the server sends
 when a unit's sync shows an older version, and over Wi-Fi as
 `GET /api/roster` (the same signed bytes).
 
-A unit takes a newer roster when the signature is the admin's:
+A unit takes a newer roster when the signature is the admin's. It keeps the
+newest version in flash and refuses an older `roster.bin` (a copied-back card).
+A roster without the unit's number, or with another public key under it, takes
+it out, also after a restart; it can then join again with a new invitation (a
+unit in a network refuses to join another). Joining another network, or the same
+one as another number, clears the old groups, keys and chats; it makes a new
+sender key either way.
 - **Someone new:** it sends them its sender key (`'S'`). The newcomer sends
   theirs to everyone.
 - **Someone gone:** it takes them out of every group (see "Groups"), makes a new
@@ -220,9 +243,18 @@ at most 1 KB, and forgets them after 7 days.
   invitation id (8), password (16), admin X25519 public key (32), SHA-256 of the
   server certificate in DER (32), server address (UTF-8, e.g.
   `https://home.example:8443`).
+- *Setup code* (before anything secret goes to the unit): the tool makes a
+  one-time X25519 key T and 16 random bytes Nt, and sends only
+  `GET /api/mesh/identity?commit=<BLAKE2b-256(T || Nt)>`; the unit answers with
+  its public key U and 16 random bytes Nu. Then `POST /api/mesh/pair {"tool": T,
+  "nonce": Nt}`; the unit checks the commitment and shows six digits of
+  BLAKE2b-256(T || U || Nt || Nu) on its File Transfer screen, which the person
+  compares with the tool's. Because the tool is bound before it sees Nu, and the
+  unit's Nu is fresh, someone on the Wi-Fi cannot pick a key that gives the
+  same digits. The unit then takes sealed bodies only from T.
 - *Unit, `POST /api/mesh/join`* (File Transfer web server; body sealed like
   setup: `{"tool", "box"}`, setup key, nonce byte 2) with `{"invite": link,
-  "name": name}`. The unit keeps the invitation in flash and answers
+  "name": name}`. Refused when the unit is in a network. The unit keeps the invitation in flash and answers
   `{"from": its X25519 public hex, "box": hex, "code": "123 456"}`: `box` is
   `{"name": …}` sealed with K, nonce byte 3.
 - *Server, `POST /api/join`* `{"invite": invitation id hex, "from", "box"}`; 409
@@ -253,11 +285,15 @@ accept step.
   units never pick the same id. Recipient byte `0xFE`, id in header bytes 11–12.
 - **Key:** the creator makes 32 random bytes, key number 1, and sends it to each
   member in a `'G'` DM (flag bit 0 marks a new group: start afresh).
-- **Who may change a group:** only the remaining member with the lowest number
-  makes a new key, so two never do at once. An invitation for a group a unit
-  already has counts only when it comes from a member of that group and carries
-  a newer key number than the unit holds; an older one only adds that old key
-  (for history) and changes nothing else.
+- **Who may change a group:** only its creator starts it (an invitation for a
+  group a unit does not have, or one that starts an id afresh, counts only from
+  the member whose number is in the id); a unit does not confirm another
+  member's invitation for a group it does not have yet, so it comes again. Only
+  the remaining member with the lowest number makes a new key, so two never do
+  at once. An invitation for a group a unit already has counts only when it comes
+  from a member of that group and carries a newer key number than the unit
+  holds; an older one only adds that old key (for history) and changes nothing
+  else.
 - **Messages to the group:** MSG to `0xFE`, encrypted with the group key, header
   byte 13 = its key number. A unit keeps every key number it has had (the last
   6), so it can open older messages too. A message that arrives before its
@@ -268,9 +304,8 @@ accept step.
 - **Removing** (a lost unit): any member chooses "Fjern"; their unit sends `'R'`
   to the lowest remaining member, who takes them out and makes the next key. A
   member gone from the roster is taken out the same way.
-- **After someone is out:** units drop their group messages, except ones under an
-  older key with a counter no higher than the newest one seen from them when
-  they went out (late arrivals of what they wrote before).
+- **After someone is out:** units drop all their group messages, also late
+  arrivals of ones written before (the counter in them proves nothing).
 
 ## Relaying
 
@@ -297,7 +332,9 @@ its roster is older, the ROSTER packets.
 `GET /api/roster` (same authorization): the newest signed roster, as bytes.
 
 Joining (no authorization; the sealed contents prove the invitation):
-`POST /api/join` and `GET /api/join/<invitation id>` (404 until approved).
+`POST /api/join` and `GET /api/join/<invitation id>` (404 until approved). At
+most 3 join requests per internet address per hour. A body with a missing,
+negative or too large length is refused.
 
 ## Gateway serial link (115200 baud, text lines)
 

@@ -351,6 +351,12 @@ void CrossPointWebServerActivity::loop() {
             repaint = true;
           }
         }
+        // The setup code appears when a tool starts setup (product::transferNote()).
+        const std::string note = product::transferNote();
+        if (note != shownNote) {
+          shownNote = note;
+          repaint = true;
+        }
         if (repaint) requestUpdate();
       }
     }

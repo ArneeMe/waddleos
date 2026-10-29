@@ -14,7 +14,7 @@ namespace {
 
 constexpr const char* GROUPS_PATH = "/.mesh/groups.bin";
 constexpr const char* SENDERS_PATH = "/.mesh/senders.bin";
-constexpr uint8_t RECORD_VERSION = 3;
+constexpr uint8_t RECORD_VERSION = 4;
 
 template <typename T>
 bool saveRecord(const char* path, const T& data) {
@@ -35,30 +35,6 @@ bool loadRecord(const char* path, T& data) {
 }  // namespace
 
 // --- One group ----------------------------------------------------------------
-
-bool ChatGroup::accepts(const uint8_t member, const uint8_t number, const uint32_t counter) const {
-  if (!isMember(member)) return false;
-  if (has(member)) return true;
-  for (const auto& r : removed) {
-    if (r.member == member) return number < r.atKey && counter <= r.counter;
-  }
-  return false;
-}
-
-void ChatGroup::markRemoved(const uint8_t member, const uint8_t atKey, const uint32_t counter) {
-  Removed* slot = nullptr;
-  for (auto& r : removed) {
-    if (r.member == member || (!slot && !r.member)) slot = &r;
-  }
-  if (!slot) slot = &removed[0];  // full: the first one is forgotten
-  *slot = Removed{member, atKey, counter};
-}
-
-void ChatGroup::clearRemoved(const uint8_t member) {
-  for (auto& r : removed) {
-    if (r.member == member) r = Removed{};
-  }
-}
 
 void ChatGroup::setNotice(const uint8_t member, const char kind, const uint8_t about, const uint32_t counter) {
   Notice* slot = nullptr;

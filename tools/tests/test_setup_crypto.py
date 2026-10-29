@@ -45,7 +45,9 @@ class SetupCrypto(unittest.TestCase):
         self.assertEqual(key.hex(), s["key"])
         sender = wm.aead_open(key, wm.setup_nonce(1), bytes.fromhex(s["senderKeyBox"]))
         self.assertEqual(sender.hex(), V["senderKey"])
-        self.assertEqual(wm.setup_code(unit_public), s["code"])
+        tool_nonce, unit_nonce = bytes.fromhex(s["toolNonce"]), bytes.fromhex(s["unitNonce"])
+        self.assertEqual(wm.pair_commit(wm.x25519_public(tool_secret), tool_nonce).hex(), s["commit"])
+        self.assertEqual(wm.pair_code(wm.x25519_public(tool_secret), unit_public, tool_nonce, unit_nonce), s["code"])
 
 
 if __name__ == "__main__":

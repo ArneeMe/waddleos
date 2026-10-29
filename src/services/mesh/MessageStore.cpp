@@ -16,6 +16,7 @@ namespace mesh {
 namespace {
 
 constexpr const char* READ_PATH = "/.mesh/read.bin";
+constexpr const char* LAST_PATH = "/.mesh/last.bin";
 constexpr size_t PREVIEW = 60;
 
 // Chat log records.
@@ -136,12 +137,10 @@ void MessageStore::begin(const uint8_t me) {
   chain_.clear();
   Storage.mkdir("/.mesh/packets");
   Storage.mkdir("/.mesh/chat");
-  for (uint8_t s = 1; s <= MAX_MEMBERS; s++) {
-    uint32_t last = 0;
-    forEachPacket(s, [&](const Header& h, const uint8_t*, size_t) {
-      if (h.counter > last) last = h.counter;
-    });
-    lastCounter_[s - 1] = last;
+  std::vector<uint8_t> last;
+  memset(lastCounter_, 0, sizeof(lastCounter_));
+  if (loadSealed(LAST_PATH, last) && last.size() == sizeof(lastCounter_)) {
+    memcpy(lastCounter_, last.data(), sizeof(lastCounter_));
   }
   std::vector<uint8_t> seen;
   if (loadSealed(READ_PATH, seen) && seen.size() == sizeof(seen_)) memcpy(seen_, seen.data(), sizeof(seen_));
@@ -170,15 +169,22 @@ void MessageStore::begin(const uint8_t me) {
 
 void MessageStore::savePacket(const uint8_t sender, const uint8_t* raw, const size_t len) {
   if (!isMember(sender) || len > MAX_PACKET) return;
-  if (!append(packetPath(sender), raw, len)) return;
-  Header h;
-  if (readHeader(raw, len, h) && h.counter > lastCounter_[sender - 1]) lastCounter_[sender - 1] = h.counter;
+  append(packetPath(sender), raw, len);
 }
 
-bool MessageStore::hasPacket(const Header& h) {
+void MessageStore::confirmCounter(const uint8_t sender, const uint32_t counter) {
+  if (!isMember(sender) || counter <= lastCounter_[sender - 1]) return;
+  lastCounter_[sender - 1] = counter;
+  const auto* bytes = reinterpret_cast<const uint8_t*>(lastCounter_);
+  saveSealed(LAST_PATH, std::vector<uint8_t>(bytes, bytes + sizeof(lastCounter_)));
+}
+
+bool MessageStore::hasPacket(const Header& h, const uint8_t* raw, const size_t len) {
   bool found = false;
-  forEachPacket(h.sender, [&](const Header& s, const uint8_t*, size_t) {
-    if (s.counter == h.counter && s.pieceIndex == h.pieceIndex && s.type == h.type) found = true;
+  forEachPacket(h.sender, [&](const Header& s, const uint8_t* stored, const size_t storedLen) {
+    // The same packet: everything but the hops byte (3), which relays change.
+    if (found || s.counter != h.counter || s.pieceIndex != h.pieceIndex || s.type != h.type || storedLen != len) return;
+    found = memcmp(stored, raw, 3) == 0 && memcmp(stored + 4, raw + 4, len - 4) == 0;
   });
   return found;
 }

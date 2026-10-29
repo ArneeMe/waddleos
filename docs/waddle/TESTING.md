@@ -116,8 +116,12 @@ Groups made on the unit (PR #35):
 Joining (protocol 3: up to 32 members):
 - [ ] `waddle mesh invite Ola` prints a `waddle://join/…` link and how Ola runs it.
 - [ ] On a second computer (Ola's), unit on File Transfer → Join a Network:
-      `waddle mesh join '<link>' --name Ola` asks the address, the setup code, then
-      prints six digits that the unit shows too, and "Waiting for the admin".
+      `waddle mesh join '<link>' --name Ola` asks the address. Only then does
+      "Oppsettkode: … …" appear on the unit's screen (within 2 s), the same as
+      the tool asks about; answer y. It then prints six digits that the unit
+      shows too, and "Waiting for the admin".
+- [ ] Answer n to the setup code question: the tool stops and the unit has
+      nothing. Run it again: a new, different setup code.
 - [ ] `waddle mesh approve` on your computer shows "Ola" and the same six digits;
       answer y. Within 10 s Ola's tool says "You are in!" and his unit starts.
 - [ ] The other units show Ola after their next check (the new member list
@@ -131,6 +135,13 @@ Joining (protocol 3: up to 32 members):
 - [ ] With 6+ members: Hjem shows "Alle" and the three most recent contacts;
       Meldinger lists everyone, newest first; Ny gruppe scrolls ("Vis flere").
 - [ ] Kart lists the nearest first and "og N til" when they do not fit.
+- [ ] `waddle mesh join` on a unit that is already in the network: it says
+      "enheten er allerede med i et nettverk".
+- [ ] `waddle mesh remove Ola`: after his next check Ola's unit says it is not
+      in a network, also after a restart. A new invitation lets him in again as
+      the same number, with his old chats still there.
+- [ ] Make a group of three, then switch one member's unit off for the
+      invitation: when it is back it gets the group within a check.
 - [ ] Taking out a SD card and reading it on a computer: nothing in /.mesh/ is
       readable (keys, `chat/*.sealed`, `packets/*.sealed`, positions, read
       counts), and no group.json. Put the card back: the conversations are all

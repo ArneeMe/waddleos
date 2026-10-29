@@ -47,15 +47,16 @@ class AirtimeBudget {
 // each packet once and drops copies it hears again.
 class SeenPackets {
  public:
-  // Returns true the first time, false for a packet already seen.
-  bool remember(const Header& h);
-  bool contains(const Header& h) const;
+  // Returns true the first time, false for a packet already seen. With the
+  // body, a forged packet that copies a real one's header does not hide it.
+  bool remember(const Header& h, const uint8_t* body = nullptr, size_t bodyLen = 0);
+  bool contains(const Header& h, const uint8_t* body = nullptr, size_t bodyLen = 0) const;
 
  private:
   static constexpr int ENTRIES = 128;
   uint64_t keys_[ENTRIES] = {};
   int next_ = 0;
-  static uint64_t key(const Header& h);
+  static uint64_t key(const Header& h, const uint8_t* body, size_t bodyLen);
 };
 
 // Hands out counters that are never repeated, even after a crash: it reserves a

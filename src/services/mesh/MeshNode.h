@@ -106,6 +106,9 @@ class Node {
   uint32_t msUntilWork() const;
 
  private:
+#ifdef MESH_SIM
+  friend struct SimAccess;  // test/sim: plays a misbehaving member
+#endif
   struct Outgoing {
     std::vector<uint8_t> raw;
     uint32_t dueMs = 0;
@@ -124,6 +127,7 @@ class Node {
   SenderKeys senders_;
   std::vector<Fetch> fetches_;  // missing messages to ask the server for over Wi-Fi
   std::vector<uint32_t> controlCounters_;  // my invitations and notices this session
+  std::vector<uint32_t> controlWaiting_;   // of those, the ones nobody has answered yet
   uint32_t senderKeyCounters_[MAX_MEMBERS] = {};  // my sender key DM to each member, until confirmed
   Members senderKeyConfirmed_ = 0;                 // who has my current sender key
   MessageStore store_;
@@ -153,6 +157,12 @@ class Node {
   Members sosReceivedBy_ = 0;
   Members sosSeenBy_ = 0;
   bool sosOnServer_ = false;
+  struct AskedKey {
+    uint32_t id = 0;  // member << 24 | group id << 8 | key number
+    uint32_t atMs = 0;
+  };
+  std::vector<AskedKey> askedKeys_;
+  std::vector<std::vector<uint8_t>> rosterPieces_;  // of the roster coming in
 
   uint32_t nextCounter();
   Header header(Type type, uint8_t recipient);
@@ -176,7 +186,12 @@ class Node {
   uint8_t syncFlags() const;
   uint32_t sendControl(uint8_t to, const std::string& payload);
   void sendToMember(int slot, uint8_t to, char kind, uint8_t about);
-  void handleControl(uint8_t from, const std::string& text);
+  // False when it cannot be taken yet (not confirmed, so it comes again).
+  bool handleControl(uint8_t from, const std::string& text);
+  void missingKey(const Header& h);
+  void askForKey(uint8_t to, uint16_t groupId, uint8_t number);
+  void answerKeyRequest(uint8_t from, uint16_t groupId, uint8_t number);
+  std::vector<std::vector<uint8_t>> savedRosterPackets() const;
   bool confirmControl(uint8_t from, uint32_t counter);
   void resendUnconfirmed();
   void rotate(int slot);
