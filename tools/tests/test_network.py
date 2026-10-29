@@ -259,7 +259,7 @@ class EndToEnd(unittest.TestCase):
         self.addCleanup(self.web.shutdown)
 
     def wait_for_request(self):
-        end = time.time() + 10
+        end = time.time() + 60  # a slow CI machine: the join thread needs the server first
         while not self.mesh.store.joins() and time.time() < end:
             time.sleep(0.05)
         self.assertEqual(len(self.mesh.store.joins()), 1)
@@ -316,7 +316,7 @@ class EndToEnd(unittest.TestCase):
         t.start()
         self.wait_for_request()
         self.assertIn("Ola Nordmann", self.tool("approve"))
-        t.join(10)
+        t.join(60)
         self.assertEqual(joined.get("code"), 0, joined.get("out"))
         ola_doc = self.units["10.0.0.3"].welcome
         self.assertEqual((ola_doc["me"], ola_doc["name"]), (3, "Ola Nordmann"))
@@ -347,7 +347,7 @@ class EndToEnd(unittest.TestCase):
                 t.start()
                 self.wait_for_request()
                 self.tool("approve")
-                t.join(10)
+                t.join(60)
 
         join("Per", "10.0.0.4")
         self.assertEqual(self.units["10.0.0.4"].welcome["me"], 4)

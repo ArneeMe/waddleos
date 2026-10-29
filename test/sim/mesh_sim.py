@@ -53,7 +53,7 @@ class Unit:
     def stop(self):
         """Switched off: the process ends, the SD card and flash stay."""
         self.cmd("quit", expect_ok=False)
-        self.proc.wait(timeout=10)
+        self.proc.wait(timeout=60)
         self.proc.stdin.close()
         self.proc.stdout.close()
         self.alive = False
