@@ -124,7 +124,11 @@ class Handler(BaseHTTPRequestHandler):
             except P.BadPacket:
                 continue
             if P.person(h.sender) != member:
-                continue  # a unit only speaks for itself
+                # What the unit heard over LoRa away from home (PHONE.md, R5):
+                # only kept, like the gateway's handover; it proves nothing about
+                # who sent it, so it never replaces a copy the sender uploaded.
+                self.server.mesh.handle(raw, "relay", handed_over=True)
+                continue
             answers += self.server.mesh.handle(raw, "wifi")
         self._send(200, P.frame(answers))
 

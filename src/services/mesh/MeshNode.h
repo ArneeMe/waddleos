@@ -156,7 +156,8 @@ class Node {
   uint32_t lastSyncReqMs_ = 0;
   uint32_t lastResendMs_ = 0;
   bool waitingForSenderKey_ = false;  // phone: someone left, its unit's new sender key not here yet
-  bool wifiWasOn_ = false;  // Wi-Fi was on before the sync: leave it on
+  bool wifiWasOn_ = false;
+  size_t uploadedInRequest_ = 0;  // packets heard over LoRa in the last serverRequest()  // Wi-Fi was on before the sync: leave it on
   uint32_t nextCheckMs_ = 0;
   uint32_t checkUntilMs_ = 0;  // listening for the answers of a check
   uint32_t lastCheckUnix_ = 0;

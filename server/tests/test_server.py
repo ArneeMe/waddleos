@@ -513,12 +513,17 @@ class WebTests(unittest.TestCase):
         self.assertEqual(e.exception.code, 401)
 
     def test_unit_cannot_send_as_another(self):
+        """Another member's packet in a unit's upload is what it heard over LoRa:
+        kept (as heard, not as from that member), never answered or passed on,
+        and it cannot replace a copy the member uploads itself."""
         base = self.start()
         dm, _ = packets("direct message in 3 pieces")
         h = P.parse_header(dm[0])
         forged = P.Header(type=P.MSG, network=NETWORK, sender=2, recipient=1, counter=h.counter).pack() + dm[0][P.HEADER_SIZE:]
         self.assertEqual(self.post(base, P.frame([forged]), TOKEN_1), b"")
-        self.assertEqual(self.mesh.store.counts(), {})
+        self.assertEqual(self.mesh.store.counts(), {P.MSG: 1})
+        (via,) = self.mesh.store.db.execute("SELECT via FROM packets").fetchone()
+        self.assertEqual(via, "relay")
 
     def test_status_page(self):
         base = self.start()

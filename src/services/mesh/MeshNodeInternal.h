@@ -31,6 +31,7 @@ inline constexpr uint8_t LOW_BATTERY = 20;
 inline constexpr uint32_t CHECK_LISTEN_MS = 20000;  // how long a check listens for answers
 inline constexpr uint32_t CHECK_WIFI_GAP_MS = 10UL * 60 * 1000;
 inline constexpr uint32_t BUSY_SOON_MS = 5000;  // packets due sooner keep the unit awake
+inline constexpr size_t MAX_UPLOAD_PER_SYNC = 250;  // heard packets per request (about 50 KB)
 inline constexpr size_t SERVER_ANSWER_FULL = 200;  // the server's most packets per Wi-Fi answer
 inline constexpr uint32_t RESEND_GAP_MS = 30UL * 60 * 1000;  // unconfirmed keys and invitations
 

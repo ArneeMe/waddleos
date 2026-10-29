@@ -73,6 +73,11 @@ std::string Node::serverRequest() {
                                  [&](const Outgoing& o) { return (o.raw[1] & 0x0F) == uint8_t(Type::Ack); }),
                   outbox_.end());
   }
+  // What I heard over LoRa (others' packets), so the server and my phone have
+  // it too; the body stays under the server's 64 KB.
+  const auto heard = store_.toUpload(MAX_UPLOAD_PER_SYNC);
+  for (const auto& raw : heard) add(raw.data(), raw.size());
+  uploadedInRequest_ = heard.size();
   SyncReq req;
   for (int slot = 0; slot < MAX_DEVICES; slot++) req.lastCounter[slot] = store_.lastCounter(slotDevice(slot));
   req.battery = battery();
@@ -98,6 +103,9 @@ std::string Node::serverRequest() {
 
 size_t Node::takeServerAnswer(const std::string& answer, const uint32_t serverTime) {
   wifiServerFailed_ = false;
+  // The server took the request: what I heard over LoRa is there now.
+  if (uploadedInRequest_) store_.uploaded(uploadedInRequest_);
+  uploadedInRequest_ = 0;
   serverAtMs_ = millis();
   lastCheckUnix_ = unixNow();
   fetches_.clear();  // asked; what came is in the answer

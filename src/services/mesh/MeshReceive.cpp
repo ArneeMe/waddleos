@@ -105,6 +105,9 @@ void Node::handle(const uint8_t* raw, const size_t len, const int rssi, const bo
     case Type::Msg: {
       if (!isDevice(h.sender) || store_.hasPacket(h, raw, len)) return;
       store_.savePacket(h.sender, raw, len);  // kept to help other units catch up
+      // Heard over the radio away from home (no word from the server lately):
+      // the server may not have it.
+      if (!viaWifi && serverState() != ServerState::Online) store_.keepForUpload(raw, len);
       if (h.pieceCount == 1) {
         handleMessage(h, body, bodyLen);
       } else {
