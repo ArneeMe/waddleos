@@ -3,6 +3,7 @@
 // (protocol/vectors.json) that the Python server tests check against.
 
 #include <GatewayStore.h>
+#include <MeshControl.h>
 #include <MeshCrypto.h>
 #include <MeshPacket.h>
 #include <MeshRadioRules.h>
@@ -14,6 +15,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace mesh;
 
@@ -541,6 +544,8 @@ static void testGatewayStore() {
 }
 
 // Fixed inputs and the packets they give, for the Python side.
+static std::vector<std::pair<const char*, ControlMsg>> controlExamples();
+
 static void writeVectors(const char* path) {
   FILE* f = std::fopen(path, "w");
   if (!f) {
@@ -586,6 +591,16 @@ static void writeVectors(const char* path) {
   uint8_t groupKey[KEY_SIZE];
   fill(groupKey, KEY_SIZE, 3);
   std::fprintf(f, "  \"groupKey\": \"%s\",\n", hex(groupKey, KEY_SIZE).c_str());
+  // Control DMs (the text inside a sealed DM).
+  std::fprintf(f, "  \"control\": [\n");
+  const auto examples = controlExamples();
+  for (size_t i = 0; i < examples.size(); i++) {
+    const std::string text = writeControl(examples[i].second);
+    std::fprintf(f, "    {\"name\": \"%s\", \"text\": \"%s\"}%s\n", examples[i].first,
+                 hex(reinterpret_cast<const uint8_t*>(text.data()), text.size()).c_str(),
+                 i + 1 < examples.size() ? "," : "");
+  }
+  std::fprintf(f, "  ],\n");
 
   static Sealed sealed;
   std::fprintf(f, "  \"messages\": [\n");
@@ -709,6 +724,47 @@ static void writeVectors(const char* path) {
   std::fclose(f);
 }
 
+// One of each control DM, as protocol/vectors.json "control" has them.
+static std::vector<std::pair<const char*, ControlMsg>> controlExamples() {
+  ControlMsg s, g, l, r, k;
+  s.kind = Control::SenderKey;
+  s.keyNumber = 3;
+  fill(s.key, KEY_SIZE, 1);
+  g.kind = Control::Invite;
+  g.groupId = groupId(2, 5);
+  g.keyNumber = 1;
+  g.fresh = true;
+  g.members = memberBit(2) | memberBit(9) | memberBit(32);
+  fill(g.key, KEY_SIZE, 3);
+  g.name = "Hytta";
+  l.kind = Control::Leave;
+  l.groupId = groupId(2, 5);
+  r.kind = Control::Remove;
+  r.groupId = groupId(2, 5);
+  r.member = 9;
+  k.kind = Control::AskKey;
+  k.groupId = 0;
+  k.keyNumber = 3;
+  return {{"sender key", s}, {"invitation", g}, {"leave", l}, {"remove", r}, {"ask for a key", k}};
+}
+
+static void testControl() {
+  for (const auto& [name, c] : controlExamples()) {
+    const std::string text = writeControl(c);
+    ControlMsg back;
+    CHECK(isControl(text) && readControl(text, back));
+    CHECK(back.kind == c.kind && back.groupId == c.groupId && back.keyNumber == c.keyNumber &&
+          back.member == c.member && back.fresh == c.fresh && back.members == c.members && back.name == c.name &&
+          memcmp(back.key, c.key, KEY_SIZE) == 0);
+    // Cut short: refused.
+    CHECK(!readControl(text.substr(0, 4), back));
+    (void)name;
+  }
+  ControlMsg back;
+  CHECK(!readControl(std::string("\0X\0\0\0", 5), back));  // unknown kind
+  CHECK(!readControl("Hei", back));                            // a message, not a control DM
+}
+
 int main(int argc, char** argv) {
   testHeader();
   testBodies();
@@ -720,6 +776,7 @@ int main(int argc, char** argv) {
   testRadioRules();
   testCivilTime();
   testGatewayStore();
+  testControl();
   if (argc > 1) writeVectors(argv[1]);
   std::printf(failures ? "%d FAILED\n" : "all mesh tests passed\n", failures);
   return failures ? 1 : 0;

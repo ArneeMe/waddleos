@@ -163,13 +163,15 @@ one; only the real one opens.
 A DM whose text starts with byte `0x00` is not shown as a message: it changes
 keys or groups. Being a DM, it gets ACKs, retries and sync like any message; the
 sender also keeps invitations and notices in flash and sends them again at each
-check until that member's ACK comes, also after a restart.
+check until that member's ACK comes, also after a restart. The C++ code is
+`lib/WaddleMesh/src/MeshControl.*`; `protocol/vectors.json` ("control") has one of
+each.
 
 | Text | Meaning |
 |---|---|
 | `0x00 'S'` key number, key (32) | my sender key |
 | `0x00 'G'` group id (u16), key number, flags (bit 0 = a new group), member bits (u32), key (32), name | a group's key |
-| `0x00 'L'` group id (u16) | I leave the group |
+| `0x00 'L'` group id (u16), 0 | I leave the group |
 | `0x00 'R'` group id (u16), member | please take this member out (to the lowest remaining member) |
 | `0x00 'K'` group id (u16, 0 = your sender key), key number | please send me this key |
 

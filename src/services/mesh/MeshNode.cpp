@@ -565,7 +565,7 @@ void Node::handleMessage(const Header& h, const uint8_t* cipher, const size_t le
   memcpy(m.prevHash, plain.data() + 4, 4);
   m.text.assign(reinterpret_cast<const char*>(plain.data() + MSG_PREFIX), plain.size() - MSG_PREFIX);
   // A group invitation or a member leaving, not a message to show.
-  if (!m.text.empty() && m.text[0] == '\0' && h.recipient == network_.me) {
+  if (isControl(m.text) && h.recipient == network_.me) {
     // Not confirmed when it cannot be taken yet: it comes again at their next check.
     if (handleControl(h.sender, m.text)) sendAck(h.sender, h.sender, h.counter, AckState::Delivered);
     return;
@@ -754,17 +754,13 @@ uint8_t Node::syncFlags() const {
 // group, or older than the key held, do not change who is in it.
 
 namespace {
-constexpr char SENDER_KEY = 'S';
-constexpr char INVITE = 'G';
-constexpr char LEAVE = 'L';
-constexpr char REMOVE = 'R';                   // "please take this member out" to the lowest member
-constexpr char ASK_KEY = 'K';                  // "send me this key": group id (0 = your sender key), number
+constexpr char INVITE = char(Control::Invite);  // the notice kinds kept per group (MeshGroups.h)
+constexpr char LEAVE = char(Control::Leave);
+constexpr char REMOVE = char(Control::Remove);
 constexpr uint32_t ASK_KEY_AGAIN_MS = 6 * 3600 * 1000UL;
 // Key DMs to many members: spread over this long (all units hear a new member
 // list at once, and LoRa has no "wait until the air is free").
 constexpr uint32_t KEY_SPREAD_MS = 60000;
-constexpr uint8_t NEW_GROUP = 1;               // invitation flags: a group starting afresh
-constexpr size_t INVITE_SIZE = 10 + KEY_SIZE;  // 0, 'G', id (2), key number, flags, members (4), key; then the name
 
 uint8_t lowest(const Members members) {
   for (uint8_t n = 1; n <= MAX_MEMBERS; n++) {
@@ -773,16 +769,16 @@ uint8_t lowest(const Members members) {
   return 0;
 }
 
-std::string idBytes(const uint16_t id) { return std::string{char(id & 0xFF), char(id >> 8)}; }
-uint16_t readId(const std::string& text, const size_t at) {
-  return uint16_t(uint8_t(text[at]) | (uint8_t(text[at + 1]) << 8));
-}
 std::string invitation(const ChatGroup& g, const GroupKey& k, const bool fresh) {
-  std::string p = std::string{'\0', INVITE} + idBytes(g.id) + char(k.number) + char(fresh ? NEW_GROUP : 0);
-  for (int i = 0; i < 4; i++) p += char((g.members >> (8 * i)) & 0xFF);
-  p.append(reinterpret_cast<const char*>(k.key), KEY_SIZE);
-  p += g.name;
-  return p;
+  ControlMsg c;
+  c.kind = Control::Invite;
+  c.groupId = g.id;
+  c.keyNumber = k.number;
+  c.fresh = fresh;
+  c.members = g.members;
+  memcpy(c.key, k.key, KEY_SIZE);
+  c.name = g.name;
+  return writeControl(c);
 }
 }  // namespace
 
@@ -809,9 +805,11 @@ void Node::sendSenderKey(const uint8_t to, const uint32_t delayMs) {
   const Member* m = network_.member(to);
   if (!m || !m->present || to == network_.me) return;
   const Identity& mine = identity();
-  std::string p{'\0', SENDER_KEY, char(mine.senderKeyNumber)};
-  p.append(reinterpret_cast<const char*>(mine.senderKey), KEY_SIZE);
-  senderKeyCounters_[to - 1] = sendControl(to, p, delayMs);
+  ControlMsg c;
+  c.kind = Control::SenderKey;
+  c.keyNumber = mine.senderKeyNumber;
+  memcpy(c.key, mine.senderKey, KEY_SIZE);
+  senderKeyCounters_[to - 1] = sendControl(to, writeControl(c), delayMs);
 }
 
 void Node::sendToMember(const int slot, const uint8_t to, const char kind, const uint8_t about) {
@@ -822,7 +820,11 @@ void Node::sendToMember(const int slot, const uint8_t to, const char kind, const
     if (!k) return;
     p = invitation(g, *k, k->number == 1);
   } else {
-    p = std::string{'\0', kind} + idBytes(g.id) + char(about);
+    ControlMsg c;
+    c.kind = Control(kind);
+    c.groupId = g.id;
+    c.member = about;
+    p = writeControl(c);
   }
   // Remembered until their unit confirms it, and sent again on each check.
   g.setNotice(to, kind, about, sendControl(to, p));
@@ -853,32 +855,26 @@ void Node::takeOut(const int slot, const uint8_t member) {
 }
 
 bool Node::handleControl(const uint8_t from, const std::string& text) {
-  if (text.size() < 3) return true;
-  if (text[1] == SENDER_KEY) {
-    if (text.size() < 3 + KEY_SIZE) return true;
-    if (senders_.add(from, uint8_t(text[2]), reinterpret_cast<const uint8_t*>(&text[3]))) {
+  ControlMsg c;
+  if (!readControl(text, c)) return true;  // not one we know: confirmed, never retried
+  if (c.kind == Control::SenderKey) {
+    if (senders_.add(from, c.keyNumber, c.key)) {
       senders_.save();
-      LOG_INF("MESH", "Sender key %u from %u", uint8_t(text[2]), from);
+      LOG_INF("MESH", "Sender key %u from %u", c.keyNumber, from);
       openWaitingFrom(from);
     }
     changes_++;
     return true;
   }
-  if (text.size() < 5) return true;
-  const uint16_t id = readId(text, 2);
-  if (text[1] == ASK_KEY) {
-    answerKeyRequest(from, id, uint8_t(text[4]));
+  if (c.kind == Control::AskKey) {
+    answerKeyRequest(from, c.groupId, c.keyNumber);
     return true;
   }
+  const uint16_t id = c.groupId;
   if (!isMember(groupCreator(id))) return true;
   int slot = groups_.find(id);
-  if (text[1] == INVITE && text.size() >= INVITE_SIZE) {
-    const uint8_t number = uint8_t(text[4]);
-    const bool fresh = (uint8_t(text[5]) & NEW_GROUP) != 0;
-    Members members = 0;
-    for (int i = 0; i < 4; i++) members |= Members(uint8_t(text[6 + i])) << (8 * i);
-    const uint8_t* key = reinterpret_cast<const uint8_t*>(&text[10]);
-    if (!number || !(members & memberBit(from)) || !(members & memberBit(network_.me))) return true;
+  if (c.kind == Control::Invite) {
+    if (!c.keyNumber || !(c.members & memberBit(from)) || !(c.members & memberBit(network_.me))) return true;
     // Only its creator starts a group, or starts an id of theirs afresh: nobody
     // else can make up a group under someone's id or take one over.
     const bool creator = from == groupCreator(id);
@@ -890,14 +886,14 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
       if (slot < 0) return true;
       groups_.at(slot) = ChatGroup{};
       groups_.at(slot).id = id;
-      groups_.at(slot).members = members;
+      groups_.at(slot).members = c.members;
       store_.clear(uint8_t(CONV_FIRST_GROUP + slot));
-    } else if (fresh && creator && groups_.at(slot).key(1) &&
-               memcmp(groups_.at(slot).key(1), key, KEY_SIZE) != 0) {
+    } else if (c.fresh && creator && groups_.at(slot).key(1) &&
+               memcmp(groups_.at(slot).key(1), c.key, KEY_SIZE) != 0) {
       // The creator used an id again (they had left the old group).
       groups_.at(slot) = ChatGroup{};
       groups_.at(slot).id = id;
-      groups_.at(slot).members = members;
+      groups_.at(slot).members = c.members;
       store_.clear(uint8_t(CONV_FIRST_GROUP + slot));
     }
     ChatGroup& g = groups_.at(slot);
@@ -905,14 +901,14 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
     if (!g.has(from)) return true;
     const GroupKey* newest = g.newest();
     const uint8_t held = newest ? newest->number : 0;
-    const bool replaced = g.addKey(number, from, key);
-    if (number > held || (number == held && replaced)) {
-      g.members = members;
+    const bool replaced = g.addKey(c.keyNumber, from, c.key);
+    if (c.keyNumber > held || (c.keyNumber == held && replaced)) {
+      g.members = c.members;
       g.left = false;  // added (again) with a key made after I left
-      if (text.size() > INVITE_SIZE) strlcpy(g.name, text.c_str() + INVITE_SIZE, sizeof(g.name));
+      if (!c.name.empty()) strlcpy(g.name, c.name.c_str(), sizeof(g.name));
     }
     groups_.save();
-    LOG_INF("MESH", "Group %04x: key %u from %u", id, number, from);
+    LOG_INF("MESH", "Group %04x: key %u from %u", id, c.keyNumber, from);
     openWaiting(id);
     changes_++;
     return true;
@@ -920,13 +916,12 @@ bool Node::handleControl(const uint8_t from, const std::string& text) {
   if (slot < 0) return true;
   ChatGroup& g = groups_.at(slot);
   if (!g.has(from)) return true;
-  if (text[1] == LEAVE) {
+  if (c.kind == Control::Leave) {
     takeOut(slot, from);
-  } else if (text[1] == REMOVE) {
+  } else if (c.kind == Control::Remove) {
     // Asked to take someone out: only the lowest of those who stay does it.
-    const uint8_t member = uint8_t(text[4]);
-    if (!isMember(member) || member == network_.me || !g.has(member)) return true;
-    if (lowest(g.members & ~memberBit(member)) == network_.me) takeOut(slot, member);
+    if (!isMember(c.member) || c.member == network_.me || !g.has(c.member)) return true;
+    if (lowest(g.members & ~memberBit(c.member)) == network_.me) takeOut(slot, c.member);
   }
   changes_++;
   return true;
@@ -977,7 +972,11 @@ void Node::askForKey(const uint8_t to, const uint16_t groupId, const uint8_t num
     askedKeys_.push_back(AskedKey{id, now});
   }
   LOG_INF("MESH", "Asking %u for key %u of %04x", to, number, groupId);
-  sendControl(to, std::string{'\0', ASK_KEY} + idBytes(groupId) + char(number));
+  ControlMsg c;
+  c.kind = Control::AskKey;
+  c.groupId = groupId;
+  c.keyNumber = number;
+  sendControl(to, writeControl(c));
 }
 
 void Node::answerKeyRequest(const uint8_t from, const uint16_t groupId, const uint8_t number) {
