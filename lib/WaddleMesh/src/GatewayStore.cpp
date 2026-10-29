@@ -5,11 +5,11 @@
 
 namespace mesh {
 
-GatewayStore::GatewayStore(const uint8_t group, const uint32_t savedCounter)
-    : group_(group), counters_(savedCounter < FIRST_COUNTER ? FIRST_COUNTER : savedCounter) {}
+GatewayStore::GatewayStore(const uint8_t network, const uint32_t savedCounter)
+    : network_(network), counters_(savedCounter < FIRST_COUNTER ? FIRST_COUNTER : savedCounter) {}
 
 bool GatewayStore::ours(const uint8_t* raw, const size_t len, Header& h) const {
-  return group_ != 0 && readHeader(raw, len, h) && h.group == group_ && h.sender != SERVER &&
+  return network_ != 0 && readHeader(raw, len, h) && h.network == network_ && h.sender != SERVER &&
          (!members_ || (members_ & memberBit(h.sender)));
 }
 
@@ -74,7 +74,7 @@ void GatewayStore::addAck(const uint8_t to, const uint8_t ackedSender, const uin
   if (r.count >= MAX_ANSWER) return;
   Header h;
   h.type = Type::Ack;
-  h.group = group_;
+  h.network = network_;
   h.sender = SERVER;
   h.recipient = to;
   uint32_t save = 0;

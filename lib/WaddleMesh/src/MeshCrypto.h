@@ -1,6 +1,7 @@
 #pragma once
 
-// Encryption for MSG, POS and SOS packets (protocol/PROTOCOL.md, "Encryption").
+// Encryption for MSG, POS, SOS and ROSTER packets, and the sealed boxes of
+// setup and joining (protocol/PROTOCOL.md, "Encryption", "Joining").
 
 #include <cstddef>
 #include <cstdint>
@@ -14,7 +15,7 @@ constexpr size_t KEY_SIZE = 32;
 // A unit's own X25519 key pair for DMs. The secret never leaves the unit.
 void publicKey(const uint8_t secret[KEY_SIZE], uint8_t publicOut[KEY_SIZE]);
 // The DM key two members share: BLAKE2b-256(X25519 || lower public || higher public).
-void pairKey(const uint8_t mySecret[KEY_SIZE], const uint8_t myPublic[KEY_SIZE], const uint8_t theirPublic[KEY_SIZE],
+void dmKey(const uint8_t mySecret[KEY_SIZE], const uint8_t myPublic[KEY_SIZE], const uint8_t theirPublic[KEY_SIZE],
              uint8_t keyOut[KEY_SIZE]);
 // First 4 bytes of BLAKE2b-256: the "previous hash" in MSG.
 void shortHash(const uint8_t* data, size_t len, uint8_t out[4]);
@@ -23,12 +24,12 @@ void shortHash(const uint8_t* data, size_t len, uint8_t out[4]);
 // public key, and both sides derive BLAKE2b-256(X25519 || tool public || unit
 // public). What travels is sealed with ChaCha20-Poly1305 under that key, with
 // nonce = the given byte and 11 zeros (1: the unit's sender key, 2: the group).
-void setupKey(const uint8_t unitSecret[KEY_SIZE], const uint8_t unitPublic[KEY_SIZE],
+void boxKey(const uint8_t unitSecret[KEY_SIZE], const uint8_t unitPublic[KEY_SIZE],
               const uint8_t toolPublic[KEY_SIZE], uint8_t keyOut[KEY_SIZE]);
 // out gets len + TAG_SIZE bytes.
-void setupSeal(const uint8_t key[KEY_SIZE], uint8_t nonceByte, const uint8_t* plain, size_t len, uint8_t* out);
+void sealBox(const uint8_t key[KEY_SIZE], uint8_t nonceByte, const uint8_t* plain, size_t len, uint8_t* out);
 // plainOut gets len - TAG_SIZE bytes. False when it was changed or the key is wrong.
-bool setupOpen(const uint8_t key[KEY_SIZE], uint8_t nonceByte, const uint8_t* sealed, size_t len, uint8_t* plainOut);
+bool openBox(const uint8_t key[KEY_SIZE], uint8_t nonceByte, const uint8_t* sealed, size_t len, uint8_t* plainOut);
 // The six digits a unit and the tool both show during setup ("482 913"), so
 // the person can tell nothing on the Wi-Fi sits between them. The tool first
 // sends only commit = BLAKE2b-256(tool public || tool nonce), the unit then

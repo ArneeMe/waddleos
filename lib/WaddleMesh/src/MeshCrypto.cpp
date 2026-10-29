@@ -11,7 +11,7 @@ void publicKey(const uint8_t secret[KEY_SIZE], uint8_t publicOut[KEY_SIZE]) {
   crypto_x25519_public_key(publicOut, secret);
 }
 
-void pairKey(const uint8_t mySecret[KEY_SIZE], const uint8_t myPublic[KEY_SIZE], const uint8_t theirPublic[KEY_SIZE],
+void dmKey(const uint8_t mySecret[KEY_SIZE], const uint8_t myPublic[KEY_SIZE], const uint8_t theirPublic[KEY_SIZE],
              uint8_t keyOut[KEY_SIZE]) {
   uint8_t input[3 * KEY_SIZE];
   crypto_x25519(input, mySecret, theirPublic);
@@ -28,7 +28,7 @@ void shortHash(const uint8_t* data, const size_t len, uint8_t out[4]) {
   memcpy(out, full, 4);
 }
 
-void setupKey(const uint8_t unitSecret[KEY_SIZE], const uint8_t unitPublic[KEY_SIZE],
+void boxKey(const uint8_t unitSecret[KEY_SIZE], const uint8_t unitPublic[KEY_SIZE],
               const uint8_t toolPublic[KEY_SIZE], uint8_t keyOut[KEY_SIZE]) {
   uint8_t input[3 * KEY_SIZE];
   crypto_x25519(input, unitSecret, toolPublic);
@@ -45,7 +45,7 @@ void setupNonce(const uint8_t nonceByte, uint8_t iv[12]) {
 }
 }  // namespace
 
-void setupSeal(const uint8_t key[KEY_SIZE], const uint8_t nonceByte, const uint8_t* plain, const size_t len,
+void sealBox(const uint8_t key[KEY_SIZE], const uint8_t nonceByte, const uint8_t* plain, const size_t len,
                uint8_t* out) {
   uint8_t iv[12];
   setupNonce(nonceByte, iv);
@@ -55,7 +55,7 @@ void setupSeal(const uint8_t key[KEY_SIZE], const uint8_t nonceByte, const uint8
   crypto_wipe(&ctx, sizeof(ctx));
 }
 
-bool setupOpen(const uint8_t key[KEY_SIZE], const uint8_t nonceByte, const uint8_t* sealed, const size_t len,
+bool openBox(const uint8_t key[KEY_SIZE], const uint8_t nonceByte, const uint8_t* sealed, const size_t len,
                uint8_t* plainOut) {
   if (len < TAG_SIZE) return false;
   uint8_t iv[12];

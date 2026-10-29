@@ -48,7 +48,7 @@ bool sosFromButton = false;
 void loop() {
   auto& node = mesh::Node::get();
   // Just joined a network (`waddle mesh join`): start it without a restart.
-  if (mesh::web::takeGroupChanged()) node.begin();
+  if (mesh::web::takeNetworkChanged()) node.begin();
   node.loop();
 
   if (gpio.isPressed(HalGPIO::BTN_DOWN)) {

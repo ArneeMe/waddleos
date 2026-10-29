@@ -22,7 +22,7 @@
 namespace mesh::web {
 
 namespace {
-bool groupChanged = false;
+bool networkChanged = false;
 
 // The setup code (MeshCrypto.h, pairCode): the tool's commitment, my nonce,
 // then its key and nonce, and the six digits for the screen.
@@ -39,9 +39,9 @@ Pairing pairing;
 
 const char* setupCode() { return pairing.paired ? pairing.code : nullptr; }
 
-bool takeGroupChanged() {
-  const bool changed = groupChanged;
-  groupChanged = false;
+bool takeNetworkChanged() {
+  const bool changed = networkChanged;
+  networkChanged = false;
   return changed;
 }
 
@@ -65,9 +65,9 @@ std::string openFromTool(const String& body) {
   std::string plain(boxLen - TAG_SIZE, '\0');
   uint8_t key[KEY_SIZE];
   const Identity& id = identity();
-  setupKey(id.secret, id.publicKey, tool, key);
+  boxKey(id.secret, id.publicKey, tool, key);
   if (!fromHex(boxHex, box.data(), boxLen) ||
-      !setupOpen(key, 2, box.data(), boxLen, reinterpret_cast<uint8_t*>(&plain[0]))) {
+      !openBox(key, 2, box.data(), boxLen, reinterpret_cast<uint8_t*>(&plain[0]))) {
     return "";
   }
   return plain;
@@ -78,7 +78,7 @@ std::string openFromTool(const String& body) {
 void registerRoutes(WebServer& server) {
   server.on("/api/mesh/identity", HTTP_GET, [&server] {
     const Identity& id = identity();
-    const Group& group = Node::get().group();
+    const Network& group = Node::get().network();
     JsonDocument doc;
     doc["publicKey"] = toHex(id.publicKey, KEY_SIZE);
     // A tool starting setup: its commitment in, my nonce out (a new one each time).
@@ -108,7 +108,7 @@ void registerRoutes(WebServer& server) {
   // How the unit is, for `waddle mesh check` (no keys, no message text).
   server.on("/api/mesh/diag", HTTP_GET, [&server] {
     Node& node = Node::get();
-    const Group& group = node.group();
+    const Network& group = node.network();
     JsonDocument doc;
     doc["version"] = waddle::version();
     doc["uptimeS"] = millis() / 1000;
@@ -202,7 +202,7 @@ void registerRoutes(WebServer& server) {
       server.send(400, "text/plain", err);
       return;
     }
-    groupChanged = true;
+    networkChanged = true;
     server.send(200, "text/plain", "OK");
   });
 }

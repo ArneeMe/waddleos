@@ -42,12 +42,12 @@ class GatewayStore {
     uint32_t saveCounter = 0;  // write this counter limit to flash (before sending)
   };
 
-  // group: the mesh id (0 = not known yet: nothing is kept or answered).
+  // network: the network id (0 = not known yet: nothing is kept or answered).
   // savedCounter: the counter limit last saved to flash (0 on a new gateway).
-  GatewayStore(uint8_t group, uint32_t savedCounter);
+  GatewayStore(uint8_t network, uint32_t savedCounter);
 
-  void setGroup(uint8_t group) { group_ = group; }
-  uint8_t group() const { return group_; }
+  void setNetwork(uint8_t network) { network_ = network; }
+  uint8_t network() const { return network_; }
   // Who is in the network (from the Pi's PING; 0 = not known: everyone counts).
   // Alone, the gateway keeps, relays and answers only their packets.
   void setMembers(Members members) { members_ = members; }
@@ -79,7 +79,7 @@ class GatewayStore {
   void answerMessages(uint8_t member, uint8_t sender, uint32_t after, uint64_t before, Result& r) const;
   void answerSync(uint8_t member, const SyncReq& req, Result& r) const;
 
-  uint8_t group_;
+  uint8_t network_;
   Members members_ = 0;
   CounterReserve counters_;
   SeenPackets seen_;

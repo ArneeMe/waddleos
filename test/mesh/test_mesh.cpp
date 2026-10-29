@@ -43,7 +43,7 @@ static void fill(uint8_t* p, size_t n, uint8_t start) {
 static Header msgHeader(uint8_t sender, uint8_t recipient, uint32_t counter) {
   Header h;
   h.type = Type::Msg;
-  h.group = 0x42;
+  h.network = 0x42;
   h.sender = sender;
   h.recipient = recipient;
   h.counter = counter;
@@ -51,13 +51,13 @@ static Header msgHeader(uint8_t sender, uint8_t recipient, uint32_t counter) {
 }
 
 static void testHeader() {
-  Header h = msgHeader(2, GROUP, 0x01020304);
+  Header h = msgHeader(2, EVERYONE, 0x01020304);
   h.hops = 2;
   uint8_t buf[HEADER_SIZE];
   CHECK(writeHeader(h, buf) == HEADER_SIZE);
   Header r;
   CHECK(readHeader(buf, sizeof(buf), r));
-  CHECK(r.type == Type::Msg && r.group == 0x42 && r.hops == 2 && r.sender == 2 && r.recipient == GROUP);
+  CHECK(r.type == Type::Msg && r.network == 0x42 && r.hops == 2 && r.sender == 2 && r.recipient == EVERYONE);
   CHECK(r.counter == 0x01020304 && r.pieceCount == 1 && !r.fragmented);
 
   uint8_t bad[HEADER_SIZE];
@@ -172,7 +172,7 @@ static void testSetupBox() {
   publicKey(unitSecret, unitPublic);
   publicKey(toolSecret, toolPublic);
   uint8_t k1[KEY_SIZE], k2[KEY_SIZE];
-  setupKey(unitSecret, unitPublic, toolPublic, k1);
+  boxKey(unitSecret, unitPublic, toolPublic, k1);
   // The tool's side: X25519(tool secret, unit public) gives the same shared secret.
   uint8_t input[3 * KEY_SIZE];
   crypto_x25519(input, toolSecret, unitPublic);
@@ -182,11 +182,11 @@ static void testSetupBox() {
   CHECK(memcmp(k1, k2, KEY_SIZE) == 0);
   const char* json = "{\"group\":66}";
   uint8_t box[64], back[64];
-  setupSeal(k1, 2, reinterpret_cast<const uint8_t*>(json), strlen(json), box);
-  CHECK(setupOpen(k1, 2, box, strlen(json) + TAG_SIZE, back) && memcmp(back, json, strlen(json)) == 0);
-  CHECK(!setupOpen(k1, 1, box, strlen(json) + TAG_SIZE, back));  // other nonce
+  sealBox(k1, 2, reinterpret_cast<const uint8_t*>(json), strlen(json), box);
+  CHECK(openBox(k1, 2, box, strlen(json) + TAG_SIZE, back) && memcmp(back, json, strlen(json)) == 0);
+  CHECK(!openBox(k1, 1, box, strlen(json) + TAG_SIZE, back));  // other nonce
   box[0] ^= 1;
-  CHECK(!setupOpen(k1, 2, box, strlen(json) + TAG_SIZE, back));
+  CHECK(!openBox(k1, 2, box, strlen(json) + TAG_SIZE, back));
   uint8_t toolNonce[PAIR_NONCE_SIZE], unitNonce[PAIR_NONCE_SIZE];
   fill(toolNonce, sizeof(toolNonce), 20);
   fill(unitNonce, sizeof(unitNonce), 40);
@@ -201,7 +201,7 @@ static void testSetupBox() {
 static void testGroups() {
   // Member 32 exists; member 33 does not.
   uint8_t raw[HEADER_SIZE];
-  Header h = msgHeader(32, GROUP, 1), r;
+  Header h = msgHeader(32, EVERYONE, 1), r;
   writeHeader(h, raw);
   CHECK(readHeader(raw, sizeof(raw), r) && r.sender == 32 && r.key == 0 && r.groupId == 0);
   raw[4] = 33;
@@ -210,18 +210,18 @@ static void testGroups() {
   // Kari's (member 2) third group, key number 4.
   const uint16_t id = groupId(2, 3);
   CHECK(id == 0x0203 && groupCreator(id) == 2);
-  h = msgHeader(2, GROUP_TO, 7);
+  h = msgHeader(2, TO_GROUP, 7);
   h.groupId = id;
   h.key = 4;
   writeHeader(h, raw);
-  CHECK(readHeader(raw, sizeof(raw), r) && r.recipient == GROUP_TO && r.groupId == id && r.key == 4);
+  CHECK(readHeader(raw, sizeof(raw), r) && r.recipient == TO_GROUP && r.groupId == id && r.key == 4);
   put16(raw + 11, groupId(40, 0));  // made by member 40, who cannot exist
   CHECK(!readHeader(raw, sizeof(raw), r));
   put16(raw + 11, 0);  // a group packet needs an id
   CHECK(!readHeader(raw, sizeof(raw), r));
 
   // Groups go to everyone; DMs only to the two.
-  CHECK(canRead(3, 1, GROUP_TO) && canRead(3, 1, GROUP) && canRead(2, 1, 2) && !canRead(3, 1, 2));
+  CHECK(canRead(3, 1, TO_GROUP) && canRead(3, 1, EVERYONE) && canRead(2, 1, 2) && !canRead(3, 1, 2));
   CHECK(memberBit(4) == 8 && memberBit(32) == 0x80000000u && memberBit(0) == 0 && memberCount(0x0F) == 4);
 
   // The key number is sealed with the header: changing it breaks the message.
@@ -275,7 +275,7 @@ static void testSealOpen() {
   static Sealed sealed;
 
   const char* text = "Hei fra skogen!";
-  const Header h = msgHeader(1, GROUP, 10);
+  const Header h = msgHeader(1, EVERYONE, 10);
   CHECK(roundTrip(h, key, reinterpret_cast<const uint8_t*>(text), strlen(text), nullptr, sealed));
   CHECK(sealed.count == 1 && sealed.lengths[0] == HEADER_SIZE + strlen(text) + TAG_SIZE);
 
@@ -317,8 +317,8 @@ static void testPairKey() {
   publicKey(aSecret, aPublic);
   publicKey(bSecret, bPublic);
   uint8_t ab[KEY_SIZE], ba[KEY_SIZE];
-  pairKey(aSecret, aPublic, bPublic, ab);
-  pairKey(bSecret, bPublic, aPublic, ba);
+  dmKey(aSecret, aPublic, bPublic, ab);
+  dmKey(bSecret, bPublic, aPublic, ba);
   CHECK(memcmp(ab, ba, KEY_SIZE) == 0);
 }
 
@@ -352,7 +352,7 @@ static void testRadioRules() {
   CHECK(hour.usedLastHour(399 * 5000) < 216000);
 
   SeenPackets seen;
-  Header h = msgHeader(1, GROUP, 5);
+  Header h = msgHeader(1, EVERYONE, 5);
   CHECK(seen.remember(h));
   CHECK(!seen.remember(h));
   h.pieceIndex = 1;
@@ -409,7 +409,7 @@ static void testGatewayStore() {
   };
 
   // A whole message is kept and answered with "stored", from counter 0x80000001.
-  feed(msgPacket(1, GROUP, 10));
+  feed(msgPacket(1, EVERYONE, 10));
   CHECK(r.savedSlot >= 0 && r.count == 1 && store.count() == 1);
   CHECK(r.saveCounter == GatewayStore::FIRST_COUNTER + CounterReserve::STEP);
   Header ah = header(r.packets[0]);
@@ -418,7 +418,7 @@ static void testGatewayStore() {
   CHECK(readAck(r.packets[0].data + HEADER_SIZE, ACK_SIZE, a) && a.sender == 1 && a.counter == 10 &&
         a.state == AckState::Stored);
   // The same packet again: not kept twice.
-  feed(msgPacket(1, GROUP, 10));
+  feed(msgPacket(1, EVERYONE, 10));
   CHECK(r.savedSlot == -1 && store.count() == 1 && r.saveCounter == 0);
 
   // A message in two pieces is acked once both are here.
@@ -428,28 +428,28 @@ static void testGatewayStore() {
   CHECK(r.count == 1);
 
   // Other meshes, the server's own packets and unknown groups are ignored.
-  RawPacket other = msgPacket(1, GROUP, 11);
+  RawPacket other = msgPacket(1, EVERYONE, 11);
   other.data[2] = 0x43;
   feed(other);
   CHECK(r.savedSlot == -1 && r.count == 0);
-  RawPacket server = msgPacket(1, GROUP, 12);
+  RawPacket server = msgPacket(1, EVERYONE, 12);
   server.data[4] = SERVER;
   feed(server);
   CHECK(r.savedSlot == -1);
   GatewayStore unknown(0, 0);
-  unknown.handle(msgPacket(1, GROUP, 13).data, msgPacket(1, GROUP, 13).len, r);
+  unknown.handle(msgPacket(1, EVERYONE, 13).data, msgPacket(1, EVERYONE, 13).len, r);
   CHECK(r.savedSlot == -1 && unknown.count() == 0);
   // Once the Pi said who is in the network, others are ignored too.
   GatewayStore known(0x42, 0);
   known.setMembers(memberBit(1) | memberBit(2));
-  known.handle(msgPacket(5, GROUP, 14).data, msgPacket(5, GROUP, 14).len, r);
+  known.handle(msgPacket(5, EVERYONE, 14).data, msgPacket(5, EVERYONE, 14).len, r);
   CHECK(r.savedSlot == -1 && known.count() == 0);
-  known.handle(msgPacket(2, GROUP, 14).data, msgPacket(2, GROUP, 14).len, r);
+  known.handle(msgPacket(2, EVERYONE, 14).data, msgPacket(2, EVERYONE, 14).len, r);
   CHECK(r.savedSlot >= 0 && known.count() == 1);
 
   // A sync from member 3: member 1's group message and member 2's DM to 3, in
   // order, with hops 0. Member 4 does not get the DM.
-  RawPacket groupMsg = msgPacket(1, GROUP_TO, 11);
+  RawPacket groupMsg = msgPacket(1, TO_GROUP, 11);
   put16(groupMsg.data + 11, groupId(1, 0));
   feed(groupMsg);
   SyncReq s;
@@ -465,7 +465,7 @@ static void testGatewayStore() {
   CHECK(r.count == 1 && header(r.packets[0]).counter == 11);
 
   // At most 12 packets per answer.
-  for (uint32_t c = 100; c < 130; c++) feed(msgPacket(4, GROUP, c));
+  for (uint32_t c = 100; c < 130; c++) feed(msgPacket(4, EVERYONE, c));
   SyncReq none;
   feed(syncPacket(3, 7, none));
   CHECK(r.count == GatewayStore::MAX_ANSWER);
@@ -479,7 +479,7 @@ static void testGatewayStore() {
   CHECK(r.count == 3 && header(r.packets[0]).counter == 101 && header(r.packets[2]).counter == 103);
 
   // Positions: only each member's newest is kept, and it comes with a sync.
-  Header ph = msgHeader(2, GROUP, 50);
+  Header ph = msgHeader(2, EVERYONE, 50);
   ph.type = Type::Pos;
   uint8_t pb[POS_SIZE + TAG_SIZE] = {};
   const int before = store.count();
@@ -495,7 +495,7 @@ static void testGatewayStore() {
   CHECK(r.count == 1 && header(r.packets[0]).type == Type::Pos && header(r.packets[0]).counter == 51);
 
   // An SOS is always answered; an ACK for member 1's message comes with its sync.
-  Header sh = msgHeader(2, GROUP, 60);
+  Header sh = msgHeader(2, EVERYONE, 60);
   sh.type = Type::Sos;
   feed(unitPacket(sh, pb, sizeof(pb)));
   CHECK(r.count == 1 && r.savedSlot >= 0);
@@ -513,7 +513,7 @@ static void testGatewayStore() {
 
   // Relaying: once, with one hop less; never a sync request.
   RawPacket out;
-  const RawPacket m = msgPacket(1, GROUP, 200);
+  const RawPacket m = msgPacket(1, EVERYONE, 200);
   CHECK(store.relay(m.data, m.len, out) && header(out).hops == DEFAULT_HOPS - 1);
   CHECK(memcmp(out.data + 4, m.data + 4, m.len - 4) == 0);
   CHECK(!store.relay(m.data, m.len, out));
@@ -527,12 +527,12 @@ static void testGatewayStore() {
   GatewayStore::Slot broken = store.slot(0);
   broken.packet.data[0] = 0;
   again.restore(0, broken);  // a half-written slot is skipped
-  again.handle(msgPacket(1, GROUP, 300).data, msgPacket(1, GROUP, 300).len, r);
+  again.handle(msgPacket(1, EVERYONE, 300).data, msgPacket(1, EVERYONE, 300).len, r);
   CHECK(r.count == 1 && header(r.packets[0]).counter == GatewayStore::FIRST_COUNTER + CounterReserve::STEP + 1);
   CHECK(r.saveCounter == GatewayStore::FIRST_COUNTER + 2 * CounterReserve::STEP);
 
   // Full: the oldest makes room. Cleared: empty.
-  for (uint32_t c = 1000; c < 1000 + GatewayStore::SLOTS; c++) feed(msgPacket(3, GROUP, c));
+  for (uint32_t c = 1000; c < 1000 + GatewayStore::SLOTS; c++) feed(msgPacket(3, EVERYONE, c));
   CHECK(store.count() == GatewayStore::SLOTS);
   feed(syncPacket(2, 13, none));
   CHECK(header(r.packets[0]).sender == 3);  // member 1's old messages are gone
@@ -547,12 +547,12 @@ static void writeVectors(const char* path) {
     failures++;
     return;
   }
-  uint8_t aSecret[KEY_SIZE], bSecret[KEY_SIZE], aPublic[KEY_SIZE], bPublic[KEY_SIZE], dmKey[KEY_SIZE];
+  uint8_t aSecret[KEY_SIZE], bSecret[KEY_SIZE], aPublic[KEY_SIZE], bPublic[KEY_SIZE], dm[KEY_SIZE];
   fill(aSecret, KEY_SIZE, 0x10);
   fill(bSecret, KEY_SIZE, 0x60);
   publicKey(aSecret, aPublic);
   publicKey(bSecret, bPublic);
-  pairKey(aSecret, aPublic, bPublic, dmKey);
+  dmKey(aSecret, aPublic, bPublic, dm);
   uint8_t senderKey[KEY_SIZE];
   fill(senderKey, KEY_SIZE, 1);
 
@@ -562,14 +562,14 @@ static void writeVectors(const char* path) {
                hex(aPublic, KEY_SIZE).c_str());
   std::fprintf(f, "  \"memberB\": {\"secret\": \"%s\", \"public\": \"%s\"},\n", hex(bSecret, KEY_SIZE).c_str(),
                hex(bPublic, KEY_SIZE).c_str());
-  std::fprintf(f, "  \"pairKey\": \"%s\",\n", hex(dmKey, KEY_SIZE).c_str());
+  std::fprintf(f, "  \"dmKey\": \"%s\",\n", hex(dm, KEY_SIZE).c_str());
   // Setup handover: member A's unit and a tool with a fixed one-time key.
-  uint8_t toolSecret[KEY_SIZE], toolPublic[KEY_SIZE], boxKey[KEY_SIZE];
+  uint8_t toolSecret[KEY_SIZE], toolPublic[KEY_SIZE], setupBoxKey[KEY_SIZE];
   fill(toolSecret, KEY_SIZE, 77);
   publicKey(toolSecret, toolPublic);
-  setupKey(aSecret, aPublic, toolPublic, boxKey);
+  boxKey(aSecret, aPublic, toolPublic, setupBoxKey);
   uint8_t box[KEY_SIZE + TAG_SIZE];
-  setupSeal(boxKey, 1, senderKey, KEY_SIZE, box);
+  sealBox(setupBoxKey, 1, senderKey, KEY_SIZE, box);
   uint8_t toolNonce[PAIR_NONCE_SIZE], unitNonce[PAIR_NONCE_SIZE], commit[32];
   fill(toolNonce, sizeof(toolNonce), 20);
   fill(unitNonce, sizeof(unitNonce), 40);
@@ -579,7 +579,7 @@ static void writeVectors(const char* path) {
   std::fprintf(f,
                "  \"setup\": {\"toolSecret\": \"%s\", \"key\": \"%s\", \"senderKeyBox\": \"%s\", \"toolNonce\": \"%s\", "
                "\"unitNonce\": \"%s\", \"commit\": \"%s\", \"code\": \"%s\"},\n",
-               hex(toolSecret, KEY_SIZE).c_str(), hex(boxKey, KEY_SIZE).c_str(), hex(box, sizeof(box)).c_str(),
+               hex(toolSecret, KEY_SIZE).c_str(), hex(setupBoxKey, KEY_SIZE).c_str(), hex(box, sizeof(box)).c_str(),
                hex(toolNonce, sizeof(toolNonce)).c_str(), hex(unitNonce, sizeof(unitNonce)).c_str(),
                hex(commit, sizeof(commit)).c_str(), code);
 
@@ -614,16 +614,16 @@ static void writeVectors(const char* path) {
   std::string posPlain(POS_SIZE, '\0');
   writePosition(pos, reinterpret_cast<uint8_t*>(&posPlain[0]));
 
-  Header gh = msgHeader(1, GROUP, 10);
+  Header gh = msgHeader(1, EVERYONE, 10);
   Header dh = msgHeader(1, 2, 11);
-  Header ph = msgHeader(1, GROUP, 12);
+  Header ph = msgHeader(1, EVERYONE, 12);
   ph.type = Type::Pos;
   // A group made by member 1 (its first), under the group's key number 2.
-  Header sh = msgHeader(1, GROUP_TO, 13);
+  Header sh = msgHeader(1, TO_GROUP, 13);
   sh.groupId = groupId(1, 0);
   sh.key = 2;
   const Case cases[] = {{"group message", gh, senderKey, groupPlain},
-                        {"direct message in 3 pieces", dh, dmKey, dmPlain},
+                        {"direct message in 3 pieces", dh, dm, dmPlain},
                         {"position", ph, senderKey, posPlain},
                         {"group message with key 2", sh, groupKey, groupPlain}};
   constexpr size_t CASES = sizeof(cases) / sizeof(cases[0]);
@@ -643,7 +643,7 @@ static void writeVectors(const char* path) {
   writeAck(Ack{1, 10, AckState::Stored}, ab);
   Header ackH;
   ackH.type = Type::Ack;
-  ackH.group = 0x42;
+  ackH.network = 0x42;
   ackH.sender = SERVER;
   ackH.recipient = 1;
   ackH.counter = 3;
@@ -661,7 +661,7 @@ static void writeVectors(const char* path) {
   const size_t sn = writeSyncReq(s, sb);
   Header syncH;
   syncH.type = Type::SyncReq;
-  syncH.group = 0x42;
+  syncH.network = 0x42;
   syncH.sender = 2;
   syncH.recipient = SERVER;
   syncH.counter = 4;

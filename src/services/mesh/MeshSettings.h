@@ -13,7 +13,7 @@
 struct MeshSettings {
   enum Check : uint8_t { CHECK_ALWAYS, CHECK_15_MIN, CHECK_HOUR, CHECK_6_HOURS, CHECK_DAY, CHECK_ON_WAKE };
 
-  uint8_t onTrip = 0;  // 0 = Hjemme, 1 = På tur ("mesh.offGrid" in settings.json)
+  uint8_t onTrip = 0;  // 0 = Hjemme, 1 = På tur ("mesh.onTrip" in settings.json)
   uint8_t positionMinutes = 10;
   uint8_t homeCheck = CHECK_DAY;
   uint8_t tripCheck = CHECK_HOUR;

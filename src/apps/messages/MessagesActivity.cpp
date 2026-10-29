@@ -22,19 +22,19 @@ constexpr int TEXT_FONT = NOTOSANS_14_FONT_ID;
 mesh::Node& node() { return mesh::Node::get(); }
 
 // Member bits of everyone in the group.
-mesh::Members everyone() { return node().group().everyone(); }
+mesh::Members everyone() { return node().network().everyone(); }
 
 bool isDm(const uint8_t conversation) { return mesh::isDmConversation(conversation); }
 
 const mesh::ChatGroup* chatGroup(const uint8_t conversation) {
-  return mesh::isGroupConversation(conversation) ? &node().groups().at(conversation - mesh::CONV_GROUPS) : nullptr;
+  return mesh::isGroupConversation(conversation) ? &node().groups().at(conversation - mesh::CONV_FIRST_GROUP) : nullptr;
 }
 
 // What the sender sees under their own message.
 std::string deliveryText(const mesh::ChatMessage& m, const uint8_t conversation) {
-  const mesh::Members me = mesh::memberBit(node().group().me);
+  const mesh::Members me = mesh::memberBit(node().network().me);
   const mesh::ChatGroup* g = chatGroup(conversation);
-  const mesh::Members wanted = conversation == mesh::CONV_GROUP ? everyone() & ~me
+  const mesh::Members wanted = conversation == mesh::CONV_EVERYONE ? everyone() & ~me
                                : g                              ? g->members & ~me
                                                                 : mesh::memberBit(conversation);
   std::string when = meshui::timeText(m.time);
@@ -59,15 +59,15 @@ void MessagesActivity::onEnter() {
   // "Alle" and "+ Ny gruppe" first; then groups and people, the most recent
   // conversation first, and those with no messages yet by name.
   conversations.clear();
-  conversations.push_back(mesh::CONV_GROUP);
+  conversations.push_back(mesh::CONV_EVERYONE);
   if (node().configured() && mesh::memberCount(everyone()) >= 3) conversations.push_back(NEW_GROUP);
   std::vector<uint8_t> rest;
-  const auto& group = node().group();
+  const auto& group = node().network();
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
     if (n != group.me && group.member(n)->present) rest.push_back(n);
   }
   // Groups I am in, and those I left that still have messages to read.
-  for (uint8_t c = mesh::CONV_GROUPS; c < mesh::CONVERSATIONS; c++) {
+  for (uint8_t c = mesh::CONV_FIRST_GROUP; c < mesh::CONVERSATIONS; c++) {
     const mesh::ChatGroup* g = chatGroup(c);
     if (g->id && (!g->left || node().store().summary(c).count)) rest.push_back(c);
   }
@@ -186,8 +186,8 @@ void MessagesActivity::render(RenderLock&&) {
                       true, EpdFontFamily::BOLD);
     std::string preview = sum.count ? sum.lastText : std::string("Ingen meldinger ennå");
     if (sum.count && !isDm(c)) {
-      preview = std::string(sum.lastSender == node().group().me ? "Du" : node().group().name(sum.lastSender)) + ": " + preview;
-    } else if (sum.count && sum.lastSender == node().group().me) {
+      preview = std::string(sum.lastSender == node().network().me ? "Du" : node().network().name(sum.lastSender)) + ": " + preview;
+    } else if (sum.count && sum.lastSender == node().network().me) {
       preview = "Du: " + preview;
     }
     renderer.drawText(UI_10_FONT_ID, SIDE, y + 46, renderer.truncatedText(UI_10_FONT_ID, preview.c_str(), width - 2 * SIDE - 70).c_str());
@@ -282,7 +282,7 @@ void ChatActivity::loop() {
 void ChatActivity::render(RenderLock&&) {
   const int width = renderer.getScreenWidth();
   const int height = renderer.getScreenHeight();
-  const uint8_t me = node().group().me;
+  const uint8_t me = node().network().me;
   renderer.clearScreen();
   // A group's title opens who is in it.
   const std::string title = chatGroup(conversation) ? name + "  ›" : name;
@@ -335,7 +335,7 @@ void ChatActivity::render(RenderLock&&) {
       ty += lineH;
     }
     if (!mine) {
-      std::string head = (showName ? std::string(node().group().name(m.sender)) + "  " : std::string()) +
+      std::string head = (showName ? std::string(node().network().name(m.sender)) + "  " : std::string()) +
                          meshui::timeText(m.time);
       if (m.chainWarning) head += "  (!) en melding kan mangle";
       y -= above;
@@ -357,7 +357,7 @@ NewGroupActivity::NewGroupActivity(GfxRenderer& renderer, MappedInputManager& ma
 void NewGroupActivity::onEnter() {
   Activity::onEnter();
   members.clear();
-  const auto& group = node().group();
+  const auto& group = node().network();
   for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
     if (n != group.me && group.member(n)->present) members.push_back(n);
   }
@@ -374,7 +374,7 @@ void NewGroupActivity::toggle(const int index) {
 }
 
 void NewGroupActivity::finish() {
-  const mesh::Members bits = chosen | mesh::memberBit(node().group().me);
+  const mesh::Members bits = chosen | mesh::memberBit(node().network().me);
   const int people = mesh::memberCount(bits);
   if (people < 2) {
     problem = "Velg minst én";
@@ -387,7 +387,7 @@ void NewGroupActivity::finish() {
       if (chosen & mesh::memberBit(n)) return openChat(n);
     }
   }
-  for (uint8_t c = mesh::CONV_GROUPS; c < mesh::CONVERSATIONS; c++) {
+  for (uint8_t c = mesh::CONV_FIRST_GROUP; c < mesh::CONVERSATIONS; c++) {
     const mesh::ChatGroup* g = chatGroup(c);
     if (g->id && !g->left && g->members == bits) return openChat(c);
   }
@@ -401,13 +401,13 @@ void NewGroupActivity::finish() {
       return;
     }
     const std::string name = std::get<KeyboardResult>(result.data).text;
-    const uint8_t conversation = node().createGroup(chosen, name);
-    if (conversation == mesh::CONV_GROUP) {
+    const int conversation = node().createGroup(chosen, name);
+    if (conversation < 0) {
       problem = "Kunne ikke lage gruppen (16 grupper er maks: forlat en først)";
       requestUpdate();
       return;
     }
-    openChat(conversation);
+    openChat(uint8_t(conversation));
   });
 }
 
@@ -505,7 +505,7 @@ void NewGroupActivity::render(RenderLock&&) {
     } else {
       renderer.drawRoundedRect(bx, by, box, box, 2, 8, true);
     }
-    renderer.drawText(UI_12_FONT_ID, bx + box + 20, y + 26, node().group().name(members[i]), true,
+    renderer.drawText(UI_12_FONT_ID, bx + box + 20, y + 26, node().network().name(members[i]), true,
                       EpdFontFamily::BOLD);
     y += ROW_H;
     renderer.drawLine(SIDE, y, width - SIDE, y);
@@ -580,8 +580,8 @@ void GroupInfoActivity::loop() {
 void GroupInfoActivity::render(RenderLock&&) {
   const int width = renderer.getScreenWidth();
   shownChanges = node().changes();
-  const mesh::ChatGroup& g = node().groups().at(conversation - mesh::CONV_GROUPS);
-  const auto& group = node().group();
+  const mesh::ChatGroup& g = node().groups().at(conversation - mesh::CONV_FIRST_GROUP);
+  const auto& group = node().network();
   renderer.clearScreen();
   int y = meshui::drawTitle(renderer, meshui::conversationName(conversation).c_str());
   renderer.drawText(SMALL_FONT_ID, SIDE, y + 8, "MEDLEMMER", true, EpdFontFamily::BOLD);

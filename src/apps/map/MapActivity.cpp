@@ -57,7 +57,7 @@ void MapActivity::render(RenderLock&&) {
   drawnAt = millis();
   renderer.clearScreen();
   const int top = meshui::drawTitle(renderer, "Kart");
-  const auto& group = node().group();
+  const auto& group = node().network();
 
   // My position: the GPS now, or what I last shared.
   mesh::Position mine;

@@ -114,10 +114,10 @@ std::string coordinatesText(const mesh::Position& p) {
 }
 
 std::string conversationName(const uint8_t conversation) {
-  const auto& group = mesh::Node::get().group();
-  if (conversation == mesh::CONV_GROUP) return "Alle";
+  const auto& group = mesh::Node::get().network();
+  if (conversation == mesh::CONV_EVERYONE) return "Alle";
   if (!mesh::isGroupConversation(conversation)) return group.name(conversation);
-  const auto& g = mesh::Node::get().groups().at(conversation - mesh::CONV_GROUPS);
+  const auto& g = mesh::Node::get().groups().at(conversation - mesh::CONV_FIRST_GROUP);
   if (g.name[0]) return g.name;
   const mesh::Members bits = g.members;
   std::vector<std::string> names;
@@ -147,7 +147,7 @@ std::string contactText(const uint8_t member) {
   }
   if (st.battery) parts.push_back(std::to_string(st.battery) + " %");
   // Distance when we both know where we are.
-  const auto& self = node.member(node.group().me);
+  const auto& self = node.member(node.network().me);
   mesh::Position mine;
   bool haveMine = false;
   if (mesh::gps::lastFix().valid) {
@@ -211,7 +211,7 @@ void drawUnreadLine(const GfxRenderer& renderer, const uint32_t unread) {
   }
   char line[64];
   snprintf(line, sizeof(line), "%lu %s · sist fra %s", static_cast<unsigned long>(unread),
-           unread == 1 ? "ny melding" : "nye meldinger", node.group().name(from));
+           unread == 1 ? "ny melding" : "nye meldinger", node.network().name(from));
   renderer.fillRect(0, y, width, 96, false);
   renderer.fillRoundedRect(20, y + 16, width - 40, 64, 14, Color::Black);
   const int w = renderer.getTextWidth(UI_12_FONT_ID, line, EpdFontFamily::BOLD);

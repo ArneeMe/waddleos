@@ -18,11 +18,11 @@ constexpr uint8_t MAX_PIECES = 15;
 constexpr uint8_t DEFAULT_HOPS = 3;
 
 constexpr uint8_t SERVER = 0;
-constexpr uint8_t GROUP = 0xFF;  // everyone
-// A group made on a unit: recipient GROUP_TO, its id in the header. The id is
+constexpr uint8_t EVERYONE = 0xFF;  // everyone
+// A group made on a unit: recipient TO_GROUP, its id in the header. The id is
 // the creating member × 256 + that member's own count, so two units never pick
 // the same one. Who is in it only the members know.
-constexpr uint8_t GROUP_TO = 0xFE;
+constexpr uint8_t TO_GROUP = 0xFE;
 // ROSTER packets: counter = ROSTER_COUNTER + the roster's version (sender 0).
 constexpr uint32_t ROSTER_COUNTER = 0x40000000;
 constexpr uint8_t MAX_MEMBERS = 32;
@@ -39,7 +39,6 @@ enum class Type : uint8_t { Msg = 1, Ack = 2, SyncReq = 3, Pos = 4, Sos = 5, Fet
 
 enum class AckState : uint8_t { Delivered = 1, Stored = 2, Read = 3 };
 
-inline bool isEncrypted(Type t) { return t == Type::Msg || t == Type::Pos || t == Type::Sos || t == Type::Roster; }
 inline bool isMember(uint8_t id) { return id >= 1 && id <= MAX_MEMBERS; }
 // Sets of members: a bit per member (bit 0 = member 1).
 using Members = uint32_t;
@@ -54,27 +53,27 @@ inline uint8_t groupCreator(uint16_t id) { return uint8_t(id >> 8); }
 // Whether member may be given a packet to recipient that sender sent. Groups
 // go to every member: only those with the key can open them.
 inline bool canRead(uint8_t member, uint8_t sender, uint8_t recipient) {
-  return recipient == GROUP || recipient == member || sender == member || recipient == GROUP_TO;
+  return recipient == EVERYONE || recipient == member || sender == member || recipient == TO_GROUP;
 }
 
 struct Header {
   Type type = Type::Msg;
-  uint8_t group = 0;
+  uint8_t network = 0;
   uint8_t hops = DEFAULT_HOPS;  // hops left
   bool fragmented = false;
   uint8_t sender = 0;
-  uint8_t recipient = GROUP;
+  uint8_t recipient = EVERYONE;
   uint32_t counter = 0;
   uint8_t pieceIndex = 0;
   uint8_t pieceCount = 1;
-  uint16_t groupId = 0;  // recipient GROUP_TO: which group
+  uint16_t groupId = 0;  // recipient TO_GROUP: which group
   uint8_t key = 0;       // which of the sender's or the group's keys sealed it
 
   // The message id, unique per sender for ever.
   uint64_t messageId() const { return (uint64_t(sender) << 32) | counter; }
 };
 
-// Writes the 11 header bytes. Returns HEADER_SIZE.
+// Writes the HEADER_SIZE (14) header bytes. Returns HEADER_SIZE.
 size_t writeHeader(const Header& h, uint8_t* out);
 // Reads and checks the header (magic, version, known type, sane pieces).
 bool readHeader(const uint8_t* in, size_t len, Header& h);

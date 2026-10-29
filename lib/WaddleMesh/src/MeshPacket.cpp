@@ -7,7 +7,7 @@ namespace mesh {
 size_t writeHeader(const Header& h, uint8_t* out) {
   out[0] = MAGIC;
   out[1] = uint8_t((VERSION << 4) | (uint8_t(h.type) & 0x0F));
-  out[2] = h.group;
+  out[2] = h.network;
   out[3] = uint8_t((h.hops & 0x0F) | (h.fragmented ? 0x10 : 0));
   out[4] = h.sender;
   out[5] = h.recipient;
@@ -24,7 +24,7 @@ bool readHeader(const uint8_t* in, size_t len, Header& h) {
   const uint8_t type = in[1] & 0x0F;
   if (type < uint8_t(Type::Msg) || type > uint8_t(Type::Roster)) return false;
   h.type = Type(type);
-  h.group = in[2];
+  h.network = in[2];
   h.hops = in[3] & 0x0F;
   h.fragmented = (in[3] & 0x10) != 0;
   h.sender = in[4];
@@ -37,9 +37,9 @@ bool readHeader(const uint8_t* in, size_t len, Header& h) {
   if (h.pieceCount == 0 || h.pieceIndex >= h.pieceCount) return false;
   if (!h.fragmented && h.pieceCount != 1) return false;
   if (h.sender != SERVER && !isMember(h.sender)) return false;
-  if (h.recipient != GROUP && h.recipient != SERVER && h.recipient != GROUP_TO && !isMember(h.recipient)) return false;
+  if (h.recipient != EVERYONE && h.recipient != SERVER && h.recipient != TO_GROUP && !isMember(h.recipient)) return false;
   // A group id only on group packets, and made by a member.
-  if ((h.recipient == GROUP_TO) != (h.groupId != 0)) return false;
+  if ((h.recipient == TO_GROUP) != (h.groupId != 0)) return false;
   if (h.groupId && !isMember(groupCreator(h.groupId))) return false;
   return true;
 }

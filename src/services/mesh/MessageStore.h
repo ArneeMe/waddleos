@@ -13,7 +13,7 @@
 // so the card alone shows nothing, not even who wrote to whom.
 //
 // A conversation is everyone (0), a DM with member 1-32, or a group made on a
-// unit (CONV_GROUPS + its slot in ChatGroups, MeshGroups.h).
+// unit (CONV_FIRST_GROUP + its slot in ChatGroups, MeshGroups.h).
 
 #include <MeshPacket.h>
 
@@ -26,12 +26,12 @@
 
 namespace mesh {
 
-constexpr uint8_t CONV_GROUP = 0;
-constexpr uint8_t CONV_GROUPS = 1 + MAX_MEMBERS;
-constexpr int CONVERSATIONS = CONV_GROUPS + MAX_GROUPS;
+constexpr uint8_t CONV_EVERYONE = 0;
+constexpr uint8_t CONV_FIRST_GROUP = 1 + MAX_MEMBERS;
+constexpr int CONVERSATIONS = CONV_FIRST_GROUP + MAX_GROUPS;
 
 inline bool isGroupConversation(uint8_t conversation) {
-  return conversation >= CONV_GROUPS && conversation < CONVERSATIONS;
+  return conversation >= CONV_FIRST_GROUP && conversation < CONVERSATIONS;
 }
 inline bool isDmConversation(uint8_t conversation) { return conversation >= 1 && conversation <= MAX_MEMBERS; }
 
@@ -105,7 +105,7 @@ class MessageStore {
   uint8_t me_ = 0;
   uint32_t lastCounter_[MAX_MEMBERS] = {};
   ConversationSummary summaries_[CONVERSATIONS];
-  uint32_t seen_[CONVERSATIONS] = {};  // read.txt
+  uint32_t seen_[CONVERSATIONS] = {};  // read.bin
   // Newest message hash per conversation and sender (only pairs that have written).
   struct ChainLink {
     uint8_t hash[4] = {};

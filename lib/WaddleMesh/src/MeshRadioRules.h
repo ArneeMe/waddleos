@@ -72,7 +72,6 @@ class CounterReserve {
   explicit CounterReserve(uint32_t savedLimit) : next_(savedLimit + 1), limit_(savedLimit) {}
   // The next counter. When saveLimit is set, write it to flash before sending.
   uint32_t take(uint32_t* saveLimit);
-  uint32_t peek() const { return next_; }
 
  private:
   uint32_t next_;

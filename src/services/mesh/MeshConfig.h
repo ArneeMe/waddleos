@@ -24,7 +24,7 @@ struct Identity {
   uint8_t secret[KEY_SIZE];
   uint8_t publicKey[KEY_SIZE];
   uint8_t senderKey[KEY_SIZE];  // my key for packets to everyone
-  uint8_t senderNumber = 1;     // its key number (header byte 13)
+  uint8_t senderKeyNumber = 1;     // its key number (header byte 13)
 };
 
 struct Member {
@@ -32,10 +32,10 @@ struct Member {
   bool admin = false;
   char name[ROSTER_NAME + 1] = "";
   uint8_t publicKey[KEY_SIZE] = {};
-  uint8_t pairKey[KEY_SIZE] = {};  // our DM key, derived on load
+  uint8_t dmKey[KEY_SIZE] = {};  // our DM key, derived on load
 };
 
-struct Group {  // the network
+struct Network {  // the network
   bool configured = false;
   uint8_t id = 0;  // network id
   uint8_t me = 0;  // my member number, 1-32
@@ -70,10 +70,10 @@ void saveCounterLimit(uint32_t limit);
 
 // Reads the network from the SD card and derives the DM keys. False when the
 // unit has not joined yet (it then stays quiet on the radio).
-bool loadGroup(Group& group);
+bool loadNetwork(Network& group);
 // A newer roster signed by the admin: takes it in and saves it. False when it
 // is not newer or not signed by the admin.
-bool applyRoster(Group& group, const uint8_t* data, size_t len);
+bool applyRoster(Network& group, const uint8_t* data, size_t len);
 
 // Joining. start: the link from the invitation, my name. Keeps the invitation
 // and gives the sealed request (protocol/PROTOCOL.md, "The pieces in detail").
