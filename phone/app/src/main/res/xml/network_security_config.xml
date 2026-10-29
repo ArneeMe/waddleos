@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plain HTTP only for pairing with the T5 on the home Wi-Fi (its File Transfer
+     web server); what goes there is sealed with the pairing key. The Pi is
+     HTTPS, trusting only its own certificate (Server.kt). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

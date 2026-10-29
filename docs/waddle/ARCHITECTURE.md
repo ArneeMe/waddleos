@@ -211,6 +211,12 @@ Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOC
   DMs, roster), `MeshServerSync.cpp` (the Pi over HTTPS); shared limits in
   `MeshNodeInternal.h`. Packet formats, crypto and control DMs are in
   `lib/WaddleMesh/`.
+- **The phone app** (`phone/`, Android): the member's second device
+  (PHONE.md). The C++ in `phone/app/src/main/cpp/` builds the node with the
+  NDK; Kotlin draws three screens (pairing, conversations, chat) and does HTTPS
+  to the Pi, trusting only its certificate. Built in CI as `waddle-mobil.apk`;
+  `test/phone/build.sh` builds the C++ on a computer and calls every native
+  method once.
 - **Another device for the same code** (the phone, PHONE.md): it compiles the
   node, `MessageStore`, `MeshConfig`, `MeshGroups` and `lib/WaddleMesh` as they
   are, and supplies what the T5 gets from Arduino and the board: `millis()`,

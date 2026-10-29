@@ -55,6 +55,64 @@ jobs:
           retention-days: 14
       - name: Tools
         run: python3 -m unittest discover -s tools/tests
+      # The phone app's C++ on the computer, and every native method called once from Java.
+      - name: Phone app C++
+        run: bash test/phone/build.sh
+
+  # The phone app (phone/): the T5's mesh code through the Android NDK, and the
+  # screens in Kotlin. Published as waddle-mobil.apk next to the firmware.
+  android:
+    runs-on: ubuntu-latest
+    name: build (android)
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('phone/**/*.kts', 'phone/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+      # A fixed signing key, when the repository has one, so a new build installs
+      # over the old one; without it, each build has its own (uninstall first).
+      - name: Signing key
+        env:
+          KEYSTORE: ${{ secrets.WADDLE_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/waddle.jks"
+            echo "WADDLE_KEYSTORE=$RUNNER_TEMP/waddle.jks" >> "$GITHUB_ENV"
+          fi
+      - name: Build
+        working-directory: phone
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          WADDLE_KEYSTORE_PASSWORD: ${{ secrets.WADDLE_KEYSTORE_PASSWORD }}
+        run: |
+          set -o pipefail
+          count=$(git rev-list --count HEAD)
+          export WADDLE_VERSION_CODE="$count"
+          export WADDLE_VERSION_NAME="1.${count}${PR:+ (PR $PR)}"
+          ./gradlew --no-daemon assembleDebug 2>&1 | tee build.log
+          cp app/build/outputs/apk/debug/app-debug.apk ../waddle-mobil.apk
+      - name: Report build errors
+        if: failure()
+        run: |
+          grep -E "^e: |error:|What went wrong|FAILED" phone/build.log | sort -u | head -40 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+      - uses: actions/upload-artifact@v6
+        with:
+          name: firmware-android
+          path: waddle-mobil.apk
+          retention-days: 14
 
   build:
     runs-on: ubuntu-latest
@@ -184,7 +242,7 @@ jobs:
 
   # Publishes every device that built, even when another one failed.
   publish:
-    needs: build
+    needs: [build, android]
     # Pushes to waddle and PRs from this repo; a manual run only builds.
     if: ${{ !cancelled() && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-latest
@@ -209,6 +267,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           bins=(out/*.bin)
+          apks=(out/*.apk)
           if [ ${#bins[@]} -eq 0 ]; then echo "Nothing built."; exit 1; fi
           if [ "$TAG" = waddle-latest ]; then
             title="WaddleOS latest"
@@ -225,4 +284,4 @@ jobs:
           fi
           python3 scripts/version_json.py old.json version.json out/version-*.json
           cat version.json
-          gh release upload "$TAG" "${bins[@]}" version.json --clobber
+          gh release upload "$TAG" "${bins[@]}" "${apks[@]}" version.json --clobber
