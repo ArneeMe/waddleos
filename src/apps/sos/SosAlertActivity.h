@@ -6,7 +6,9 @@
 // button on Hjem): black screen, sent again every minute until "Avbryt SOS".
 class SosActivity final : public Activity {
  public:
-  SosActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  // countdown: started by holding the button, so it waits 10 s (any press stops
+  // it) before sending, in case the button was pressed by accident.
+  SosActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool countdown = false);
   void onEnter() override;
   void loop() override;
   void render(RenderLock&&) override;
@@ -14,6 +16,8 @@ class SosActivity final : public Activity {
 
  private:
   int cancelY = 0;
+  unsigned long countdownFrom = 0;  // millis() when the countdown began; 0 = sending
+  int shownSeconds = -1;
   unsigned long drawnAt = 0;
   uint32_t shownChanges = 0;
 };
