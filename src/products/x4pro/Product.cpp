@@ -21,8 +21,9 @@ std::unique_ptr<Activity> makeHome(GfxRenderer& renderer, MappedInputManager& in
 }
 
 std::unique_ptr<Activity> afterBook(GfxRenderer& renderer, MappedInputManager& input, const std::string& bookPath) {
-  // Leaving the news paper goes back to the headline list.
-  if (bookPath == waddle::news::EPUB_PATH) return std::make_unique<NewsActivity>(renderer, input, /*fetch=*/false);
+  // Leaving the news paper goes back to the headline list, or to Hjem when the
+  // story was opened there.
+  if (bookPath == waddle::news::EPUB_PATH && !waddle::news::openedFromHome()) return std::make_unique<NewsActivity>(renderer, input, /*fetch=*/false);
   return nullptr;
 }
 

@@ -42,7 +42,11 @@ void setRead(const Paper& paper, std::vector<std::string>& readIds, int index, b
 // show, or spineCount when no unread story is left after it.
 int enterChapter(int spine, bool skipRead, int spineCount);
 
-// Marks a story read and opens the reader at it.
-void openStory(const Paper& paper, std::vector<std::string>& readIds, int index);
+// Marks a story read and opens the reader at it. fromHome: a headline on Hjem,
+// so leaving the story goes back to Hjem instead of the headline list.
+void openStory(const Paper& paper, std::vector<std::string>& readIds, int index, bool fromHome = false);
+
+// Whether the story being read was opened from Hjem.
+bool openedFromHome();
 
 }  // namespace waddle::news
