@@ -258,8 +258,10 @@ wrote them.
    (R8).
 3. The Pi and the tool: R6, R5's upload. Done: `waddle mesh approve` giving a
    returning member their old number (R8).
-4. The app: pairing, sync on open and now and then, conversations, writing,
-   R7 and R10. It reuses the C++ node through the Android NDK rather than a
+4. The app (`phone/`, built: `waddle-mobil.apk` in each release): pairing (R1),
+   conversations, writing, sync on open, on send and every 5 minutes while
+   open. Still to do: R10 (read on one, read on both), new groups from the
+   phone, notifications. It reuses the C++ node through the Android NDK rather than a
    Kotlin rewrite, so the group and key rules stay one piece of code
    (ARCHITECTURE.md, "Another device for the same code"); Kotlin does the
    screens, HTTPS and storage paths.
