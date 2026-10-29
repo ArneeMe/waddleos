@@ -1,12 +1,16 @@
 #include "MeshWebApi.h"
 
 #include <ArduinoJson.h>
+#include <HalMemory.h>
 #include <HalPowerManager.h>
+#include <HalStorage.h>
+#include <HalSystem.h>
 #include <Logging.h>
 
 #include <esp_random.h>
 
 #include <cstring>
+#include <ctime>
 #include <vector>
 
 #include "MeshConfig.h"
@@ -96,6 +100,44 @@ void registerRoutes(WebServer& server) {
     doc["gps"] = gps::model();
     doc["battery"] = powerManager.getBatteryPercentage();
     doc["version"] = waddle::version();
+    String out;
+    serializeJson(doc, out);
+    server.send(200, "application/json", out);
+  });
+
+  // How the unit is, for `waddle mesh check` (no keys, no message text).
+  server.on("/api/mesh/diag", HTTP_GET, [&server] {
+    Node& node = Node::get();
+    const Group& group = node.group();
+    JsonDocument doc;
+    doc["version"] = waddle::version();
+    doc["uptimeS"] = millis() / 1000;
+    doc["resetReason"] = HalSystem::resetReason();
+    doc["crashReport"] = Storage.exists("/crash_report.txt");
+    const time_t now = time(nullptr);
+    doc["clockSet"] = now > 1600000000;
+    doc["time"] = uint32_t(now);
+    doc["sd"] = Storage.ready();
+    const auto internal = HalMemory::getInternalHeap();
+    doc["heapFree"] = internal.freeBytes;
+    doc["heapLargest"] = internal.largestBlockBytes;
+    doc["heapMin"] = internal.minFreeBytes;
+    doc["psramFree"] = HalMemory::getPsramHeap().freeBytes;
+    doc["configured"] = group.configured;
+    doc["me"] = group.me;
+    doc["roster"] = group.rosterVersion;
+    doc["radio"] = radio::isUp();
+    doc["gps"] = gps::model();
+    doc["battery"] = powerManager.getBatteryPercentage();
+    doc["outbox"] = node.outboxSize();
+    doc["pending"] = node.pendingSize();
+    doc["airtimeMs"] = node.airtimeLastHourMs();  // of 216000 a rolling hour
+    doc["server"] = node.serverState() == ServerState::Online ? "online"
+                    : node.serverState() == ServerState::Offline ? "offline"
+                                                                  : "unknown";
+    doc["lastCheck"] = node.lastCheckUnix();
+    doc["unread"] = node.store().totalUnread();
+    doc["logs"] = getLastLogs();
     String out;
     serializeJson(doc, out);
     server.send(200, "application/json", out);

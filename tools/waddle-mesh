@@ -15,7 +15,7 @@
   waddle mesh remove NAME
                          take someone out of the network
   waddle mesh members    who is in the network
-  waddle mesh check      ask every unit set up here how it is
+  waddle mesh check      ask every unit set up here how it is (--logs: its last log lines too)
   waddle mesh server [--pr N]
                          update the Pi server over SSH and check it came back
 
@@ -890,13 +890,21 @@ def find_port():
     return None
 
 
-def unit_health(ip):
-    """What a unit says about itself, as (ok, text)."""
+AIRTIME_BUDGET_MS = 216000  # a unit's own limit per rolling hour (6 %)
+
+
+def unit_health(ip, logs=False):
+    """What a unit says about itself, as (ok, text). The diagnostics page
+    (/api/mesh/diag) has no keys and no message text."""
     try:
         status = unit_get(ip, "/api/status")
         ident = unit_get(ip, "/api/mesh/identity")
     except (OSError, ValueError) as e:
         return False, f"no answer ({e})"
+    try:
+        diag = unit_get(ip, "/api/mesh/diag")
+    except (OSError, ValueError):
+        diag = {}  # older firmware
     problems = []
     if status.get("board") != "t5s3":
         problems.append(f"board is {status.get('board')!r}, not t5s3")
@@ -904,11 +912,31 @@ def unit_health(ip):
         problems.append("radio did not start")
     if status.get("rolledBack"):
         problems.append("its last update crashed and was undone")
+    if diag:
+        if not diag.get("sd"):
+            problems.append("no SD card (or it does not work)")
+        if not diag.get("clockSet"):
+            problems.append("its clock is not set (no GPS fix or server contact yet)")
+        if diag.get("crashReport"):
+            problems.append("it crashed once: crash_report.txt is on its SD card")
+        if diag.get("resetReason") in ("BROWNOUT", "PANIC (exception/abort)", "CPU_LOCKUP", "TASK_WDT", "INT_WDT"):
+            problems.append(f"it last restarted because of {diag['resetReason']}")
+        if diag.get("heapLargest", 1 << 20) < 40000:
+            problems.append(f"little free memory ({diag['heapLargest'] // 1024} KB in one piece)")
     parts = [ident.get("version") or status.get("version", "?"),
              "radio OK" if ident.get("radio") else "radio FAILED",
              f"GPS {ident.get('gps', '?')}", f"battery {ident.get('battery', '?')} %",
              f"member {ident['me']} ({ident.get('name')})" if ident.get("configured") else "not set up"]
-    return not problems, " · ".join(parts) + ("".join(f"\n    {R}✗{N} {p}" for p in problems))
+    text = " · ".join(parts)
+    if diag:
+        hours = diag.get("uptimeS", 0) // 3600
+        text += (f"\n    {DIM}up {hours} h (started by {diag.get('resetReason', '?')}) · "
+                 f"airtime {100 * diag.get('airtimeMs', 0) // AIRTIME_BUDGET_MS} % of its limit · "
+                 f"waiting to send {diag.get('outbox', 0)}, to be confirmed {diag.get('pending', 0)} · "
+                 f"server {diag.get('server', '?')}{N}")
+        if logs and diag.get("logs"):
+            text += "\n" + "\n".join("    " + line for line in diag["logs"].splitlines())
+    return not problems, text + ("".join(f"\n    {R}✗{N} {p}" for p in problems))
 
 
 def new_unit(args):
@@ -960,7 +988,7 @@ def check(args):
     say(f"\n{B}🐧 waddle mesh check{N}  {DIM}(each unit on File Transfer → Join a Network){N}\n")
     bad = 0
     for m in units:
-        ok, text = unit_health(m["ip"])
+        ok, text = unit_health(m["ip"], logs="--logs" in args)
         bad += not ok
         say(f"  {G if ok else R}{'✓' if ok else '✗'}{N} {B}{m['name']}{N} {DIM}{m['ip']}{N}: {text}")
     say()

@@ -102,6 +102,9 @@ class Node {
   // True while packets wait to go out or Wi-Fi is on: do not sleep yet.
   bool busy() const;
   size_t outboxSize() const { return outbox_.size(); }
+  // For the diagnostics page (MeshWebApi.cpp, /api/mesh/diag).
+  size_t pendingSize() const { return pending_.size(); }
+  uint32_t airtimeLastHourMs() const { return budget_.usedLastHour(millis()); }
   // Milliseconds until the node next has something to do (for light sleep).
   uint32_t msUntilWork() const;
 
