@@ -196,8 +196,13 @@ when a unit's sync shows an older version, and over Wi-Fi as
 A unit takes a newer roster when the signature is the admin's. It keeps the
 newest version in flash and refuses an older `roster.bin` (a copied-back card).
 A roster without the unit's number, or with another public key under it, takes
-it out, also after a restart; it can then join again with a new invitation (a
-unit in a network refuses to join another). Joining another network, or the same
+it out, also after a restart, and the unit makes a new identity (X25519 secret
+and sender key): whoever has a copy of the old one (a lost phone or unit) can
+open nothing sent to it later. It can then join again with a new invitation (a
+unit in a network refuses to join another); the admin's tool gives a member who
+was taken out their old number back when the invitation has their name, and
+gives newcomers numbers nobody had while any are left. Files on the SD card are
+sealed with a key of their own, so the chats survive a new identity. Joining another network, or the same
 one as another number, clears the old groups, keys and chats; it makes a new
 sender key either way.
 - **Someone new:** it sends them its sender key (`'S'`). The newcomer sends

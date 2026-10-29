@@ -724,6 +724,29 @@ class MeshTests(unittest.TestCase):
         w.units[3].cmd("begin")
         self.assertFalse(w.units[3].state()["configured"])
 
+    def test_taken_out_and_back_as_the_same_number(self):
+        """A lost phone or unit: Arne takes Ola out, Ola's unit makes new keys,
+        and he comes back as member 3 with his chats."""
+        w = self.w
+        w.all_in_range()
+        w.begin()
+        w.run(10)
+        w.units[1].cmd("send 3 Før")
+        w.run(15)
+        old = w.publics[3]
+        w.remove(3)
+        w.run(10)
+        self.assertFalse(w.units[3].state()["configured"])
+        w.join(3)
+        self.assertNotEqual(w.publics[3], old)
+        w.units[3].cmd("begin")
+        w.run(20)
+        w.units[1].cmd("send 3 Etter")
+        w.units[3].cmd("send 0 Tilbake")
+        w.run(30)
+        self.assertEqual(w.units[3].texts(1), ["Før", "Etter"])
+        self.assertEqual(w.units[2].texts(0), ["Tilbake"])
+
     def test_unsent_message_survives_a_restart(self):
         w = self.w
         w.begin()  # nobody in range

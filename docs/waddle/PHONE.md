@@ -63,9 +63,9 @@ to Kari use keys the old secret cannot open.
   left could read it.
 - **R8. A lost device means a new identity, under the same number.** The person
   is taken out of the roster (`waddle mesh remove`), the T5 makes a new identity
-  ("Ny identitet"; today a rejoin keeps the old secret, which would not lock a
-  thief out), Arne invites them again, and `waddle mesh approve` gives them
-  their old number back. The phone is paired again. The same number keeps every
+  by itself when it gets that roster (built), Arne invites them again
+  (`waddle mesh invite <same name>`), and `waddle mesh approve` gives them their
+  old number back (built). The phone is paired again. The same number keeps every
   conversation in one place on everyone's units (no second "Kari"), and lets the
   Pi send her old DMs without knowing anything new. The new `counterFloor` keeps
   the new counters above the old ones.
@@ -251,9 +251,10 @@ wrote them.
 1. Protocol 4: device in the sender byte (R2), the self pair key, group id
    ranges.
 2. The T5: notes to self (R3), only the T5 rotates (R4), upload after trips
-   (R5), pairing endpoint (R1), "Ny identitet" (R8), the key archive and
-   history fetch (R11, R12).
-3. The Pi and the tool: R6, R5's upload, `waddle mesh approve` giving a
+   (R5), pairing endpoint (R1), the key archive and history fetch (R11, R12).
+   Done: a new identity when taken out, files sealed with a key of their own
+   (R8).
+3. The Pi and the tool: R6, R5's upload. Done: `waddle mesh approve` giving a
    returning member their old number (R8).
 4. The app: pairing, sync on open and now and then, conversations, writing,
    R7 and R10.

@@ -189,7 +189,9 @@ Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOC
   roster). `waddle mesh remove <name>` takes someone out.
 - **Keys on the unit:** its own secret and sender key in NVS flash; the network,
   the roster, groups and the others' sender keys on the SD card in files sealed
-  with a key derived from that secret (`MeshConfig.cpp`, `saveSealed`). Sender
+  with a storage key from a secret of its own in flash (`MeshConfig.cpp`,
+  `saveSealed`). A unit taken out of the network makes a new secret and sender
+  key (`newIdentity`); the files stay readable. Sender
   keys travel to every member as DMs, sent again until confirmed. When someone
   leaves the roster, every unit makes a new sender key. The messages
   (`/.mesh/chat/`, `/.mesh/packets/`), positions and read counts are sealed

@@ -121,6 +121,18 @@ const Identity& identity() {
   return id;
 }
 
+void newIdentity() {
+  identity();
+  esp_fill_random(id.secret, KEY_SIZE);
+  publicKey(id.secret, id.publicKey);
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putBytes("secret", id.secret, KEY_SIZE);
+  prefs.end();
+  newSenderKey();
+  LOG_INF("MESH", "New identity: %s", toHex(id.publicKey, 8).c_str());
+}
+
 void newSenderKey() {
   identity();
   esp_fill_random(id.senderKey, KEY_SIZE);
@@ -150,10 +162,24 @@ void saveCounterLimit(const uint32_t limit) {
 // --- Sealed files on the SD card ------------------------------------------------
 
 namespace {
+// Its own random secret in flash, not the identity's: a new identity
+// (newIdentity) keeps the chats and files readable.
 void storageKey(uint8_t key[KEY_SIZE]) {
+  static uint8_t secret[KEY_SIZE];
+  static bool loaded = false;
+  if (!loaded) {
+    Preferences prefs;
+    prefs.begin(NVS_NAMESPACE, false);
+    if (prefs.getBytes("storage", secret, KEY_SIZE) != KEY_SIZE || isZero(secret, KEY_SIZE)) {
+      esp_fill_random(secret, KEY_SIZE);
+      prefs.putBytes("storage", secret, KEY_SIZE);
+    }
+    prefs.end();
+    loaded = true;
+  }
   static const char LABEL[] = "waddle-storage";
   uint8_t input[KEY_SIZE + sizeof(LABEL)];
-  memcpy(input, identity().secret, KEY_SIZE);
+  memcpy(input, secret, KEY_SIZE);
   memcpy(input + KEY_SIZE, LABEL, sizeof(LABEL));
   crypto_blake2b(key, KEY_SIZE, input, sizeof(input));
   crypto_wipe(input, sizeof(input));
@@ -367,6 +393,9 @@ bool applyRoster(Group& group, const uint8_t* data, const size_t len) {
     LOG_INF("MESH", "This unit is no longer in the network");
     saveSealed(ROSTER_PATH, std::vector<uint8_t>(data, data + len));
     saveNewestRoster(group.id, roster.version);
+    // Taken out because it, or a phone with its keys, may be in other hands:
+    // new keys, so a copy of the old ones opens nothing sent to it later.
+    newIdentity();
     group.configured = false;
     return true;
   }

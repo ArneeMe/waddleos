@@ -529,9 +529,18 @@ def admit(cfg, pi, newcomers):
         free = [x for x in range(1, MAX_MEMBERS + 1) if x not in {m["number"] for m in roster["members"]}]
         if not free:
             raise RuntimeError(f"the network is full ({MAX_MEMBERS} members)")
-        n["number"], n["token"] = free[0], secrets.token_hex(16)
+        # Someone taken out and invited again (a lost phone or unit) gets their
+        # old number back, so their chats stay in one place on every unit.
+        # Others get the lowest number nobody had, while one is left.
+        invited = cfg["invites"].get(n["invite"], {}).get("name", "").lower()
+        former = cfg.get("former", {}).get(invited)
+        unused = [x for x in free if x not in cfg.get("former", {}).values()]
+        number = former if former in free else (unused or free)[0]
+        if number == former:
+            cfg["former"].pop(invited)
+        n["number"], n["token"] = number, secrets.token_hex(16)
         # The first unit of a new network is the admin's own.
-        roster["members"].append({"number": free[0], "admin": first and i == 0, "name": n["name"],
+        roster["members"].append({"number": number, "admin": first and i == 0, "name": n["name"],
                                   "public": n["public"],
                                   "tokenHash": hashlib.sha256(n["token"].encode()).digest()[:16]})
     roster["members"].sort(key=lambda m: m["number"])
@@ -737,11 +746,15 @@ def remove(args):
     if not yes("Go on?"):
         return 1
     roster["members"] = [m for m in roster["members"] if m["number"] != gone["number"]]
+    # An invitation in the same name later gives them this number again.
+    cfg.setdefault("former", {})[gone["name"].lower()] = gone["number"]
     upload_roster(cfg, load(MESH).get("pi") or ask("Pi over SSH"), roster)
     mesh = load(MESH)
     mesh["units"] = [u for u in mesh.get("units", []) if u.get("number") != gone["number"]]
     save(MESH, mesh)
-    say(f"  {G}✓{N} Member list version {roster['version']} is on the Pi; units get it at their next check.\n")
+    say(f"  {G}✓{N} Member list version {roster['version']} is on the Pi; units get it at their next check.")
+    say(f"  Their unit makes new keys when it gets it. To let them back (same number, same chats):")
+    say(f"  {B}waddle mesh invite {gone['name']}{N}\n")
     return 0
 
 

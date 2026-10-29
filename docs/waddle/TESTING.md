@@ -138,8 +138,10 @@ Joining (protocol 3: up to 32 members):
 - [ ] `waddle mesh join` on a unit that is already in the network: it says
       "enheten er allerede med i et nettverk".
 - [ ] `waddle mesh remove Ola`: after his next check Ola's unit says it is not
-      in a network, also after a restart. A new invitation lets him in again as
-      the same number, with his old chats still there.
+      in a network, also after a restart, and
+      `curl http://<its address>/api/mesh/identity` (File Transfer open) shows
+      another publicKey than before (new identity). `waddle mesh invite Ola` and
+      approve: he is member 3 again, with his old chats, and DMs work both ways.
 - [ ] Make a group of three, then switch one member's unit off for the
       invitation: when it is back it gets the group within a check.
 - [ ] Taking out a SD card and reading it on a computer: nothing in /.mesh/ is
