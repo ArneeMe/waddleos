@@ -9,6 +9,7 @@
 //   GET  /api/mesh/identity   {"publicKey": hex, "configured": bool, "radio", "gps", ...};
 //                             with ?commit=hex, starts the setup code: {"nonce": hex}
 //   POST /api/mesh/pair       {"tool", "nonce"}: the screen shows the setup code
+//   GET  /api/mesh/diag       how the unit is, for `waddle mesh check` (no keys or text)
 //   POST /api/mesh/join       the invitation, sealed by that tool -> the sealed request
 //   POST /api/mesh/welcome    the admin's sealed welcome; the unit starts in the network
 namespace mesh::web {

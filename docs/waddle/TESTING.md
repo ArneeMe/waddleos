@@ -189,7 +189,10 @@ Battery (the spec asks for 3 days):
 Deploy (PR #34):
 - [ ] `waddle mesh new-unit` on a new unit: flashes, then after File Transfer
       says "radio OK · GPS …".
-- [ ] `waddle mesh check` lists every unit with version, radio, GPS and battery.
+- [ ] `waddle mesh check` lists every unit with version, radio, GPS and battery,
+      then how long it has been up, why it last started, airtime used and what
+      waits to be sent. Take the SD card out: it says so. `--logs` adds the last
+      log lines.
 - [ ] Update a unit with Oppdater fastvare: after a minute the log says
       `UPDATE New build confirmed`.
 - [ ] `waddle mesh server` updates the Pi and prints "Running · gateway tilkoblet".

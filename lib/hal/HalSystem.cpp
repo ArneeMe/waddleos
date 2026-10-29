@@ -194,6 +194,8 @@ std::string getPanicInfo(bool full) {
   }
 }
 
+const char* resetReason() { return resetReasonName(esp_reset_reason()); }
+
 bool isRebootFromPanic() {
   const auto resetReason = esp_reset_reason();
   if (resetReason == ESP_RST_PANIC || resetReason == ESP_RST_CPU_LOCKUP) {

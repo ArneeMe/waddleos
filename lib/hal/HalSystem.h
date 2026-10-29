@@ -17,4 +17,6 @@ void clearPanic();
 
 std::string getPanicInfo(bool full = false);
 bool isRebootFromPanic();
+// Why the chip last started ("POWERON", "BROWNOUT", "PANIC (exception/abort)", ...).
+const char* resetReason();
 }  // namespace HalSystem
