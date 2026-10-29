@@ -167,7 +167,8 @@ class Node {
   uint32_t nextCounter();
   Header header(Type type, uint8_t recipient);
   void queue(const uint8_t* raw, size_t len, uint32_t delayMs, bool cancelIfHeard);
-  void sendSealed(const Header& h, const uint8_t* key, const uint8_t* plain, size_t len, bool store);
+  void sendSealed(const Header& h, const uint8_t* key, const uint8_t* plain, size_t len, bool store,
+                  uint32_t delayMs = 0);
   void sendAck(uint8_t toMember, uint8_t ackedSender, uint32_t counter, AckState state);
   void sendPosition(Type type, bool cancelled);
   void handle(const uint8_t* raw, size_t len, int rssi, bool viaWifi);
@@ -184,7 +185,7 @@ class Node {
   void requestFetch(uint8_t sender, uint32_t after, uint32_t before);
   void fillGap(uint8_t conversation, const ChatMessage& late);
   uint8_t syncFlags() const;
-  uint32_t sendControl(uint8_t to, const std::string& payload);
+  uint32_t sendControl(uint8_t to, const std::string& payload, uint32_t delayMs = 0);
   void sendToMember(int slot, uint8_t to, char kind, uint8_t about);
   // False when it cannot be taken yet (not confirmed, so it comes again).
   bool handleControl(uint8_t from, const std::string& text);
@@ -204,7 +205,9 @@ class Node {
   void handleRoster(const Header& h, const uint8_t* cipher, size_t len);
   // After a new roster: newcomers get my sender key, those gone leave the groups.
   void rosterChanged(Members before);
-  void sendSenderKey(uint8_t to);
+  // delayMs: when every unit sends its key at once (a new member list heard
+  // by all), spread out so they do not talk over each other.
+  void sendSenderKey(uint8_t to, uint32_t delayMs = 0);
   uint8_t conversationOfMine(uint32_t counter);
   void sendOutbox();
   void retryPending();

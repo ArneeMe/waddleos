@@ -350,7 +350,7 @@ class GatewayLinkTests(unittest.TestCase):
 
     def test_ping_pong_and_handover(self):
         fake, link = self.start()
-        self.assertEqual(fake.expect("PING"), "PING %d" % GROUP)
+        self.assertEqual(fake.expect("PING"), "PING %d 00000000" % GROUP)  # no roster yet
         group, _ = packets("group message")
         sos = P.Header(type=P.SOS, group=GROUP, sender=2, recipient=P.GROUP, counter=40).pack() + bytes(32)
         ack = P.Header(type=P.ACK, group=GROUP, sender=3, recipient=1, counter=9).pack() + P.Ack(1, 10, P.READ).pack()
@@ -599,7 +599,7 @@ class RosterServerTests(unittest.TestCase):
         written = []
         link._write = written.append
         link._ping()
-        self.assertEqual(written, ["PING %d" % GROUP])
+        self.assertEqual(written, ["PING %d 00000001" % GROUP])  # Arne is member 1
         self.assertEqual(list(link.outbox.queue), self.store.roster()[2])
         link.last_ping = 0
         link._ping()

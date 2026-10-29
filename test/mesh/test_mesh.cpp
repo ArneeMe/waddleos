@@ -432,6 +432,13 @@ static void testGatewayStore() {
   GatewayStore unknown(0, 0);
   unknown.handle(msgPacket(1, GROUP, 13).data, msgPacket(1, GROUP, 13).len, r);
   CHECK(r.savedSlot == -1 && unknown.count() == 0);
+  // Once the Pi said who is in the network, others are ignored too.
+  GatewayStore known(0x42, 0);
+  known.setMembers(memberBit(1) | memberBit(2));
+  known.handle(msgPacket(5, GROUP, 14).data, msgPacket(5, GROUP, 14).len, r);
+  CHECK(r.savedSlot == -1 && known.count() == 0);
+  known.handle(msgPacket(2, GROUP, 14).data, msgPacket(2, GROUP, 14).len, r);
+  CHECK(r.savedSlot >= 0 && known.count() == 1);
 
   // A sync from member 3: member 1's group message and member 2's DM to 3, in
   // order, with hops 0. Member 4 does not get the DM.

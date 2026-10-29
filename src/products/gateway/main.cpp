@@ -13,7 +13,7 @@
 //                   PONG <kept> <version> <front end>
 //                   STORED <hex> ... DUMPED <n>
 //   Pi -> gateway:  TX <hex>                  answered with OK or ERR <reason>
-//                   PING <group id>  (every 10 s)   DUMP   CLEAR (answered with OK)
+//                   PING <group id> <member bits hex>  (every 10 s)   DUMP   CLEAR (answered with OK)
 
 #include <Arduino.h>
 #include <GatewayStore.h>
@@ -255,11 +255,18 @@ void transmit(const char* hex) {
   }
 }
 
-void pong(const char* groupText) {
-  const int group = atoi(groupText);
+void pong(const char* args) {
+  char* rest = nullptr;
+  const long group = strtol(args, &rest, 10);
   if (group > 0 && group < 256 && group != store->group()) {
     store->setGroup(uint8_t(group));
     prefs.putUChar("group", uint8_t(group));
+  }
+  // Then who is in the network, as hex bits (member 1 = bit 0).
+  const mesh::Members members = rest && *rest == ' ' ? mesh::Members(strtoul(rest + 1, nullptr, 16)) : 0;
+  if (members && members != store->members()) {
+    store->setMembers(members);
+    prefs.putUInt("members", members);
   }
   Serial.printf("PONG %d %s %s\n", store->count(), VERSION, kct8103l ? "kct8103l" : "gc1109");
 }
@@ -321,6 +328,7 @@ void setup() {
   pinMode(PIN_LED, OUTPUT);
   prefs.begin("gateway");
   store = new mesh::GatewayStore(prefs.getUChar("group", 0), prefs.getUInt("counter", 0));
+  store->setMembers(prefs.getUInt("members", 0));
   if (LittleFS.begin(true)) {
     loadSlots();
   } else {
