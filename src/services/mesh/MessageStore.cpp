@@ -4,6 +4,8 @@
 #include <Logging.h>
 #include <MeshCrypto.h>
 
+#include "MeshConfig.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -13,8 +15,7 @@ namespace mesh {
 
 namespace {
 
-constexpr const char* DIR = "/.mesh";
-constexpr const char* READ_PATH = "/.mesh/read.txt";
+constexpr const char* READ_PATH = "/.mesh/read.bin";
 constexpr size_t PREVIEW = 60;
 
 // Chat log records.
@@ -24,41 +25,29 @@ constexpr uint8_t REC_CHAIN_OK = 'W';  // W sender counter(4): its missing previ
 
 std::string packetPath(const uint8_t sender) {
   char p[32];
-  snprintf(p, sizeof(p), "/.mesh/packets/%u.bin", sender);
+  snprintf(p, sizeof(p), "/.mesh/packets/%u.sealed", sender);
   return p;
 }
 
 std::string chatPath(const uint8_t conversation) {
   char p[32];
-  snprintf(p, sizeof(p), "/.mesh/chat/%u.log", conversation);
+  snprintf(p, sizeof(p), "/.mesh/chat/%u.sealed", conversation);
   return p;
 }
 
 bool append(const std::string& path, const uint8_t* data, const size_t len) {
-  HalFile f = Storage.open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND);
-  if (!f) {
-    LOG_ERR("STORE", "cannot write %s", path.c_str());
-    return false;
-  }
-  const bool ok = f.write(data, len) == len;
-  f.close();
-  return ok;
+  return appendSealed(path.c_str(), data, len);
 }
 
 // Calls fn(header, raw, len) for every stored packet of sender.
 template <typename Fn>
 void forEachPacket(const uint8_t sender, Fn fn) {
-  HalFile f = Storage.open(packetPath(sender).c_str(), O_RDONLY);
-  if (!f) return;
-  uint8_t raw[MAX_PACKET];
-  while (true) {
-    const int n = f.read();
-    if (n <= 0 || n > int(MAX_PACKET)) break;
-    if (f.read(raw, n) != n) break;
+  SealedLog log(packetPath(sender).c_str());
+  std::vector<uint8_t> raw;
+  while (log.next(raw)) {
     Header h;
-    if (readHeader(raw, n, h)) fn(h, raw, size_t(n));
+    if (raw.size() <= MAX_PACKET && readHeader(raw.data(), raw.size(), h)) fn(h, raw.data(), raw.size());
   }
-  f.close();
 }
 
 struct Record {
@@ -70,13 +59,16 @@ struct Record {
   uint8_t by = 0;
 };
 
-bool readRecord(HalFile& f, Record& r) {
-  const int kind = f.read();
-  if (kind < 0) return false;
+// The next record of a chat log; false at the end.
+bool readRecord(SealedLog& log, Record& r) {
+  std::vector<uint8_t> rec;
+  if (!log.next(rec) || rec.empty()) return false;
+  const int kind = rec[0];
   r.kind = uint8_t(kind);
-  uint8_t head[16];
+  const uint8_t* head = rec.data() + 1;
+  const size_t size = rec.size() - 1;
   if (kind == REC_MESSAGE) {
-    if (f.read(head, 16) != 16) return false;
+    if (size < 16) return false;
     ChatMessage& m = r.message;
     m = ChatMessage{};
     m.sender = head[0];
@@ -85,18 +77,18 @@ bool readRecord(HalFile& f, Record& r) {
     memcpy(m.prevHash, head + 9, 4);
     m.chainWarning = (head[13] & 1) != 0;
     const uint16_t len = get16(head + 14);
-    if (len > MAX_TEXT) return false;
-    m.text.resize(len);
-    return len == 0 || f.read(&m.text[0], len) == len;
+    if (len > MAX_TEXT || size != 16u + len) return false;
+    m.text.assign(reinterpret_cast<const char*>(head + 16), len);
+    return true;
   }
   if (kind == REC_CHAIN_OK) {
-    if (f.read(head, 5) != 5) return false;
+    if (size != 5) return false;
     r.sender = head[0];
     r.counter = get32(head + 1);
     return true;
   }
   if (kind == REC_STATE) {
-    if (f.read(head, 7) != 7) return false;
+    if (size != 7) return false;
     r.sender = head[0];
     r.counter = get32(head + 1);
     r.state = Delivery(head[5]);
@@ -151,24 +143,16 @@ void MessageStore::begin(const uint8_t me) {
     });
     lastCounter_[s - 1] = last;
   }
-  if (Storage.exists(READ_PATH)) {
-    const String text = Storage.readFile(READ_PATH);
-    const char* p = text.c_str();
-    for (int c = 0; c < CONVERSATIONS && *p; c++) {
-      char* end = nullptr;
-      seen_[c] = uint32_t(strtoul(p, &end, 10));
-      if (end == p) break;
-      p = end;
-    }
-  }
+  std::vector<uint8_t> seen;
+  if (loadSealed(READ_PATH, seen) && seen.size() == sizeof(seen_)) memcpy(seen_, seen.data(), sizeof(seen_));
   for (uint8_t c = 0; c < CONVERSATIONS; c++) {
     ConversationSummary& sum = summaries_[c];
     sum = ConversationSummary{};
     uint32_t fromOthers = 0;
-    HalFile f = Storage.open(chatPath(c).c_str(), O_RDONLY);
-    if (!f) continue;
+    SealedLog log(chatPath(c).c_str());
+    if (!log) continue;
     Record r;
-    while (readRecord(f, r)) {
+    while (readRecord(log, r)) {
       if (r.kind != REC_MESSAGE) continue;
       const ChatMessage& m = r.message;
       sum.count++;
@@ -180,20 +164,13 @@ void MessageStore::begin(const uint8_t me) {
       }
       updateChain(c, m);
     }
-    f.close();
     sum.unread = fromOthers > seen_[c] ? fromOthers - seen_[c] : 0;
   }
-  (void)DIR;
 }
 
 void MessageStore::savePacket(const uint8_t sender, const uint8_t* raw, const size_t len) {
   if (!isMember(sender) || len > MAX_PACKET) return;
-  uint8_t n = uint8_t(len);
-  HalFile f = Storage.open(packetPath(sender).c_str(), O_WRONLY | O_CREAT | O_APPEND);
-  if (!f) return;
-  f.write(&n, 1);
-  f.write(raw, len);
-  f.close();
+  if (!append(packetPath(sender), raw, len)) return;
   Header h;
   if (readHeader(raw, len, h) && h.counter > lastCounter_[sender - 1]) lastCounter_[sender - 1] = h.counter;
 }
@@ -262,10 +239,10 @@ void MessageStore::addState(const uint8_t conversation, const uint8_t sender, co
 
 std::vector<ChatMessage> MessageStore::load(const uint8_t conversation, const size_t limit) const {
   std::vector<ChatMessage> all;
-  HalFile f = Storage.open(chatPath(conversation).c_str(), O_RDONLY);
-  if (!f) return all;
+  SealedLog log(chatPath(conversation).c_str());
+  if (!log) return all;
   Record r;
-  while (readRecord(f, r)) {
+  while (readRecord(log, r)) {
     if (r.kind == REC_MESSAGE) {
       all.push_back(std::move(r.message));
       // Keep memory bounded on long histories: drop the oldest half when far over.
@@ -285,7 +262,6 @@ std::vector<ChatMessage> MessageStore::load(const uint8_t conversation, const si
       }
     }
   }
-  f.close();
   // In the order they were written, not the order they arrived (catching up
   // from several units mixes them).
   std::stable_sort(all.begin(), all.end(), [](const ChatMessage& a, const ChatMessage& b) {
@@ -298,14 +274,12 @@ std::vector<ChatMessage> MessageStore::load(const uint8_t conversation, const si
 }
 
 bool MessageStore::hasMessage(const uint8_t conversation, const uint8_t sender, const uint32_t counter) const {
-  HalFile f = Storage.open(chatPath(conversation).c_str(), O_RDONLY);
-  if (!f) return false;
+  SealedLog log(chatPath(conversation).c_str());
   Record r;
   bool found = false;
-  while (!found && readRecord(f, r)) {
+  while (!found && readRecord(log, r)) {
     found = r.kind == REC_MESSAGE && r.message.sender == sender && r.message.counter == counter;
   }
-  f.close();
   return found;
 }
 
@@ -363,13 +337,8 @@ void MessageStore::markRead(const uint8_t conversation) {
 }
 
 void MessageStore::saveSeen() {
-  std::string text;
-  char n[12];
-  for (const uint32_t s : seen_) {
-    snprintf(n, sizeof(n), "%u ", unsigned(s));
-    text += n;
-  }
-  Storage.writeFile(READ_PATH, String(text.c_str()));
+  const auto* bytes = reinterpret_cast<const uint8_t*>(seen_);
+  saveSealed(READ_PATH, std::vector<uint8_t>(bytes, bytes + sizeof(seen_)));
 }
 
 }  // namespace mesh

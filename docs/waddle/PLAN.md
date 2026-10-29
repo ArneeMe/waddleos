@@ -85,11 +85,10 @@ number; old keys are kept for reading, so history comes back from the Pi. Rules
 and the cases it must handle (dropped messages, groups, new or lost phone or
 T5): [PHONE.md](PHONE.md).
 
-Next on the unit, before the phone: **seal the message files on the SD card.**
-`/.mesh/chat/` holds the conversations as readable text and `/.mesh/packets/`
-the packets as received; anyone who takes the card out reads the history
-without the T5. Seal them like the key files (`saveSealed`), and keep the old
-storage keys (PHONE.md, R11) so history survives a new identity.
+Done: the message files, positions and read counts on the SD card are sealed
+like the key files, so the card alone shows nothing. When "Ny identitet" comes
+(PHONE.md, R8), the old storage key goes into the key archive (R11) so the
+history still opens.
 
 Before calling it done: **a screen-by-screen look** (the units, the reader and
 the Pi's status page) by Arne, to check that everything reads well for a person,

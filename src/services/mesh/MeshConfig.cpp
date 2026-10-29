@@ -200,6 +200,55 @@ bool loadSealed(const char* path, std::vector<uint8_t>& plain) {
   return !bad;
 }
 
+bool appendSealed(const char* path, const uint8_t* plain, const size_t len) {
+  const size_t sealed = 12 + len + TAG_SIZE;
+  if (sealed > 0xFFFF) return false;
+  std::vector<uint8_t> out(2 + sealed);
+  out[0] = uint8_t(sealed);
+  out[1] = uint8_t(sealed >> 8);
+  uint8_t* nonce = out.data() + 2;
+  esp_fill_random(nonce, 12);
+  uint8_t key[KEY_SIZE];
+  storageKey(key);
+  crypto_aead_ctx ctx;
+  crypto_aead_init_ietf(&ctx, key, nonce);
+  crypto_aead_write(&ctx, nonce + 12, nonce + 12 + len, nullptr, 0, plain, len);
+  crypto_wipe(&ctx, sizeof(ctx));
+  crypto_wipe(key, sizeof(key));
+  HalFile f = Storage.open(path, O_WRONLY | O_CREAT | O_APPEND);
+  if (!f) {
+    LOG_ERR("MESH", "Could not write %s", path);
+    return false;
+  }
+  const bool ok = f.write(out.data(), out.size()) == out.size();
+  f.close();
+  return ok;
+}
+
+SealedLog::SealedLog(const char* path) : file_(Storage.open(path, O_RDONLY)) { storageKey(key_); }
+
+SealedLog::~SealedLog() {
+  crypto_wipe(key_, sizeof(key_));
+  file_.close();
+}
+
+bool SealedLog::next(std::vector<uint8_t>& plain) {
+  if (!file_) return false;
+  uint8_t head[2];
+  if (file_.read(head, 2) != 2) return false;
+  const size_t sealed = size_t(head[0]) | size_t(head[1]) << 8;
+  if (sealed < 12 + TAG_SIZE) return false;
+  std::vector<uint8_t> data(sealed);
+  if (file_.read(data.data(), sealed) != int(sealed)) return false;
+  plain.assign(sealed - 12 - TAG_SIZE, 0);
+  crypto_aead_ctx ctx;
+  crypto_aead_init_ietf(&ctx, key_, data.data());
+  const int bad = crypto_aead_read(&ctx, plain.data(), data.data() + sealed - TAG_SIZE, nullptr, 0,
+                                   data.data() + 12, plain.size());
+  crypto_wipe(&ctx, sizeof(ctx));
+  return !bad;
+}
+
 // --- The network ----------------------------------------------------------------
 
 namespace {

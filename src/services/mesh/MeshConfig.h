@@ -10,6 +10,7 @@
 // with keys in it, are kept on the SD card in files sealed with a key only
 // this unit has (SealedFile), so taking the card gives away nothing.
 
+#include <HalStorage.h>
 #include <MeshCrypto.h>
 #include <MeshRoster.h>
 
@@ -81,6 +82,23 @@ const char* finishJoin(const std::string& boxHex);
 // Files on the SD card sealed with a key derived from this unit's secret.
 bool saveSealed(const char* path, const std::vector<uint8_t>& plain);
 bool loadSealed(const char* path, std::vector<uint8_t>& plain);
+
+// Append-only files of sealed records, same key: [length u16][nonce 12]
+// [ciphertext][tag 16] per record. A record cut short by a power cut, or one that
+// does not open, ends the reading there.
+bool appendSealed(const char* path, const uint8_t* plain, size_t len);
+class SealedLog {
+ public:
+  explicit SealedLog(const char* path);
+  ~SealedLog();
+  explicit operator bool() const { return bool(file_); }
+  // The next record, false at the end.
+  bool next(std::vector<uint8_t>& plain);
+
+ private:
+  HalFile file_;
+  uint8_t key_[KEY_SIZE];
+};
 
 // Hex and base64url helpers.
 std::string toHex(const uint8_t* data, size_t len);

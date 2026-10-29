@@ -27,7 +27,7 @@ namespace mesh {
 
 namespace {
 
-constexpr const char* POSITIONS_PATH = "/.mesh/positions.bin";
+constexpr const char* POSITIONS_PATH = "/.mesh/positions.sealed";
 constexpr size_t MAX_OUTBOX = 40;
 constexpr size_t MAX_PENDING = 20;
 constexpr size_t MAX_SYNC_ANSWER = 8;
@@ -1201,22 +1201,15 @@ void Node::savePositions() {
     data[i * (1 + POS_SIZE)] = members_[i].hasPosition ? 1 : 0;
     writePosition(members_[i].position, data + i * (1 + POS_SIZE) + 1);
   }
-  HalFile f = Storage.open(POSITIONS_PATH, O_WRONLY | O_CREAT | O_TRUNC);
-  if (!f) return;
-  f.write(data, sizeof(data));
-  f.close();
+  saveSealed(POSITIONS_PATH, std::vector<uint8_t>(data, data + sizeof(data)));
 }
 
 void Node::loadPositions() {
-  uint8_t data[MAX_MEMBERS * (1 + POS_SIZE)];
-  HalFile f = Storage.open(POSITIONS_PATH, O_RDONLY);
-  if (!f) return;
-  const bool ok = f.read(data, sizeof(data)) == int(sizeof(data));
-  f.close();
-  if (!ok) return;
+  std::vector<uint8_t> data;
+  if (!loadSealed(POSITIONS_PATH, data) || data.size() != MAX_MEMBERS * (1 + POS_SIZE)) return;
   for (int i = 0; i < MAX_MEMBERS; i++) {
     members_[i].hasPosition = data[i * (1 + POS_SIZE)] != 0;
-    readPosition(data + i * (1 + POS_SIZE) + 1, POS_SIZE, members_[i].position);
+    readPosition(data.data() + i * (1 + POS_SIZE) + 1, POS_SIZE, members_[i].position);
   }
 }
 

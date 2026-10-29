@@ -191,8 +191,9 @@ Mesh Messenger – Software Spec" (Claude Docs). Packet format: `protocol/PROTOC
   the roster, groups and the others' sender keys on the SD card in files sealed
   with a key derived from that secret (`MeshConfig.cpp`, `saveSealed`). Sender
   keys travel to every member as DMs, sent again until confirmed. When someone
-  leaves the roster, every unit makes a new sender key. The messages themselves
-  (`/.mesh/chat/`, `/.mesh/packets/`) are not sealed yet (PLAN.md). A paired
+  leaves the roster, every unit makes a new sender key. The messages
+  (`/.mesh/chat/`, `/.mesh/packets/`), positions and read counts are sealed
+  too, record by record (`appendSealed`, `SealedLog`). A paired
   phone as a second device: [PHONE.md](PHONE.md) (plan).
 - **Groups** (`services/mesh/MeshGroups.cpp`): made on a unit; the key goes to
   each member in an invitation DM. Leaving or "Fjern" makes the next key number
