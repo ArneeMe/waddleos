@@ -148,3 +148,5 @@ extern "C" uint32_t uzlib_crc32(const void*, unsigned int, uint32_t crc) { retur
 // The screens behind the settings rows are not drawn here.
 #include "products/t5s3/T5SettingsActivity.h"
 void openT5Setting(T5SettingsActivity::Row) {}
+#include "products/t5s3/T5AppsActivity.h"
+void openT5App(T5AppsActivity::Row) {}

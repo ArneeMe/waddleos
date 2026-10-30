@@ -33,6 +33,10 @@ bool isRead(const std::vector<std::string>& readIds, const std::string& id);
 // Wi-Fi. The old files stay until the new ones are complete.
 bool sync();
 
+// Whether opening Nyheter should fetch: nothing fetched since the device
+// started, or the last fetch is over an hour old.
+bool due();
+
 // Marks story `index` read or unread and saves the list.
 void setRead(const Paper& paper, std::vector<std::string>& readIds, int index, bool read);
 

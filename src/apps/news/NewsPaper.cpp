@@ -65,6 +65,21 @@ bool isRead(const std::vector<std::string>& readIds, const std::string& id) {
   return std::find(readIds.begin(), readIds.end(), id) != readIds.end();
 }
 
+namespace {
+unsigned long syncedAtMs = 0;
+bool synced = false;
+
+bool done(const bool ok) {
+  if (ok) {
+    synced = true;
+    syncedAtMs = millis();
+  }
+  return ok;
+}
+}  // namespace
+
+bool due() { return !synced || millis() - syncedAtMs > 60UL * 60 * 1000; }
+
 bool sync() {
   if (ESP.getFreeHeap() < HttpDownloader::MIN_TLS_FREE_HEAP ||
       ESP.getMaxAllocHeap() < HttpDownloader::MIN_TLS_MAX_ALLOC) {
@@ -80,7 +95,7 @@ bool sync() {
   }
   if (newBuilt == builtOf(LIST_PATH) && Storage.exists(EPUB_PATH)) {
     Storage.remove(NEW_LIST_PATH);
-    return true;
+    return done(true);
   }
   if (HttpDownloader::downloadToFile(EPUB_URL, EPUB_PATH) != HttpDownloader::OK) {
     Storage.remove(NEW_LIST_PATH);
@@ -88,7 +103,7 @@ bool sync() {
   }
   // Same file name as the old paper, so drop the old paper's layout cache.
   Epub(EPUB_PATH, "/.crosspoint").clearCache();
-  return Storage.replaceFile(NEW_LIST_PATH, LIST_PATH);
+  return done(Storage.replaceFile(NEW_LIST_PATH, LIST_PATH));
 }
 
 // Only ids in today's paper are written, so the file stays small.
