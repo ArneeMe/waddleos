@@ -16,6 +16,7 @@
 // unit (CONV_FIRST_GROUP + its slot in ChatGroups, MeshGroups.h).
 
 #include <MeshPacket.h>
+#include <MeshPlay.h>
 
 #include "MeshGroups.h"
 
@@ -90,8 +91,11 @@ class MessageStore {
   // Chat history.
   void addMessage(uint8_t conversation, const ChatMessage& m);
   void addState(uint8_t conversation, uint8_t sender, uint32_t counter, Delivery state, uint8_t byMember);
-  // The newest `limit` messages of a conversation, oldest first, with states applied.
-  std::vector<ChatMessage> load(uint8_t conversation, size_t limit) const;
+  // The newest `limit` messages of a conversation, oldest first, with states
+  // applied. Shown leaves out votes and moves (they show on their poll or
+  // game); Plays keeps only polls, games, votes and moves (MeshPlay.h).
+  enum class Only : uint8_t { All, Shown, Plays };
+  std::vector<ChatMessage> load(uint8_t conversation, size_t limit, Only only = Only::All) const;
   bool hasMessage(uint8_t conversation, uint8_t sender, uint32_t counter) const;
   // A missing message arrived: the later one no longer gets the warning.
   void clearWarning(uint8_t conversation, uint8_t sender, uint32_t counter);

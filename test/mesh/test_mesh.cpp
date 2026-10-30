@@ -6,6 +6,7 @@
 #include <MeshControl.h>
 #include <MeshCrypto.h>
 #include <MeshPacket.h>
+#include <MeshPlay.h>
 #include <MeshRadioRules.h>
 #include <MeshRoster.h>
 #include <monocypher.h>
@@ -779,6 +780,54 @@ static void testControl() {
   CHECK(!readControl("Hei", back));                            // a message, not a control DM
 }
 
+static void testPlay() {
+  using namespace mesh::play;
+  const std::string poll = writePoll("Middag?", {"Kl 18", "Kl 19", "Pizza"});
+  Play p;
+  CHECK(isPlay(poll) && !isReply(poll) && read(poll, p) && p.kind == Kind::Poll && p.question == "Middag?" &&
+        p.options.size() == 3 && p.options[2] == "Pizza");
+  CHECK(writePoll("Bare ett svar?", {"Ja"}).empty());
+  CHECK(writePoll("", {"Ja", "Nei"}).empty());
+  CHECK(!read(poll.substr(0, 9), p));  // the question alone
+
+  // Votes: each person's newest counts, from either of their devices.
+  const Ref ref{2, 7};
+  const std::string v1 = writeVote(ref, 0), v2 = writeVote(ref, 1), v3 = writeVote(ref, 1), other = writeVote({2, 8}, 0);
+  CHECK(isReply(v1) && read(v1, p) && p.kind == Kind::Vote && p.of == ref && p.option == 0);
+  const std::vector<Entry> votes = {{2, 7, &poll}, {3, 1, &v1}, {4, 1, &v2}, {3 | PHONE, 1, &v3}, {5, 1, &other}};
+  const Tally t = tally(ref, votes);
+  CHECK(t.votes[0] == 0 && t.votes[1] == (memberBit(3) | memberBit(4)));
+
+  // Fire på rad: the one who takes the challenge starts; four down a column wins.
+  const std::string game = writeGame(Game::FourInRow);
+  CHECK(read(game, p) && p.kind == Kind::Game && p.game == Game::FourInRow);
+  CHECK(!read(std::string{MARK, 'S', 'Z'}, p));  // a game this version does not know
+  const Ref g{1, 20};
+  std::vector<std::string> texts = {game};
+  std::vector<uint8_t> who = {1};
+  const int cols[] = {3, 4, 3, 4, 3, 4, 3};
+  for (int i = 0; i < 7; i++) {
+    texts.push_back(writeMove(g, uint16_t(i + 1), std::string(1, char('0' + cols[i]))));
+    who.push_back(i % 2 == 0 ? 2 : 1);
+  }
+  texts.push_back(writeMove(g, 3, "0"));  // a second move 3 from the wrong player
+  who.push_back(1);
+  std::vector<Entry> entries;
+  for (size_t i = 0; i < texts.size(); i++) entries.push_back({who[i], uint32_t(20 + i), &texts[i]});
+  // Out of order: the moves still replay in their numbered order.
+  std::swap(entries[2], entries[5]);
+  GameState s;
+  CHECK(replay(g, entries, s) && s.challenger == 1 && s.opponent == 2 && s.board.moves == 7 && s.board.winner == 1);
+  CHECK(s.playerOf(2) == 1 && s.playerOf(1) == 2 && s.playerOf(3) == 0);
+  CHECK(!replay({1, 21}, entries, s));
+
+  // Waiting for someone to take it: anyone but the challenger may.
+  CHECK(replay(g, {entries[0]}, s) && s.toMove() == 0 && s.board.moves == 0);
+  FourInRow b;
+  for (int i = 0; i < FourInRow::ROWS; i++) CHECK(b.drop(0));
+  CHECK(!b.drop(0) && !b.canDrop(7) && b.winner == 0);
+}
+
 int main(int argc, char** argv) {
   testHeader();
   testBodies();
@@ -791,6 +840,7 @@ int main(int argc, char** argv) {
   testCivilTime();
   testGatewayStore();
   testControl();
+  testPlay();
   if (argc > 1) writeVectors(argv[1]);
   std::printf(failures ? "%d FAILED\n" : "all mesh tests passed\n", failures);
   return failures ? 1 : 0;

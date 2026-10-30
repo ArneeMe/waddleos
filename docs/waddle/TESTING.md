@@ -112,6 +112,15 @@ Groups made on the unit (PR #35):
       then on just before the third): the "(!) en melding kan mangle" warning
       shows briefly or not at all, and the missing message arrives.
 
+Polls and Fire på rad:
+- [ ] "+" in a group chat → Avstemning: a question and three answers. The card
+      shows on the others' units and phones; a tap on an answer votes, and the
+      counts and names update everywhere. Voting again moves the vote.
+- [ ] "+" in a DM → Fire på rad: the other taps the card and drops the first
+      piece; both see the same board after each move, also from the phone.
+      Four in a line says who won.
+- [ ] The chat list shows "Avstemning: …", "stemte" and "gjorde et trekk".
+
 Joining (protocol 3: up to 32 members):
 - [ ] `waddle mesh invite Ola` prints a `waddle://join/…` link and how Ola runs it.
 - [ ] On a second computer (Ola's), unit on File Transfer → Join a Network:

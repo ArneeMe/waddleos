@@ -24,6 +24,8 @@ public class Smoke {
         check(Mesh.server().contains("\"url\":\"\""), "no server");
         check(Mesh.syncRequest().length > 0, "a sync request");
         check(Mesh.syncAnswer(new byte[0], 0) == 0, "an empty answer");
+        check(!Mesh.startPoll(0, "Middag?", "Kl 18\nKl 19") && !Mesh.vote(0, 2, 7, 0), "no poll before pairing");
+        check(!Mesh.startGame(0) && !Mesh.move(0, 2, 7, 3), "no game before pairing");
         String commit = Mesh.pairBegin();
         check(commit.length() == 64, commit);
         check(Mesh.pairAnswer("zz", "zz").equals("{}"), "a bad answer is refused");

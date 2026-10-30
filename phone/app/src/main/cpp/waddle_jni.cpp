@@ -3,6 +3,7 @@
 
 #include <ArduinoJson.h>
 #include <MeshPairClient.h>
+#include <MeshPlay.h>
 #include <esp_random.h>
 #include <jni.h>
 
@@ -80,6 +81,64 @@ std::string delivery(const mesh::ChatMessage& m, const uint8_t c) {
   return "sendes ved neste synk";
 }
 
+std::string nameOrDu(const uint8_t person) { return person == node().network().me ? "Du" : personName(person); }
+
+// The conversation's polls, games, votes and moves (MeshPlay.h).
+std::vector<mesh::ChatMessage> playsOf(const uint8_t c) {
+  return node().store().load(c, 400, mesh::MessageStore::Only::Plays);
+}
+
+std::vector<mesh::play::Entry> entriesOf(const std::vector<mesh::ChatMessage>& plays) {
+  std::vector<mesh::play::Entry> out;
+  for (const auto& m : plays) out.push_back({m.sender, m.counter, &m.text});
+  return out;
+}
+
+// A poll or a game in the chat list: what the phone's card shows.
+void addPlay(JsonObject o, const mesh::ChatMessage& m, const std::vector<mesh::play::Entry>& plays) {
+  mesh::play::Play p;
+  if (!mesh::play::read(m.text, p)) {
+    o["text"] = mesh::play::preview(m.text);
+    return;
+  }
+  const mesh::play::Ref ref{m.sender, m.counter};
+  o["sender"] = m.sender;
+  o["counter"] = m.counter;
+  const uint8_t me = node().network().me;
+  if (p.kind == mesh::play::Kind::Poll) {
+    const auto t = mesh::play::tally(ref, plays);
+    JsonObject poll = o["poll"].to<JsonObject>();
+    poll["question"] = p.question;
+    JsonArray options = poll["options"].to<JsonArray>();
+    for (size_t i = 0; i < p.options.size(); i++) {
+      JsonObject opt = options.add<JsonObject>();
+      opt["text"] = p.options[i];
+      opt["count"] = mesh::memberCount(t.votes[i]);
+      opt["mine"] = (t.votes[i] & mesh::memberBit(me)) != 0;
+      std::string who;
+      for (uint8_t n = 1; n <= mesh::MAX_MEMBERS; n++) {
+        if (!(t.votes[i] & mesh::memberBit(n))) continue;
+        if (!who.empty()) who += ", ";
+        who += nameOrDu(n);
+      }
+      opt["names"] = who;
+    }
+  } else if (p.kind == mesh::play::Kind::Game) {
+    mesh::play::GameState s;
+    mesh::play::replay(ref, plays, s);
+    JsonObject game = o["game"].to<JsonObject>();
+    game["status"] = mesh::play::status(s, me, nameOrDu);
+    game["canMove"] = mesh::play::canMove(s, me);
+    // Rows from the top, a digit per cell: 0 empty, 1 or 2 the player.
+    std::string board;
+    for (int r = mesh::play::FourInRow::ROWS - 1; r >= 0; r--) {
+      for (int col = 0; col < mesh::play::FourInRow::COLS; col++) board += char('0' + s.board.cell[r][col]);
+    }
+    game["board"] = board;
+    game["players"] = (s.opponent ? nameOrDu(s.opponent) : std::string("?")) + " mot " + nameOrDu(s.challenger);
+  }
+}
+
 }  // namespace
 
 extern "C" {
@@ -133,7 +192,9 @@ JNIEXPORT jstring JNICALL Java_me_arnee_waddle_Mesh_chat(JNIEnv* env, jclass, ji
   JsonArray list = doc.to<JsonArray>();
   const uint8_t c = uint8_t(conv);
   if (c < mesh::CONVERSATIONS) {
-    for (const auto& m : node().store().load(c, 200)) {
+    const auto plays = playsOf(c);
+    const auto entries = entriesOf(plays);
+    for (const auto& m : node().store().load(c, 200, mesh::MessageStore::Only::Shown)) {
       JsonObject o = list.add<JsonObject>();
       const bool mine = mesh::person(m.sender) == node().network().me;
       o["mine"] = mine;
@@ -142,6 +203,7 @@ JNIEXPORT jstring JNICALL Java_me_arnee_waddle_Mesh_chat(JNIEnv* env, jclass, ji
       o["time"] = m.time;
       o["warning"] = m.chainWarning;
       if (mine) o["state"] = delivery(m, c);
+      if (mesh::play::isPlay(m.text)) addPlay(o, m, entries);
     }
   }
   return jstr(env, json(doc));
@@ -271,6 +333,51 @@ JNIEXPORT jstring JNICALL Java_me_arnee_waddle_Mesh_pairFinish(JNIEnv* env, jcla
   if (const char* err = mesh::takePhoneCopy(copy)) return jstr(env, err);
   node().begin();
   return jstr(env, "");
+}
+
+
+// Polls and Fire på rad (MeshPlay.h).
+JNIEXPORT jboolean JNICALL Java_me_arnee_waddle_Mesh_startPoll(JNIEnv* env, jclass, jint conv, jstring question,
+                                                                 jstring options) {
+  tick();
+  std::vector<std::string> list;
+  const std::string all = str(env, options);  // one per line
+  size_t at = 0;
+  while (at <= all.size()) {
+    const size_t end = std::min(all.find('\n', at), all.size());
+    if (end > at) list.push_back(all.substr(at, end - at));
+    at = end + 1;
+  }
+  const std::string text = mesh::play::writePoll(str(env, question), list);
+  return conv >= 0 && conv < mesh::CONVERSATIONS && !text.empty() && node().sendText(uint8_t(conv), text);
+}
+
+JNIEXPORT jboolean JNICALL Java_me_arnee_waddle_Mesh_vote(JNIEnv*, jclass, jint conv, jint sender, jlong counter,
+                                                            jint option) {
+  tick();
+  if (conv < 0 || conv >= mesh::CONVERSATIONS || option < 0 || option >= int(mesh::play::MAX_OPTIONS)) return false;
+  return node().sendText(uint8_t(conv), mesh::play::writeVote({uint8_t(sender), uint32_t(counter)}, uint8_t(option)));
+}
+
+JNIEXPORT jboolean JNICALL Java_me_arnee_waddle_Mesh_startGame(JNIEnv*, jclass, jint conv) {
+  tick();
+  return conv >= 0 && conv < mesh::CONVERSATIONS &&
+         node().sendText(uint8_t(conv), mesh::play::writeGame(mesh::play::Game::FourInRow));
+}
+
+// Drops my piece in column col (0-6), when it is my move.
+JNIEXPORT jboolean JNICALL Java_me_arnee_waddle_Mesh_move(JNIEnv*, jclass, jint conv, jint sender, jlong counter,
+                                                            jint col) {
+  tick();
+  if (conv < 0 || conv >= mesh::CONVERSATIONS) return false;
+  const mesh::play::Ref ref{uint8_t(sender), uint32_t(counter)};
+  const auto plays = playsOf(uint8_t(conv));
+  mesh::play::GameState s;
+  if (!mesh::play::replay(ref, entriesOf(plays), s) || !mesh::play::canMove(s, node().network().me) ||
+      !s.board.canDrop(col)) {
+    return false;
+  }
+  return node().sendText(uint8_t(conv), mesh::play::writeMove(ref, uint16_t(s.board.moves + 1), std::string(1, char('0' + col))));
 }
 
 }  // extern "C"

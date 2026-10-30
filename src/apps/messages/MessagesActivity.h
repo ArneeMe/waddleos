@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include "PlayUi.h"
 #include "core/activities/Activity.h"
 #include "services/mesh/MessageStore.h"
 
@@ -81,7 +82,8 @@ class GroupInfoActivity final : public Activity {
   uint32_t shownChanges = 0;
 };
 
-// One conversation: messages as bubbles, a field to write in.
+// One conversation: messages as bubbles, a field to write in. "+" starts a
+// poll or a game of Fire på rad; they show as cards (PlayUi.h).
 class ChatActivity final : public Activity {
  public:
   ChatActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, uint8_t conversation);
@@ -90,8 +92,15 @@ class ChatActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
+  struct Box {
+    int x = 0, y = 0, w = 0, h = 0;
+    bool contains(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; }
+  };
   uint8_t conversation;
-  std::vector<mesh::ChatMessage> messages;
+  std::vector<mesh::ChatMessage> messages;  // without votes and moves
+  std::vector<mesh::ChatMessage> plays;     // polls, games, votes and moves
+  std::vector<mesh::play::Entry> playEntries;
+  std::vector<playui::Hit> hits;  // filled by render()
   int scroll = 0;  // messages hidden at the bottom (0 = newest shown)
   uint32_t shownChanges = 0;
   int inputY = 0;
@@ -100,6 +109,14 @@ class ChatActivity final : public Activity {
   std::string name;
   int titleBottom = 0;  // tapping above it opens a group's members
 
+  Box plusBox, pollBox, gameBox;
+  bool menuOpen = false;  // "+" tapped: Avstemning and Fire på rad show
+  std::string draftQuestion;
+  std::vector<std::string> draftOptions;
+
   void reload();
   void write();
+  void askQuestion();
+  void askOption();
+  void vote(const playui::Hit& hit);
 };
