@@ -333,7 +333,10 @@ void WaddleHomeActivity::loop() {
   using Button = MappedInputManager::Button;
 
   if (fetching) {
-    if (WiFi.status() == WL_CONNECTED || millis() - connectStartedAt > WIFI_TIMEOUT_MS) finishFetch();
+    if (WiFi.status() == WL_CONNECTED || waddle::wifi::joinFailed(connectStartedAt) ||
+        millis() - connectStartedAt > WIFI_TIMEOUT_MS) {
+      finishFetch();
+    }
   } else if (!fetchTried && millis() - enteredAt > FETCH_DELAY_MS && isStale()) {
     // Once per visit, only when opened: sitting on Hjem never fetches again.
     startFetch();

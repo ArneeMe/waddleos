@@ -49,13 +49,15 @@ void NewsActivity::startFetch() {
 
 void NewsActivity::finishFetch(const bool ok) {
   if (!wifiWasOn) waddle::wifi::off();
+  const std::string oldBuilt = paper.built;
   if (ok) loadList();
   {
     RenderLock lock(*this);
     stale = !ok;
     state = State::LIST;
   }
-  if (ok) moveTo(0);
+  // A new paper starts at its first unread story; the same one stays where it was.
+  if (ok && paper.built != oldBuilt) moveTo(0);
   requestUpdate();
 }
 
@@ -129,10 +131,14 @@ void NewsActivity::loop() {
   if (state == State::CONNECTING) {
     if (WiFi.status() == WL_CONNECTED) {
       finishFetch(waddle::news::sync());
-    } else if (millis() - connectStartedAt > WIFI_TIMEOUT_MS) {
-      finishFetch(false);
+      return;
     }
-    return;
+    if (waddle::wifi::joinFailed(connectStartedAt) || millis() - connectStartedAt > WIFI_TIMEOUT_MS) {
+      finishFetch(false);
+      return;
+    }
+    // The saved paper can be read while Wi-Fi joins.
+    if (paper.stories.empty()) return;
   }
 
   // No paper: OK or a tap tries again.
@@ -173,7 +179,7 @@ void NewsActivity::loop() {
       if (x < third) {
         moveTo((selected / perPage - 1) * perPage);
       } else if (x < 2 * third) {
-        startFetch();
+        if (state == State::LIST) startFetch();
       } else {
         moveTo((selected / perPage + 1) * perPage);
       }
@@ -209,7 +215,7 @@ void NewsActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
 
-  if (state == State::CONNECTING) {
+  if (state == State::CONNECTING && paper.stories.empty()) {
     GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Nyheter");
     waddle::drawPenguin(renderer, (pageWidth - 90) / 2, pageHeight / 2 - 140, 3);
     renderer.drawCenteredText(UI_12_FONT_ID, pageHeight / 2, "Henter nyheter...", true, EpdFontFamily::BOLD);
@@ -227,8 +233,8 @@ void NewsActivity::render(RenderLock&&) {
   }
 
   char subtitle[96];
-  snprintf(subtitle, sizeof(subtitle), "%s  ·  %d uleste%s", paper.edition.c_str(), unread,
-           stale ? "  ·  ikke oppdatert" : "");
+  const char* note = state == State::CONNECTING ? "  ·  henter nye..." : stale ? "  ·  ikke oppdatert" : "";
+  snprintf(subtitle, sizeof(subtitle), "%s  ·  %d uleste%s", paper.edition.c_str(), unread, note);
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Nyheter", subtitle);
 
   // Each row has room for a two-line headline, so every page has the same rows.
@@ -287,7 +293,7 @@ void NewsActivity::render(RenderLock&&) {
   const int buttonH = 44;
   const int buttonY = pageHeight - buttonH - 8;
   if (page > 0) drawButton(renderer, 12, buttonY, buttonW, buttonH, "< Forrige");
-  drawButton(renderer, (pageWidth - buttonW) / 2, buttonY, buttonW, buttonH, "Hent nå");
+  if (state == State::LIST) drawButton(renderer, (pageWidth - buttonW) / 2, buttonY, buttonW, buttonH, "Hent nå");
   if (page + 1 < pages) drawButton(renderer, pageWidth - 12 - buttonW, buttonY, buttonW, buttonH, "Neste >");
 
   renderer.displayBuffer();

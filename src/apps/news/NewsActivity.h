@@ -9,7 +9,7 @@
 // WaddleOS: "Nyheter". Fetches the latest NRK paper from arnee.me (built every
 // hour, see ArneeMe/arneeme nyheter/), then turns Wi-Fi off and lists the
 // headlines. Opening a headline starts the normal reader at that article.
-// Without Wi-Fi it shows the last paper it fetched.
+// The last paper it fetched shows at once and can be read while it fetches.
 class NewsActivity final : public Activity {
  public:
   // fetch=false shows the saved paper at once (used when coming back from the reader).

@@ -359,9 +359,6 @@ void forEachSetting(SettingVisitor visit, void* context) {
                          StrId::STR_CUSTOMISE_STATUS_BAR));
   emit(SettingInfo::Toggle(StrId::STR_BATTERY, &r.statusBarBattery, "statusBarBattery",
                            StrId::STR_CUSTOMISE_STATUS_BAR));
-  emit(SettingInfo::Enum(StrId::STR_XTC_STATUS_BAR, &r.xtcStatusBarMode,
-                         {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP}, "xtcStatusBarMode",
-                         StrId::STR_CUSTOMISE_STATUS_BAR));
   emit(SettingInfo::StaticEnum(StrId::STR_CLOCK, &r.statusBarClock, STATUS_BAR_CLOCK_VALUES,
                                "statusBarClock", StrId::STR_CUSTOMISE_STATUS_BAR));
 }
@@ -510,7 +507,6 @@ ReaderSettings::StatusBarSpec ReaderSettings::statusBarSpec() const {
   spec.progressBarMode = statusBarProgressBar;
   spec.progressBarHeightPx =
       statusBarProgressBar != HIDE_PROGRESS ? static_cast<uint8_t>((statusBarProgressBarThickness + 1) * 2) : 0;
-  spec.xtcMode = xtcStatusBarMode;
   return spec;
 }
 
