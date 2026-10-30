@@ -223,6 +223,31 @@ per key. ACKs carry no proof, so a forged one could otherwise stop a key DM from
 being sent again for good. Key DMs are not retried within a check like
 messages; they go again at each check, and up with each Wi-Fi sync, until
 answered.
+## Polls and games
+
+A message whose text starts with byte `0x01` is a poll, a game or an answer to
+one. It is an ordinary message in its conversation (everyone, a DM or a group),
+so it is encrypted, acknowledged, synced and stored like any other; units and
+phones show polls and games as cards, and votes and moves on their card instead
+of as messages. A vote or a move names its poll or game by that message's
+sender device and counter, both as lowercase hex (`ref`: 2 + 8 digits). The C++
+code is `lib/WaddleMesh/src/MeshPlay.*`.
+
+| Text | Meaning |
+|---|---|
+| `0x01 'A'` question, then `0x1F` and an answer, 2 to 4 times | a poll (question ≤ 200 bytes, answers ≤ 60) |
+| `0x01 'a'` ref, answer (1 hex digit, 0-3) | my vote; a person's newest vote counts, from either device |
+| `0x01 'S'` game | a challenge; `'F'` = Fire på rad (7 × 6, four in a line) |
+| `0x01 'm'` ref, move number (4 hex, from 1), move | a move; Fire på rad: the column, `'0'`-`'6'` |
+
+Where a game stands is the moves replayed in their numbered order, so it does
+not matter in which order they arrive. Whoever makes move 1 takes the challenge
+(anyone but the challenger: in a group, the first to move) and plays the odd
+moves; the challenger plays the even ones. A move with the wrong number, from
+the wrong person or that does not fit the board is skipped; if a person's two
+devices both send the same move number, the first the conversation has counts.
+A version that does not know a kind or game shows "(trenger nyere versjon)".
+
 ## The roster
 
 A signed list of the members. Format (bytes):

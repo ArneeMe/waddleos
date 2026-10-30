@@ -211,9 +211,12 @@ ChatActivity::ChatActivity(GfxRenderer& renderer, MappedInputManager& mappedInpu
     : Activity("Chat", renderer, mappedInput), conversation(conversation), name(meshui::conversationName(conversation)) {}
 
 void ChatActivity::reload() {
-  auto loaded = node().store().load(conversation, 40);
+  auto loaded = node().store().load(conversation, 40, mesh::MessageStore::Only::Shown);
+  auto loadedPlays = node().store().load(conversation, 400, mesh::MessageStore::Only::Plays);
   RenderLock lock(*this);
   messages = std::move(loaded);
+  plays = std::move(loadedPlays);
+  playEntries = playui::entries(plays);
 }
 
 void ChatActivity::onEnter() {
@@ -240,6 +243,60 @@ void ChatActivity::write() {
   });
 }
 
+// A poll: the question, then two to four answers (the third and fourth may be left empty).
+void ChatActivity::askQuestion() {
+  draftQuestion.clear();
+  draftOptions.clear();
+  auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, "Hva vil du spørre om?", "",
+                                                           mesh::play::MAX_QUESTION, InputType::Text);
+  if (!keyboard) return;
+  startActivityForResult(std::move(keyboard), [this](const ActivityResult& result) {
+    const std::string text = result.isCancelled ? "" : std::get<KeyboardResult>(result.data).text;
+    if (text.empty()) {
+      requestUpdate();
+      return;
+    }
+    draftQuestion = text;
+    askOption();
+  });
+}
+
+void ChatActivity::askOption() {
+  const size_t n = draftOptions.size() + 1;
+  char heading[48];
+  snprintf(heading, sizeof(heading), n <= 2 ? "Svar %u" : "Svar %u (tomt = ferdig)", unsigned(n));
+  auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, heading, "", mesh::play::MAX_OPTION,
+                                                           InputType::Text);
+  if (!keyboard) return;
+  startActivityForResult(std::move(keyboard), [this](const ActivityResult& result) {
+    if (result.isCancelled) {
+      requestUpdate();
+      return;
+    }
+    const std::string text = std::get<KeyboardResult>(result.data).text;
+    if (!text.empty()) draftOptions.push_back(text);
+    const bool done = draftOptions.size() == mesh::play::MAX_OPTIONS || (text.empty() && draftOptions.size() >= 2);
+    if (!done) {
+      askOption();
+      return;
+    }
+    const std::string poll = mesh::play::writePoll(draftQuestion, draftOptions);
+    if (!poll.empty()) node().sendText(conversation, poll);
+    scroll = 0;
+    reload();
+    requestUpdate();
+  });
+}
+
+// A tap on a poll's answer: my vote, unless it is already there.
+void ChatActivity::vote(const playui::Hit& hit) {
+  const auto t = mesh::play::tally(hit.ref, playEntries);
+  if (t.votes[hit.option] & mesh::memberBit(node().network().me)) return;
+  node().sendText(conversation, mesh::play::writeVote(hit.ref, uint8_t(hit.option)));
+  reload();
+  requestUpdate();
+}
+
 void ChatActivity::loop() {
   using Button = MappedInputManager::Button;
   if (mappedInput.wasReleased(Button::Back) || mappedInput.wasHomeGesture()) {
@@ -259,8 +316,34 @@ void ChatActivity::loop() {
   }
   int x = 0, y = 0;
   if (mappedInput.wasScreenTapped(x, y)) {
+    if (menuOpen) {
+      menuOpen = false;
+      if (pollBox.contains(x, y)) {
+        askQuestion();
+      } else if (gameBox.contains(x, y)) {
+        node().sendText(conversation, mesh::play::writeGame(mesh::play::Game::FourInRow));
+        scroll = 0;
+        reload();
+      }
+      requestUpdate();
+      return;
+    }
+    if (plusBox.contains(x, y)) {
+      menuOpen = true;
+      requestUpdate();
+      return;
+    }
     if (y >= inputY) {
       write();
+      return;
+    }
+    for (const auto& hit : hits) {
+      if (!hit.contains(x, y)) continue;
+      if (hit.option >= 0) {
+        vote(hit);
+      } else {
+        activityManager.replaceActivity(std::make_unique<FourInRowActivity>(renderer, mappedInput, conversation, hit.ref));
+      }
       return;
     }
     if (y < titleBottom && chatGroup(conversation)) {
@@ -289,16 +372,23 @@ void ChatActivity::render(RenderLock&&) {
   const int top = meshui::drawTitle(renderer, title.c_str());
   titleBottom = top;
 
-  // Input bar.
+  // Input bar: "+", the field, Send.
   inputY = height - 82;
   renderer.drawLine(0, inputY, width - 1, inputY, 2, true);
-  renderer.drawRoundedRect(SIDE, inputY + 16, width - 2 * SIDE - 116, 54, 2, 14, true);
-  renderer.drawText(UI_12_FONT_ID, SIDE + 16, inputY + 30, "Skriv melding …", true);
+  plusBox = {SIDE, inputY + 16, 54, 54};
+  renderer.drawRoundedRect(plusBox.x, plusBox.y, plusBox.w, plusBox.h, 2, 14, true);
+  renderer.drawLine(plusBox.x + 15, plusBox.y + 27, plusBox.x + 39, plusBox.y + 27, 3, true);
+  renderer.drawLine(plusBox.x + 27, plusBox.y + 15, plusBox.x + 27, plusBox.y + 39, 3, true);
+  const int fieldX = SIDE + 66;
+  renderer.drawRoundedRect(fieldX, inputY + 16, width - SIDE - 116 - fieldX, 54, 2, 14, true);
+  renderer.drawText(UI_12_FONT_ID, fieldX + 16, inputY + 30, "Skriv melding …", true);
   renderer.fillRoundedRect(width - SIDE - 104, inputY + 16, 104, 54, 14, Color::Black);
   const int sendW = renderer.getTextWidth(UI_12_FONT_ID, "Send", EpdFontFamily::BOLD);
   renderer.drawText(UI_12_FONT_ID, width - SIDE - 52 - sendW / 2, inputY + 30, "Send", false, EpdFontFamily::BOLD);
 
-  // Bubbles from the bottom up.
+  // Bubbles from the bottom up; polls and games as cards across the screen.
+  hits.clear();
+  const int cardW = width - 2 * SIDE;
   const int lineH = renderer.getLineHeight(TEXT_FONT);
   const int smallH = renderer.getLineHeight(SMALL_FONT_ID);
   int y = inputY - 12;
@@ -306,7 +396,29 @@ void ChatActivity::render(RenderLock&&) {
   for (int i = last; i >= 0; i--) {
     const auto& m = messages[i];
     const bool mine = mesh::person(m.sender) == me;  // from this unit or my phone
-    const auto lines = renderer.wrappedText(TEXT_FONT, m.text.c_str(), BUBBLE_MAX_W - 32, 12);
+    const int card = playui::cardHeight(renderer, m, cardW);
+    if (card) {
+      const int above = smallH + 6;
+      const int below = mine ? smallH + 6 : 0;
+      if (y - (above + card + below + 14) < top) break;
+      y -= below;
+      if (mine) {
+        const std::string state = deliveryText(m, conversation);
+        const int sw = renderer.getTextWidth(SMALL_FONT_ID, state.c_str());
+        renderer.drawText(SMALL_FONT_ID, width - SIDE - sw, y + 2, state.c_str());
+      }
+      y -= card;
+      playui::drawCard(renderer, m, playEntries, SIDE, y, cardW, hits);
+      const std::string who = mine ? "Du  " : isDm(conversation) ? "" : std::string(node().network().name(m.sender)) + "  ";
+      const std::string head = who + meshui::timeText(m.time);
+      y -= above;
+      renderer.drawText(SMALL_FONT_ID, SIDE + 4, y, head.c_str(), true, EpdFontFamily::BOLD);
+      y -= 14;
+      continue;
+    }
+    // A poll or game this version cannot read shows as a line of text.
+    const std::string text = mesh::play::isPlay(m.text) ? mesh::play::preview(m.text) : m.text;
+    const auto lines = renderer.wrappedText(TEXT_FONT, text.c_str(), BUBBLE_MAX_W - 32, 12);
     int textW = 0;
     for (const auto& l : lines) textW = std::max(textW, renderer.getTextWidth(TEXT_FONT, l.c_str()));
     const int bw = std::min(BUBBLE_MAX_W, textW + 32);
@@ -344,6 +456,20 @@ void ChatActivity::render(RenderLock&&) {
     y -= 14;
   }
   if (messages.empty()) renderer.drawCenteredText(UI_12_FONT_ID, top + 40, "Ingen meldinger ennå. Si hei!");
+
+  // "+": what can be started here, above the input bar.
+  pollBox = gameBox = {};
+  if (menuOpen) {
+    const int bh = 70;
+    pollBox = {SIDE, inputY - 2 * (bh + 12), width - 2 * SIDE, bh};
+    gameBox = {SIDE, inputY - (bh + 12), width - 2 * SIDE, bh};
+    renderer.fillRect(0, pollBox.y - 16, width, inputY - pollBox.y + 16, false);
+    renderer.drawLine(0, pollBox.y - 16, width - 1, pollBox.y - 16, 2, true);
+    for (const auto& [box, label] : {std::make_pair(pollBox, "Avstemning"), std::make_pair(gameBox, "Fire på rad")}) {
+      renderer.drawRoundedRect(box.x, box.y, box.w, box.h, 2, 14, true);
+      renderer.drawText(UI_12_FONT_ID, box.x + 24, box.y + 20, label, true, EpdFontFamily::BOLD);
+    }
+  }
 
   // Fast refresh while chatting, a clean one now and then against ghosting.
   renderer.displayBuffer(++renders % 8 == 0 ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH);

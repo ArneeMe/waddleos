@@ -24,7 +24,9 @@ object Mesh {
     @JvmStatic external fun changes(): Int
     /** [{"conv", "title", "unread", "time", "last", "group"}] */
     @JvmStatic external fun conversations(): String
-    /** [{"mine", "from", "text", "time", "warning", "state"}] */
+    /** [{"mine", "from", "text", "time", "warning", "state"}], a poll or game also
+     *  {"sender", "counter", "poll": {"question", "options": [{"text", "count", "mine", "names"}]}}
+     *  or {..., "game": {"status", "canMove", "board", "players"}}; votes and moves are left out. */
     @JvmStatic external fun chat(conv: Int): String
     @JvmStatic external fun title(conv: Int): String
     @JvmStatic external fun canWrite(conv: Int): Boolean
@@ -52,4 +54,11 @@ object Mesh {
     @JvmStatic external fun pairRequest(): String
     /** "" when paired, else what went wrong. */
     @JvmStatic external fun pairFinish(box: String): String
+
+    /** Polls and Fire på rad (lib/WaddleMesh MeshPlay.h); options one per line. */
+    @JvmStatic external fun startPoll(conv: Int, question: String, options: String): Boolean
+    @JvmStatic external fun vote(conv: Int, sender: Int, counter: Long, option: Int): Boolean
+    @JvmStatic external fun startGame(conv: Int): Boolean
+    /** Drops my piece in column [col] (0-6) of the game, when it is my move. */
+    @JvmStatic external fun move(conv: Int, sender: Int, counter: Long, col: Int): Boolean
 }

@@ -429,6 +429,12 @@ void story() {
   ack(PER, NOW - 74 * MIN, ready, mesh::AckState::Delivered);
 
   message(OLA, ARNE_KARI_OLA, NOW - 40 * MIN, "Jeg er med!", 2);
+  // Kari asks when to leave; Ola and I answer.
+  message(KARI, ARNE_KARI_OLA, NOW - 38 * MIN, mesh::play::writePoll("Når drar vi?", {"Kl 09", "Kl 10", "Etter lunsj"}));
+  const mesh::play::Ref when{KARI, others[KARI].counter};
+  message(OLA, ARNE_KARI_OLA, NOW - 36 * MIN, mesh::play::writeVote(when, 1), 2);
+  message(KARI, ARNE_KARI_OLA, NOW - 35 * MIN, mesh::play::writeVote(when, 1));
+  write(ARNE_KARI_OLA, NOW - 34 * MIN, mesh::play::writeVote(when, 0));
   syncRequest(PER, NOW - 35 * MIN, 31);
   position(OLA, NOW - 22 * MIN, HOME_LAT - 0.0300, HOME_LON - 0.0150, 64, 1);
   message(OLA, mesh::CONV_EVERYONE, NOW - 12 * MIN, "Vi møtes ved parkeringen kl 10.", 2);
@@ -438,6 +444,14 @@ void story() {
   node().startCheck();
   position(KARI, NOW - 5 * MIN, HOME_LAT + 0.0078, HOME_LON + 0.0140, 82);
   message(KARI, KARI, NOW - 4 * MIN, "Takk! Ses ved parkeringen.");
+  // Kari challenges me to Fire på rad; I take it, and it is my move again.
+  message(KARI, KARI, NOW - 4 * MIN + 20, mesh::play::writeGame(mesh::play::Game::FourInRow));
+  const mesh::play::Ref game{KARI, others[KARI].counter};
+  write(KARI, NOW - 4 * MIN + 40, mesh::play::writeMove(game, 1, "3"));
+  message(KARI, KARI, NOW - 4 * MIN + 60, mesh::play::writeMove(game, 2, "3"));
+  write(KARI, NOW - 4 * MIN + 80, mesh::play::writeMove(game, 3, "4"));
+  message(KARI, KARI, NOW - 4 * MIN + 100, mesh::play::writeMove(game, 4, "2"));
+  node().markRead(KARI);
 
   // Ola has not answered yet; the server has it.
   const uint32_t weather = write(OLA, NOW - 3 * MIN, "Har du sjekket værmeldingen for i kveld?");
@@ -447,6 +461,15 @@ void story() {
 }
 
 // --- Screens -------------------------------------------------------------------------
+
+// The game Kari started in story().
+mesh::play::Ref kariGame() {
+  for (const auto& m : node().store().load(KARI, 400, mesh::MessageStore::Only::Plays)) {
+    mesh::play::Play p;
+    if (mesh::play::read(m.text, p) && p.kind == mesh::play::Kind::Game) return {m.sender, m.counter};
+  }
+  return {};
+}
 
 void show(Activity& screen, const std::string& name, const std::function<void(Activity&)>& then = {}) {
   screen.onEnter();
@@ -518,6 +541,18 @@ int main(int argc, char** argv) {
   {
     ChatActivity chat(renderer, mappedInputManager, ARNE_KARI_OLA);
     show(chat, "t5-chat-gruppe");
+  }
+  {
+    // "+" in a chat: what can be started there.
+    ChatActivity chat(renderer, mappedInputManager, KARI);
+    show(chat, "t5-chat-pluss", [](Activity& screen) {
+      sim::tap(45, 920);  // "+"
+      screen.loop();
+    });
+  }
+  {
+    FourInRowActivity game(renderer, mappedInputManager, KARI, kariGame());
+    show(game, "t5-fire-paa-rad");
   }
   {
     // The group's members, and "Forlat gruppe".

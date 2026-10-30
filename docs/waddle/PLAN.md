@@ -87,6 +87,11 @@ like the key files, so the card alone shows nothing. When "Ny identitet" comes
 (PHONE.md, R8), the old storage key goes into the key archive (R11) so the
 history still opens.
 
+Done: polls and Fire på rad in any chat, on the units and the phone ("+" next
+to the input; protocol/PROTOCOL.md, "Polls and games"). More games can follow
+the same way: chess, Senk skipet (the ships never leave the unit; the other
+gets only "treff" or "bom").
+
 Before calling it done: **a screen-by-screen look** (the units, the reader and
 the Pi's status page) by Arne, to check that everything reads well for a person,
 once the technical work has settled. The screen simulator

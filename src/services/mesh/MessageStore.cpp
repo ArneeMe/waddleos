@@ -170,7 +170,7 @@ void MessageStore::begin(const uint8_t me) {
       if (m.time >= sum.lastTime) {
         sum.lastTime = m.time;
         sum.lastSender = person(m.sender);
-        sum.lastText = m.text.substr(0, PREVIEW);
+        sum.lastText = play::isPlay(m.text) ? play::preview(m.text).substr(0, PREVIEW) : m.text.substr(0, PREVIEW);
       }
       updateChain(c, m);
     }
@@ -278,7 +278,7 @@ void MessageStore::addMessage(const uint8_t conversation, const ChatMessage& m) 
   if (m.time >= sum.lastTime) {
     sum.lastTime = m.time;
     sum.lastSender = person(m.sender);
-    sum.lastText = m.text.substr(0, PREVIEW);
+    sum.lastText = play::isPlay(m.text) ? play::preview(m.text).substr(0, PREVIEW) : m.text.substr(0, PREVIEW);
   }
   updateChain(conversation, m);
 }
@@ -293,13 +293,15 @@ void MessageStore::addState(const uint8_t conversation, const uint8_t sender, co
   append(chatPath(conversation), rec, sizeof(rec));
 }
 
-std::vector<ChatMessage> MessageStore::load(const uint8_t conversation, const size_t limit) const {
+std::vector<ChatMessage> MessageStore::load(const uint8_t conversation, const size_t limit, const Only only) const {
   std::vector<ChatMessage> all;
   SealedLog log(chatPath(conversation).c_str());
   if (!log) return all;
   Record r;
   while (readRecord(log, r)) {
     if (r.kind == REC_MESSAGE) {
+      if (only == Only::Shown && play::isReply(r.message.text)) continue;
+      if (only == Only::Plays && !play::isPlay(r.message.text)) continue;
       all.push_back(std::move(r.message));
       // Keep memory bounded on long histories: drop the oldest half when far over.
       if (all.size() > limit * 2) all.erase(all.begin(), all.begin() + long(all.size() - limit));
