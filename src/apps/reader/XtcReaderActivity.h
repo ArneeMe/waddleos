@@ -11,17 +11,8 @@ class XtcReaderActivity final : public ReaderActivity {
   std::shared_ptr<Xtc> xtc;
   uint32_t currentPage = 0;
 
-  enum class StatusBarOverlayPosition { Bottom, Top };
-  struct StatusBarInfo {
-    int currentPage;
-    int pageCount;
-    std::string title;
-  };
-
   void renderPage();
   void openChapterSelection();
-  void renderStatusBarOverlay(GfxRenderer& renderer, StatusBarOverlayPosition position) const;
-  StatusBarInfo getStatusBarInfo() const;
   void saveProgress() const;
   void loadProgress();
 

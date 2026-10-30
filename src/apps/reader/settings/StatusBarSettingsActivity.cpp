@@ -26,7 +26,6 @@ enum MenuItem {
   ITEM_PROGRESS_BAR_THICKNESS,
   ITEM_TITLE,
   ITEM_BATTERY,
-  ITEM_XTC_STATUS_BAR,
   ITEM_CLOCK,  // RTC boards only
   ITEM_COUNT
 };
@@ -43,7 +42,6 @@ const StrId menuNames[FULL_MENU_ITEMS] = {
     StrId::STR_PROGRESS_BAR_THICKNESS,
     StrId::STR_TITLE,
     StrId::STR_BATTERY,
-    StrId::STR_XTC_STATUS_BAR,
     StrId::STR_CLOCK,
 };
 
@@ -57,8 +55,6 @@ const StrId progressBarThicknessNames[PROGRESS_BAR_THICKNESS_ITEMS] = {
 constexpr int TITLE_ITEMS = 3;
 const StrId titleNames[TITLE_ITEMS] = {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE};
 
-constexpr int XTC_STATUS_BAR_ITEMS = 3;
-const StrId xtcStatusBarNames[XTC_STATUS_BAR_ITEMS] = {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP};
 
 constexpr int STATUS_BAR_CLOCK_ITEMS = ReaderSettings::STATUS_BAR_CLOCK_MODE_COUNT;
 const StrId statusBarClockNames[STATUS_BAR_CLOCK_ITEMS] = {StrId::STR_HIDE, StrId::STR_DIR_RIGHT, StrId::STR_DIR_LEFT};
@@ -85,10 +81,6 @@ void StatusBarSettingsActivity::onEnter() {
 
   if (READER_SETTINGS.statusBarTitle >= TITLE_ITEMS) {
     READER_SETTINGS.statusBarTitle = ReaderSettings::STATUS_BAR_TITLE::HIDE_TITLE;
-  }
-
-  if (READER_SETTINGS.xtcStatusBarMode >= XTC_STATUS_BAR_ITEMS) {
-    READER_SETTINGS.xtcStatusBarMode = ReaderSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_HIDE;
   }
 
   if (READER_SETTINGS.statusBarClock >= STATUS_BAR_CLOCK_ITEMS) {
@@ -148,13 +140,6 @@ void StatusBarSettingsActivity::handleSelection() {
     case ITEM_BATTERY:
       READER_SETTINGS.statusBarBattery = (READER_SETTINGS.statusBarBattery + 1) % 2;
       break;
-    case ITEM_XTC_STATUS_BAR:
-      optionPopup.show(StrId::STR_XTC_STATUS_BAR, xtcStatusBarNames, XTC_STATUS_BAR_ITEMS, READER_SETTINGS.xtcStatusBarMode,
-                       [this](int idx) {
-                         READER_SETTINGS.xtcStatusBarMode = idx;
-                         SETTINGS.saveToFile();
-                       });
-      return;
     case ITEM_CLOCK:
       READER_SETTINGS.statusBarClock = (READER_SETTINGS.statusBarClock + 1) % STATUS_BAR_CLOCK_ITEMS;
       break;
@@ -172,8 +157,6 @@ std::string StatusBarSettingsActivity::rowValueText(const int index) {
       return I18N.get(progressBarThicknessNames[READER_SETTINGS.statusBarProgressBarThickness]);
     case ITEM_TITLE:
       return I18N.get(titleNames[READER_SETTINGS.statusBarTitle]);
-    case ITEM_XTC_STATUS_BAR:
-      return I18N.get(xtcStatusBarNames[READER_SETTINGS.xtcStatusBarMode]);
     case ITEM_CLOCK:
       return I18N.get(statusBarClockNames[READER_SETTINGS.statusBarClock]);
     default:

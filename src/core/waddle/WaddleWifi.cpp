@@ -40,6 +40,12 @@ bool joinSaved() {
   return true;
 }
 
+bool joinFailed(const unsigned long startedAtMs) {
+  if (millis() - startedAtMs < 1000) return false;
+  const auto status = WiFi.status();
+  return status == WL_NO_SSID_AVAIL || status == WL_CONNECT_FAILED;
+}
+
 void off() {
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);

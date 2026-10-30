@@ -30,10 +30,9 @@ What is done and what is next. How the system fits together:
 
 - Cloudflare timer that starts `nyheter.yml` every hour (GitHub skips runs).
   Needs a GitHub token as a Cloudflare secret.
-- Hjem fetch in the background so taps are not ignored for a few seconds.
+- Hjem fetch in the background so taps are not ignored for a few seconds
+  (only while the download runs; away from home it now gives up at once).
 - Reader font sizes below 12 (adds flash per size).
-- Read later: send an article link to arnee.me, get it on the reader.
-- To-do and shopping list from Oppgaver on arnee.me.
 - NRK podcasts played on the Bluesound (arnee.me finds the newest episode).
 - Settings that may be pointless now: sleep screen options, XTC status bar,
   font (one choice). Ask Arne before removing.
