@@ -1,4 +1,5 @@
 #include "T5HomeActivity.h"
+#include "T5AppsActivity.h"
 #include "T5SettingsActivity.h"
 
 #include <GfxRenderer.h>
@@ -28,7 +29,7 @@ constexpr int SIDE = 20;
 constexpr const char* WEEKDAYS[] = {"søndag", "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag"};
 constexpr const char* MONTHS[] = {"januar", "februar", "mars",     "april",   "mai",      "juni",
                                   "juli",   "august",  "september", "oktober", "november", "desember"};
-constexpr const char* APP_LABELS[] = {"Meldinger", "Kart", "Notater", "Bøker", "Innstillinger", "SOS"};
+constexpr const char* APP_LABELS[] = {"Meldinger", "Kart", "Notater", "Apper", "Innstillinger", "SOS"};
 
 mesh::Node& node() { return mesh::Node::get(); }
 
@@ -94,8 +95,8 @@ void T5HomeActivity::activate(const int target) {
     case T_NOTES:
       activityManager.replaceActivity(std::make_unique<NotesActivity>(renderer, mappedInput));
       break;
-    case T_BOOKS:
-      activityManager.goToLibrary();
+    case T_APPS:
+      activityManager.replaceActivity(std::make_unique<T5AppsActivity>(renderer, mappedInput));
       break;
     case T_SETTINGS:
       activityManager.replaceActivity(std::make_unique<T5SettingsActivity>(renderer, mappedInput));

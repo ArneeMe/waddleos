@@ -34,7 +34,7 @@ void NewsActivity::onEnter() {
 }
 
 void NewsActivity::onExit() {
-  waddle::wifi::off();
+  if (!wifiWasOn) waddle::wifi::off();
   Activity::onExit();
 }
 
@@ -42,12 +42,13 @@ void NewsActivity::startFetch() {
   state = State::CONNECTING;
   stale = false;
   connectStartedAt = millis();
+  wifiWasOn = WiFi.status() == WL_CONNECTED;
   requestUpdate();
   if (WiFi.status() != WL_CONNECTED && !waddle::wifi::joinSaved(*this)) finishFetch(false);
 }
 
 void NewsActivity::finishFetch(const bool ok) {
-  waddle::wifi::off();
+  if (!wifiWasOn) waddle::wifi::off();
   if (ok) loadList();
   {
     RenderLock lock(*this);

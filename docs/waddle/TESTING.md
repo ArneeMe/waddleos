@@ -42,7 +42,9 @@ Start-up, screen and buttons:
 - [ ] The BOOT button sleeps and wakes; the user button moves down in lists.
 - [ ] Battery % on Hjem looks right; it goes up while charging.
 - [ ] The clock keeps time after a restart (RTC).
-- [ ] Bøker opens the library; a book reads like on the reader.
+- [ ] Apper → Bøker opens the library; a book reads like on the reader.
+- [ ] Apper → Nyheter fetches NRK on Wi-Fi (not again within an hour), and
+      Wi-Fi is off afterwards. Back from a story goes to the list.
 - [ ] Innstillinger shows Modus, Sjekk meldinger hjemme / på tur, Bruk Wi-Fi
       hjemme and Del posisjon på tur.
 

@@ -21,7 +21,7 @@ class T5HomeActivity final : public Activity {
     bool contains(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; }
   };
   // Things that can be selected, in Up/Down order.
-  enum Target { T_MODE, T_CHAT_1, T_CHAT_2, T_CHAT_3, T_CHAT_4, T_MESSAGES, T_MAP, T_NOTES, T_BOOKS, T_SETTINGS, T_SOS, T_COUNT };
+  enum Target { T_MODE, T_CHAT_1, T_CHAT_2, T_CHAT_3, T_CHAT_4, T_MESSAGES, T_MAP, T_NOTES, T_APPS, T_SETTINGS, T_SOS, T_COUNT };
 
   bool cleanInitialRefresh;
   int shownMinute = -1;

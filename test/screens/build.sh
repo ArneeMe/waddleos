@@ -47,7 +47,7 @@ sources=(
   # The screens, and the screens they open.
   src/core/activities/Activity.cpp src/core/util/ButtonNavigator.cpp
   src/core/activities/util/KeyboardEntryActivity.cpp src/core/activities/util/NorwegianKeyboard.cpp
-  src/products/t5s3/T5HomeActivity.cpp src/products/t5s3/T5SettingsActivity.cpp src/apps/notes/NotesActivity.cpp
+  src/products/t5s3/T5HomeActivity.cpp src/products/t5s3/T5SettingsActivity.cpp src/products/t5s3/T5AppsActivity.cpp src/apps/notes/NotesActivity.cpp
   src/apps/messages/MeshUi.cpp src/apps/messages/MessagesActivity.cpp
   src/apps/map/MapActivity.cpp src/apps/sos/SosAlertActivity.cpp
   # The mesh: the real node, store and crypto.

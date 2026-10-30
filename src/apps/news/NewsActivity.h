@@ -27,6 +27,7 @@ class NewsActivity final : public Activity {
   State state = State::CONNECTING;
   bool fetchOnEnter;
   bool stale = false;  // the fetch failed, so the list is an older paper
+  bool wifiWasOn = false;  // on before the fetch (the T5's mesh sync): left on
   unsigned long connectStartedAt = 0;
 
   waddle::news::Paper paper;

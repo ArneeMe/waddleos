@@ -31,8 +31,6 @@ What is done and what is next. How the system fits together:
 - Cloudflare timer that starts `nyheter.yml` every hour (GitHub skips runs).
   Needs a GitHub token as a Cloudflare secret.
 - Hjem fetch in the background so taps are not ignored for a few seconds.
-- T5: an «Apper» button on Hjem with a list of extra apps, Nyheter first (more
-  later if wanted). Nyheter fetches only when opened, never by itself.
 - Reader font sizes below 12 (adds flash per size).
 - Read later: send an article link to arnee.me, get it on the reader.
 - To-do and shopping list from Oppgaver on arnee.me.
